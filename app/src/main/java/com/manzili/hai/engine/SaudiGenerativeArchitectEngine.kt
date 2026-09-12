@@ -8,28 +8,33 @@ object SaudiGenerativeArchitectEngine {
     data class SearchStats(val aiSeedAccepted:Boolean,val candidatesInspected:Int,val validCandidates:Int,val distinctCandidates:Int)
     data class Result(val candidates:List<NewBuildSolver.Candidate>,val stats:SearchStats)
 
-    fun generate(program:NewBuildSolver.Program, brief:SaudiDeepBriefEngine.Brief, aiSeed:FloorPlan?=null):Result {
+    fun generate(
+        program:NewBuildSolver.Program,
+        projectType:SaudiProjectTypeEngine.Type,
+        brief:SaudiDeepBriefEngine.Brief,
+        aiSeed:FloorPlan?=null
+    ):Result {
         val pool=mutableListOf<NewBuildSolver.Candidate>()
         val base=GlobalLayoutOptimizer.generate(program)
-        pool += base.map { enrich(it,brief,"محرك البحث الهندسي") }
+        pool += base.map { enrich(it,projectType,brief,"محرك البحث الهندسي") }
 
         base.forEachIndexed { index,candidate ->
-            validCandidate(mirror(candidate.plan,true),brief,"انعكاس أفقي مستقل","hybrid-h-$index")?.let(pool::add)
-            validCandidate(mirror(candidate.plan,false),brief,"انعكاس رأسي مستقل","hybrid-v-$index")?.let(pool::add)
-            if(index==0) validCandidate(rotate180(candidate.plan),brief,"دوران 180° لتغيير علاقة المدخل/الخلف","hybrid-r-$index")?.let(pool::add)
+            validCandidate(mirror(candidate.plan,true),projectType,brief,"انعكاس أفقي مستقل","hybrid-h-$index")?.let(pool::add)
+            validCandidate(mirror(candidate.plan,false),projectType,brief,"انعكاس رأسي مستقل","hybrid-v-$index")?.let(pool::add)
+            if(index==0) validCandidate(rotate180(candidate.plan),projectType,brief,"دوران 180° لتغيير علاقة المدخل/الخلف","hybrid-r-$index")?.let(pool::add)
         }
 
         var aiAccepted=false
         if(aiSeed!=null) {
-            val prepared=prepareAiSeed(aiSeed,program,brief)
+            val prepared=prepareAiSeed(aiSeed,program,projectType,brief)
             val report=GeometryV3Engine.inspect(prepared)
             if(report.valid && report.plan.rooms.size>=3) {
                 aiAccepted=true
-                validCandidate(report.plan,brief,"Seed مولّد مباشرة بواسطة HAI ثم تحقق منه Geometry V3","hai-generative")?.let(pool::add)
+                validCandidate(report.plan,projectType,brief,"Seed مولّد مباشرة بواسطة HAI ثم تحقق منه Geometry V3","hai-generative")?.let(pool::add)
                 report.plan.rooms.sortedByDescending(::roomPriority).take(8).forEach { room ->
                     listOf("MOVE","EXPAND","SHRINK").forEach { action ->
                         GeometrySolver.actionCandidates(report.plan,"room",room.id,action).take(2).forEach { g ->
-                            if(g.review.objections.isEmpty()) validCandidate(g.plan,brief,"تحسين محلي لSeed HAI: $action ${room.name}","hai-${room.id}-$action")?.let(pool::add)
+                            if(g.review.objections.isEmpty()) validCandidate(g.plan,projectType,brief,"تحسين محلي لSeed HAI: $action ${room.name}","hai-${room.id}-$action")?.let(pool::add)
                         }
                     }
                 }
@@ -44,20 +49,28 @@ object SaudiGenerativeArchitectEngine {
         return Result(
             selected.take(3).mapIndexed { index,c->c.copy(
                 id="saudi-gen-${index+1}",
-                title=when(index){0->"HAI • الحل السعودي الأقوى";1->"HAI • بديل سعودي مختلف";else->"HAI • بديل سعودي ثالث"},
-                metrics=(c.metrics+listOf(if(aiAccepted)"AI seed + Geometry" else "Local hybrid search","Saudi audit ${SaudiResidentialEngine.inspect(c.plan).score}/100")).distinct()
+                title=when(index){0->"HAI • الحل الأقوى";1->"HAI • بديل مختلف";else->"HAI • بديل ثالث"},
+                metrics=(c.metrics+listOf(projectType.label,if(aiAccepted)"AI seed + Geometry" else "Local hybrid search","Saudi audit ${SaudiResidentialEngine.inspect(c.plan).score}/100")).distinct()
             )},
             SearchStats(aiAccepted,pool.size,valid.size,distinct.size)
         )
     }
 
-    fun requirements(program:NewBuildSolver.Program, brief:SaudiDeepBriefEngine.Brief):String {
+    fun requirements(
+        program:NewBuildSolver.Program,
+        projectType:SaudiProjectTypeEngine.Type,
+        brief:SaudiDeepBriefEngine.Brief,
+        adaptiveAnswers:String=""
+    ):String {
         val b=brief.base
+        val profile=SaudiProjectTypeEngine.profile(projectType)
         return buildString {
-            appendLine("صمم مخطط فيلا سعودية حقيقي وليس رسماً زخرفياً.")
+            appendLine("صمم مشروعًا سكنيًا سعوديًا حقيقيًا وليس رسماً زخرفياً.")
+            appendLine("نوع المشروع الملزم: ${projectType.label}. ${projectType.subtitle}")
+            appendLine("أولويات هذا النوع: ${profile.priorities.joinToString("، ")}.")
             appendLine("المدينة: ${b.city}")
             appendLine("الأرض: ${program.plotWidthM}م × ${program.plotDepthM}م، جهة الشارع ${b.streetSide}${b.streetWidthM?.let { " وعرضه ${it}م" }.orEmpty()}.")
-            appendLine("الشمال: ${b.northDeg}°، الأدوار الحالية: ${program.floorCount}، غرف النوم: ${program.bedrooms}، الأسرة: ${b.familySize} أفراد.")
+            appendLine("الشمال: ${b.northDeg}°، الأدوار الحالية: ${program.floorCount}، غرف النوم/النوم المطلوبة: ${program.bedrooms}، الأسرة: ${b.familySize} أفراد.")
             appendLine("الضيافة: مجلس رجال=${b.menMajlis}، استقبال نساء=${b.womenReception}، جناح ضيف=${brief.guestSuite}.")
             appendLine("الحركة: مدخل عائلة مستقل=${b.familyEntranceSeparate}، مدخل خدمة=${b.serviceEntrance}، مصعد=${b.elevator}، كبار سن بالدور الأرضي=${brief.elderlyGroundSuite}.")
             appendLine("الخدمات: عاملة منزلية=${b.maidRoom}، سائق=${b.driverRoom}، مخزن=${brief.storageRoom}، بانتري=${brief.pantry}، غسيل=${brief.laundryRoom}.")
@@ -66,12 +79,14 @@ object SaudiGenerativeArchitectEngine {
             appendLine("الجيران/الانكشاف: ${brief.neighborExposure}. قطعة زاوية=${brief.cornerPlot}.")
             appendLine("ارتدادات أدخلها المستخدم فقط إن وجدت: أمامي=${brief.frontSetbackM}، خلفي=${brief.rearSetbackM}، جانبي=${brief.sideSetbackM}.")
             appendLine("الهوية: ${b.architectureStyle}. أولوية الخصوصية=${program.privacyPriority}/100، الحركة=${program.circulationPriority}/100، الضوء=${program.daylightPriority}/100.")
+            appendLine("إجابات خاصة بنوع المشروع: $adaptiveAnswers")
             appendLine("تعليمات إضافية: ${program.notes}")
+            appendLine("لا تحول عمارة إلى فيلا أو تاون هاوس إلى فيلا. احترم نوع المشروع كقيد صلب.")
             appendLine("لا تفترض ارتدادات أو نسب بناء نظامية غير معطاة. لا تخترع أبعاداً رسمية. أعد مخططاً قابلاً للتحقق هندسياً.")
         }
     }
 
-    private fun prepareAiSeed(seed:FloorPlan,program:NewBuildSolver.Program,brief:SaudiDeepBriefEngine.Brief):FloorPlan {
+    private fun prepareAiSeed(seed:FloorPlan,program:NewBuildSolver.Program,projectType:SaudiProjectTypeEngine.Type,brief:SaudiDeepBriefEngine.Brief):FloorPlan {
         val b=brief.base
         val normalized=seed.copy(
             title=program.title,widthM=program.plotWidthM,heightM=program.plotDepthM,scaleConfidence=100,
@@ -79,22 +94,22 @@ object SaudiGenerativeArchitectEngine {
             site=seed.site.copy(countryCode="SA",city=b.city,northDeg=b.northDeg),northDeg=b.northDeg,
             observations=(seed.observations+"Seed توليدي من HAI؛ جميع عناصره خاضعة لـ Geometry V3 والمراجعة السعودية.").distinct()
         )
-        return MultiFloorGeometryEngine.normalize(SaudiDeepBriefEngine.apply(normalized,brief))
+        return MultiFloorGeometryEngine.normalize(SaudiProjectTypeEngine.apply(SaudiDeepBriefEngine.apply(normalized,brief),projectType))
     }
 
-    private fun enrich(candidate:NewBuildSolver.Candidate,brief:SaudiDeepBriefEngine.Brief,source:String):NewBuildSolver.Candidate {
-        val plan=SaudiDeepBriefEngine.apply(candidate.plan,brief)
+    private fun enrich(candidate:NewBuildSolver.Candidate,projectType:SaudiProjectTypeEngine.Type,brief:SaudiDeepBriefEngine.Brief,source:String):NewBuildSolver.Candidate {
+        val plan=SaudiProjectTypeEngine.apply(SaudiDeepBriefEngine.apply(candidate.plan,brief),projectType)
         val review=SaudiResidentialEngine.inspect(plan)
         val adjusted=(candidate.overall*.58+review.score*.42).toInt().coerceIn(0,100)
-        return candidate.copy(plan=plan,overall=adjusted,rationale="${candidate.rationale} • $source • ${review.notes.firstOrNull().orEmpty()}",metrics=(candidate.metrics+"Saudi ${review.score}/100").distinct())
+        return candidate.copy(plan=plan,overall=adjusted,rationale="${candidate.rationale} • $source • ${review.notes.firstOrNull().orEmpty()}",metrics=(candidate.metrics+listOf(projectType.label,"Saudi ${review.score}/100")).distinct())
     }
 
-    private fun validCandidate(plan:FloorPlan,brief:SaudiDeepBriefEngine.Brief,source:String,id:String):NewBuildSolver.Candidate? {
-        val applied=SaudiDeepBriefEngine.apply(MultiFloorGeometryEngine.normalize(plan),brief)
+    private fun validCandidate(plan:FloorPlan,projectType:SaudiProjectTypeEngine.Type,brief:SaudiDeepBriefEngine.Brief,source:String,id:String):NewBuildSolver.Candidate? {
+        val applied=SaudiProjectTypeEngine.apply(SaudiDeepBriefEngine.apply(MultiFloorGeometryEngine.normalize(plan),brief),projectType)
         val geometry=GeometryV3Engine.inspect(applied); if(!geometry.valid)return null
         val architecture=ArchitecturalEngine.score(geometry.plan); val saudi=SaudiResidentialEngine.inspect(geometry.plan)
         val score=(architecture.overall*.56+saudi.score*.44).toInt().coerceIn(0,100)
-        return NewBuildSolver.Candidate(id,source,"$source؛ اجتاز Geometry V3 ثم المراجعة السعودية.",geometry.plan,score,listOf("Geometry V3","Saudi ${saudi.score}/100"))
+        return NewBuildSolver.Candidate(id,source,"$source؛ اجتاز Geometry V3 ثم المراجعة السعودية.",geometry.plan,score,listOf(projectType.label,"Geometry V3","Saudi ${saudi.score}/100"))
     }
 
     private fun mirror(plan:FloorPlan,horizontal:Boolean)=transform(plan){p->if(horizontal)PlanPoint(100f-p.x,p.y)else PlanPoint(p.x,100f-p.y)}
