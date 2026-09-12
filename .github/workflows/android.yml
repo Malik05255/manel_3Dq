@@ -25,6 +25,29 @@ jobs:
         id: regression
         continue-on-error: true
         run: ./gradlew testDebugUnitTest
+      - name: Print failed regression details
+        if: steps.regression.outcome == 'failure'
+        run: |
+          echo '--- Failed tests ---'
+          find app/build/test-results/testDebugUnitTest -name 'TEST-*.xml' -type f -print0 2>/dev/null \
+            | xargs -0 grep -H -n -E '<failure|<error' || true
+          echo '--- Failure context ---'
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          root = Path('app/build/test-results/testDebugUnitTest')
+          for p in root.glob('TEST-*.xml'):
+              try:
+                  suite = ET.parse(p).getroot()
+              except Exception:
+                  continue
+              for case in suite.findall('testcase'):
+                  bad = case.find('failure') or case.find('error')
+                  if bad is not None:
+                      print(f"FAILED {case.get('classname')}.{case.get('name')}")
+                      print((bad.get('message') or '').strip())
+                      print((bad.text or '').strip()[:3000])
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
