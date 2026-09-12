@@ -9,8 +9,15 @@ import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.Base64
+import kotlin.math.sqrt
 
-/** Single-file glTF 2.0 / GLB export from the exact semantic 3D scene used by the app. */
+/**
+ * Single-file glTF 2.0 / GLB export from the exact semantic 3D scene used by the app.
+ *
+ * Geometry stays owned by Geometry V3 / Architectural3DEnhancementEngine. The exporter only
+ * prepares a render representation and now emits vertex normals so Filament can use its real
+ * physically based lighting pipeline instead of a flat/unlit approximation.
+ */
 object GltfPlanExporter {
     private data class Slice(val offset: Int, val length: Int)
     private data class Built(val json: JSONObject, val bin: ByteArray)
@@ -51,9 +58,13 @@ object GltfPlanExporter {
         val materials = materialLibrary()
 
         scene.meshes.forEach { mesh ->
-            val posBytes = ByteBuffer.allocate(mesh.vertices.size * 12).order(ByteOrder.LITTLE_ENDIAN)
+            if (mesh.vertices.isEmpty()) return@forEach
             val converted = mesh.vertices.map { v -> floatArrayOf(v.x.toFloat(), v.z.toFloat(), (-v.y).toFloat()) }
-            converted.forEach { p -> p.forEach { value -> posBytes.putFloat(value) } }
+            val triangles = triangulate(mesh.faces)
+            if (triangles.isEmpty()) return@forEach
+
+            val posBytes = ByteBuffer.allocate(converted.size * 12).order(ByteOrder.LITTLE_ENDIAN)
+            converted.forEach { p -> p.forEach(posBytes::putFloat) }
             val posSlice = appendAligned(bin, posBytes.array())
             val posView = bufferViews.length()
             bufferViews.put(JSONObject().put("buffer", 0).put("byteOffset", posSlice.offset).put("byteLength", posSlice.length).put("target", 34962))
@@ -71,9 +82,23 @@ object GltfPlanExporter {
                     .put("max", JSONArray(listOf(xs.maxOrNull() ?: 0f, ys.maxOrNull() ?: 0f, zs.maxOrNull() ?: 0f)))
             )
 
-            val triangles = triangulate(mesh.faces)
+            val normals = smoothNormals(converted, triangles)
+            val normalBytes = ByteBuffer.allocate(normals.size * 12).order(ByteOrder.LITTLE_ENDIAN)
+            normals.forEach { n -> n.forEach(normalBytes::putFloat) }
+            val normalSlice = appendAligned(bin, normalBytes.array())
+            val normalView = bufferViews.length()
+            bufferViews.put(JSONObject().put("buffer", 0).put("byteOffset", normalSlice.offset).put("byteLength", normalSlice.length).put("target", 34962))
+            val normalAccessor = accessors.length()
+            accessors.put(
+                JSONObject()
+                    .put("bufferView", normalView)
+                    .put("componentType", 5126)
+                    .put("count", normals.size)
+                    .put("type", "VEC3")
+            )
+
             val indexBytes = ByteBuffer.allocate(triangles.size * 4).order(ByteOrder.LITTLE_ENDIAN)
-            triangles.forEach { indexBytes.putInt(it) }
+            triangles.forEach(indexBytes::putInt)
             val idxSlice = appendAligned(bin, indexBytes.array())
             val idxView = bufferViews.length()
             bufferViews.put(JSONObject().put("buffer", 0).put("byteOffset", idxSlice.offset).put("byteLength", idxSlice.length).put("target", 34963))
@@ -81,7 +106,7 @@ object GltfPlanExporter {
             accessors.put(JSONObject().put("bufferView", idxView).put("componentType", 5125).put("count", triangles.size).put("type", "SCALAR"))
 
             val primitive = JSONObject()
-                .put("attributes", JSONObject().put("POSITION", posAccessor))
+                .put("attributes", JSONObject().put("POSITION", posAccessor).put("NORMAL", normalAccessor))
                 .put("indices", idxAccessor)
                 .put("material", materialIndex(mesh.kind))
                 .put("mode", 4)
@@ -97,7 +122,7 @@ object GltfPlanExporter {
 
         val rootNodes = JSONArray((0 until nodes.length()).toList())
         val json = JSONObject()
-            .put("asset", JSONObject().put("version", "2.0").put("generator", "Manzili HAI 0.24"))
+            .put("asset", JSONObject().put("version", "2.0").put("generator", "Manzili HAI 0.44"))
             .put("scene", 0)
             .put("scenes", JSONArray().put(JSONObject().put("nodes", rootNodes).put("name", scene.title)))
             .put("nodes", nodes)
@@ -106,18 +131,41 @@ object GltfPlanExporter {
             .put("bufferViews", bufferViews)
             .put("accessors", accessors)
             .put("buffers", JSONArray().put(JSONObject().put("byteLength", bin.size())))
-            .put("extras", JSONObject().put("metricReady", scene.metricReady).put("units", scene.units))
+            .put("extras", JSONObject().put("metricReady", scene.metricReady).put("units", scene.units).put("pbrReady", true))
         return Built(json, bin.toByteArray())
     }
 
+    private fun smoothNormals(vertices: List<FloatArray>, triangles: IntArray): List<FloatArray> {
+        val sums = Array(vertices.size) { FloatArray(3) }
+        var i = 0
+        while (i + 2 < triangles.size) {
+            val ia = triangles[i]; val ib = triangles[i + 1]; val ic = triangles[i + 2]; i += 3
+            if (ia !in vertices.indices || ib !in vertices.indices || ic !in vertices.indices) continue
+            val a = vertices[ia]; val b = vertices[ib]; val c = vertices[ic]
+            val abx = b[0] - a[0]; val aby = b[1] - a[1]; val abz = b[2] - a[2]
+            val acx = c[0] - a[0]; val acy = c[1] - a[1]; val acz = c[2] - a[2]
+            val nx = aby * acz - abz * acy
+            val ny = abz * acx - abx * acz
+            val nz = abx * acy - aby * acx
+            for (idx in intArrayOf(ia, ib, ic)) {
+                sums[idx][0] += nx; sums[idx][1] += ny; sums[idx][2] += nz
+            }
+        }
+        return sums.map { n ->
+            val length = sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2])
+            if (length > 0.000001f) floatArrayOf(n[0] / length, n[1] / length, n[2] / length)
+            else floatArrayOf(0f, 1f, 0f)
+        }
+    }
+
     private fun materialLibrary(): JSONArray = JSONArray()
-        .put(material("Wall", 0.80, 0.76, 0.70, 1.0, 0.78))
-        .put(material("Slab", 0.62, 0.62, 0.60, 1.0, 0.88))
-        .put(material("Structure", 0.48, 0.35, 0.22, 1.0, 0.82))
-        .put(material("Door", 0.38, 0.23, 0.13, 1.0, 0.72))
-        .put(material("Glass", 0.38, 0.64, 0.78, 0.42, 0.20, true))
-        .put(material("Roof", 0.46, 0.43, 0.38, 1.0, 0.86))
-        .put(material("Other", 0.70, 0.68, 0.64, 1.0, 0.80))
+        .put(material("Saudi Plaster", 0.84, 0.80, 0.73, 1.0, 0.82))
+        .put(material("Concrete Slab", 0.58, 0.59, 0.57, 1.0, 0.91))
+        .put(material("Structure", 0.47, 0.34, 0.22, 1.0, 0.79))
+        .put(material("Timber Door", 0.35, 0.20, 0.11, 1.0, 0.62))
+        .put(material("Architectural Glass", 0.32, 0.58, 0.70, 0.34, 0.12, true))
+        .put(material("Roof / Parapet", 0.48, 0.45, 0.40, 1.0, 0.88))
+        .put(material("Architectural Accent", 0.67, 0.64, 0.58, 1.0, 0.76))
 
     private fun material(name: String, r: Double, g: Double, b: Double, a: Double, roughness: Double, blend: Boolean = false): JSONObject =
         JSONObject()
@@ -137,7 +185,7 @@ object GltfPlanExporter {
         "structural" -> 2
         "door" -> 3
         "window" -> 4
-        "roof" -> 5
+        "roof", "saudi-parapet" -> 5
         else -> 6
     }
 
