@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from .cubicasa_model import model_status
 from .parser import parse_floorplan
 
-app = FastAPI(title="Manzili HAI Backend", version="0.34.0")
+app = FastAPI(title="Manzili HAI Backend", version="0.41.0")
 
 
 class ParseRequest(BaseModel):
@@ -65,6 +65,19 @@ async def health() -> dict[str, Any]:
         "floorplan_model_configured": bool(floorplan.get("configured")),
         "deep_parser_ready": bool(floorplan.get("configured")),
         "floorplan_model": floorplan,
+    }
+
+
+@app.get("/readyz")
+async def readiness() -> dict[str, Any]:
+    floorplan = model_status()
+    if not floorplan.get("configured"):
+        raise HTTPException(503, "Deep Parser model weights are not loaded")
+    return {
+        "ok": True,
+        "version": app.version,
+        "deep_parser_ready": True,
+        "model": floorplan,
     }
 
 
