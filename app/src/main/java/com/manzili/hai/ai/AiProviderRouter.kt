@@ -10,6 +10,7 @@ import com.google.mlkit.genai.prompt.TextPart
 import com.google.mlkit.genai.prompt.generateContentRequest
 import com.manzili.hai.data.HaiSettings
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -22,9 +23,8 @@ import java.util.concurrent.TimeUnit
 
 /**
  * One simple AI entry point for HAI.
- *
- * Priority: strongest selected cloud model -> weaker selected models -> on-device Gemini Nano.
- * API keys are supplied by the user and kept in EncryptedSharedPreferences; no provider key is bundled in the APK.
+ * Priority: strongest selected model -> weaker selected models -> local Gemini Nano.
+ * API keys are supplied by the user and kept encrypted on-device; no provider key is bundled in the APK.
  */
 class AiProviderRouter(private val context: Context) {
     enum class Provider { OPENROUTER, GOOGLE, NANO }
@@ -72,16 +72,13 @@ class AiProviderRouter(private val context: Context) {
                 models += ModelOption(Provider.OPENROUTER, id, item.optString("name", id), AiRoutingPolicy.strength(id), vision)
             }
             if (models.none { it.id == "openrouter/free" }) {
-                models += ModelOption(Provider.OPENROUTER, "openrouter/free", "OpenRouter Free Router", 150, true)
+                models += ModelOption(Provider.OPENROUTER, "openrouter/free", "OpenRouter Free Router", AiRoutingPolicy.strength("openrouter/free"), true)
             }
             models.distinctBy { it.id }.sortedByDescending { it.score }
         }
     }
 
-    /**
-     * Gemini's models.list endpoint does not expose a billing/free boolean. We therefore show free-tier
-     * candidates (Flash/Lite families) from the models actually exposed to this API key.
-     */
+    /** Gemini models.list has no free/billing flag, so only Flash/Lite free-tier candidates are surfaced. */
     suspend fun discoverGoogleFreeCandidates(apiKey: String): List<ModelOption> = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext emptyList()
         val req = Request.Builder()
@@ -94,13 +91,11 @@ class AiProviderRouter(private val context: Context) {
             val all = mutableListOf<ModelOption>()
             for (i in 0 until arr.length()) {
                 val item = arr.optJSONObject(i) ?: continue
-                val raw = item.optString("name")
-                val id = raw.removePrefix("models/")
+                val id = item.optString("name").removePrefix("models/")
                 val methods = item.optJSONArray("supportedGenerationMethods")
                 val canGenerate = methods?.let { a -> (0 until a.length()).any { a.optString(it) == "generateContent" } } == true
                 if (!canGenerate || !id.startsWith("gemini", true)) continue
-                val freeCandidate = id.contains("flash", true) || id.contains("lite", true)
-                if (!freeCandidate) continue
+                if (!id.contains("flash", true) && !id.contains("lite", true)) continue
                 all += ModelOption(Provider.GOOGLE, id, item.optString("displayName", id), AiRoutingPolicy.strength(id), true)
             }
             all.distinctBy { it.id }.sortedByDescending { it.score }
@@ -161,7 +156,7 @@ class AiProviderRouter(private val context: Context) {
         if (settings.googleApiKey.isNotBlank()) {
             settings.googleModels.forEach { id -> out += ModelOption(Provider.GOOGLE, id, id, AiRoutingPolicy.strength(id), true) }
         }
-        if (settings.nanoEnabled) out += ModelOption(Provider.NANO, "gemini-nano", "Gemini Nano", 45, true)
+        if (settings.nanoEnabled) out += ModelOption(Provider.NANO, "gemini-nano", "Gemini Nano", AiRoutingPolicy.strength("gemini-nano"), true)
         return out.filter { !needsVision || it.vision }.distinctBy { "${it.provider}:${it.id}" }
     }
 
@@ -184,14 +179,16 @@ class AiProviderRouter(private val context: Context) {
             .build()
         http.newCall(req).execute().use { res ->
             val body = res.body?.string().orEmpty()
-            if (!res.isSuccessful) throw ProviderFailure(res.code, "OpenRouter ${res.code}: ${body.take(220)}")
+            if (!res.isSuccessful) throw IOException("OpenRouter ${res.code}: ${body.take(220)}")
             return JSONObject(body).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
         }
     }
 
     private fun callGoogle(model: String, system: String, user: String, imageBase64: String?): String {
         val parts = JSONArray().put(JSONObject().put("text", user))
-        if (!imageBase64.isNullOrBlank()) parts.put(JSONObject().put("inlineData", JSONObject().put("mimeType", "image/jpeg").put("data", imageBase64)))
+        if (!imageBase64.isNullOrBlank()) {
+            parts.put(JSONObject().put("inlineData", JSONObject().put("mimeType", "image/jpeg").put("data", imageBase64)))
+        }
         val payload = JSONObject()
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", parts)))
@@ -203,7 +200,7 @@ class AiProviderRouter(private val context: Context) {
             .build()
         http.newCall(req).execute().use { res ->
             val body = res.body?.string().orEmpty()
-            if (!res.isSuccessful) throw ProviderFailure(res.code, "Google ${res.code}: ${body.take(220)}")
+            if (!res.isSuccessful) throw IOException("Google ${res.code}: ${body.take(220)}")
             val partsOut = JSONObject(body).getJSONArray("candidates").getJSONObject(0).getJSONObject("content").getJSONArray("parts")
             return buildString { for (i in 0 until partsOut.length()) append(partsOut.optJSONObject(i)?.optString("text").orEmpty()) }
         }
@@ -225,14 +222,12 @@ class AiProviderRouter(private val context: Context) {
 
     private fun zeroPrice(value: String?): Boolean = value?.toDoubleOrNull()?.let { it == 0.0 } == true
 
-    private class ProviderFailure(val statusCode: Int, message: String) : IOException(message)
-
     companion object {
         private val JSON = "application/json".toMediaType()
     }
 }
 
-/** Pure policy kept separate so ranking/fallback behavior is regression-testable. */
+/** Pure policy so ranking/fallback behavior stays regression-testable. */
 object AiRoutingPolicy {
     fun strength(id: String): Int {
         val s = id.lowercase()
@@ -249,7 +244,7 @@ object AiRoutingPolicy {
             "mini" in s -> score -= 8
             "nano" in s -> score -= 25
         }
-        if (s == "openrouter/free") score = 150
+        if (s == "openrouter/free") score = 60
         return score
     }
 
