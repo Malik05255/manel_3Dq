@@ -43,6 +43,17 @@ data class Opening(
     val locked: Boolean = false
 )
 
+data class ProjectConstraint(
+    val id: String,
+    val kind: String,
+    val text: String,
+    val targetIds: List<String> = emptyList(),
+    val value: Double? = null,
+    val hard: Boolean = true,
+    val priority: Int = 90,
+    val active: Boolean = true
+)
+
 data class PlanPreferences(
     val privacyPriority: Int = 80,
     val circulationPriority: Int = 80,
@@ -62,6 +73,7 @@ data class FloorPlan(
     val uncertainties: List<String> = emptyList(),
     val sourceSummary: String = "",
     val preferences: PlanPreferences = PlanPreferences(),
+    val constraints: List<ProjectConstraint> = emptyList(),
     val revision: Int = 1
 )
 
