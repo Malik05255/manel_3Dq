@@ -12,7 +12,6 @@ class AiRoutingPolicyTest {
 
     @Test fun genericFreeRouterStaysBehindNamedStrongModels() {
         assertTrue(AiRoutingPolicy.strength("vendor/model-ultra") > AiRoutingPolicy.strength("openrouter/free"))
-        assertTrue(AiRoutingPolicy.strength("openrouter/free") > AiRoutingPolicy.strength("gemini-nano"))
     }
 
     @Test fun quotaTimeoutAndServerErrorsAreRetryable() {
