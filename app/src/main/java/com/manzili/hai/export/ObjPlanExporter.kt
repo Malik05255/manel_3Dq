@@ -1,12 +1,13 @@
 package com.manzili.hai.export
 
+import com.manzili.hai.engine.Architectural3DEnhancementEngine
 import com.manzili.hai.engine.Semantic3DEngine
 import com.manzili.hai.model.FloorPlan
 import java.util.Locale
 
-/** Wavefront OBJ export generated from the canonical semantic 3D scene. */
+/** Wavefront OBJ export generated from the same enhanced semantic 3D scene shown in the app. */
 object ObjPlanExporter {
-    fun render(plan: FloorPlan): String = renderScene(Semantic3DEngine.build(plan))
+    fun render(plan: FloorPlan): String = renderScene(Architectural3DEnhancementEngine.build(plan))
 
     fun renderScene(scene: Semantic3DEngine.Scene): String = buildString {
         appendLine("# Manzili HAI semantic 3D export")
@@ -21,9 +22,7 @@ object ObjPlanExporter {
             appendLine()
             appendLine("g ${sanitize(mesh.floorId)}_${sanitize(mesh.kind)}_${sanitize(mesh.sourceId)}")
             appendLine("# source=${sanitize(mesh.sourceId)} kind=${sanitize(mesh.kind)}")
-            mesh.vertices.forEach { v ->
-                appendLine("v ${f(v.x)} ${f(v.y)} ${f(v.z)}")
-            }
+            mesh.vertices.forEach { v -> appendLine("v ${f(v.x)} ${f(v.y)} ${f(v.z)}") }
             mesh.faces.forEach { face ->
                 if (face.indices.size >= 3) {
                     append("f")
@@ -40,7 +39,8 @@ object ObjPlanExporter {
             appendLine(
                 "# opening id=${sanitize(opening.id)} type=${sanitize(opening.type)} wall=${sanitize(opening.wallId ?: "unlinked")}" +
                     " center=${f(opening.center.x)},${f(opening.center.y)},${f(opening.center.z)}" +
-                    " width=${f(opening.width)} sill=${f(opening.sillHeight)} height=${f(opening.height)} confidence=${opening.confidence}"
+                    " width=${f(opening.width)} sill=${f(opening.sillHeight)} height=${f(opening.height)} confidence=${opening.confidence}" +
+                    " vertical_verified=${opening.verticalVerified}"
             )
         }
     }
