@@ -17,8 +17,8 @@ android {
         applicationId = "com.manzili.hai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 62
-        versionName = "0.62.0"
+        versionCode = 63
+        versionName = "0.63.0"
     }
 
     if (releaseSigningReady) {
@@ -68,6 +68,7 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.google.mlkit:genai-prompt:1.0.0-beta4")
     implementation("io.github.sceneview:sceneview:2.2.1")
 
     testImplementation("junit:junit:4.13.2")
