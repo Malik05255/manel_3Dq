@@ -66,12 +66,13 @@ class EngineRegressionTest {
         assertTrue(normalized.observations.any { it.contains("لا يساوي اشتراطًا رسميًا") })
     }
 
-    @Test fun saudiBriefPersistsLifestyleAndRoadEvidence() {
+    @Test fun saudiBriefPersistsLifestyleAndRoadEvidenceWithoutEnablingOfficialRules() {
         val brief=SaudiResidentialEngine.Brief(city="الرياض",parkingCars=3,courtyard=true,streetSide="شمال",streetWidthM=20.0,architectureStyle="نجدي معاصر")
         val plan=SaudiResidentialEngine.apply(FloorPlan(site=SiteContext(countryCode="SA")),brief)
-        assertTrue(plan.saudiRulesEnabled); assertEquals(20.0,plan.site.roads.single().widthM!!,0.001)
+        assertFalse(plan.saudiRulesEnabled); assertEquals(20.0,plan.site.roads.single().widthM!!,0.001)
         assertTrue(plan.constraints.any { it.kind==SaudiResidentialEngine.PARKING_KIND && it.value==3.0 })
         assertEquals("نجدي معاصر",SaudiResidentialEngine.styleLabel(plan))
+        assertTrue(plan.observations.any { it.contains("اختيارية") })
     }
 
     @Test fun projectTypeIsPersistedAndDetected() {
@@ -96,6 +97,7 @@ class EngineRegressionTest {
         assertTrue(plan.constraints.any { it.kind == SaudiDeepBriefEngine.FUTURE && it.value == 1.0 })
         assertTrue(plan.constraints.any { it.kind == SaudiDeepBriefEngine.NEIGHBOR })
         assertTrue(plan.constraints.any { it.kind == SaudiDeepBriefEngine.CORNER })
+        assertFalse(plan.saudiRulesEnabled)
     }
 
     @Test fun multiPageFusionCreatesIndependentFloorsAndIds() {
