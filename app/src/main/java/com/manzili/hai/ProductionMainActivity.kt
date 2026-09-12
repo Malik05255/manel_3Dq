@@ -112,7 +112,7 @@ private fun ProductionApp() {
                 composable("editor"){OptionalRulesStage(nav,plan,pendingRulesEnabled,::toggleExistingRules){EnhancedEditor(nav,plan){updateProject(it)}}}
                 composable("polygon"){OptionalRulesStage(nav,plan,pendingRulesEnabled,::toggleExistingRules){PolygonVertexEditorScreen(nav,plan){updateProject(it)}}}
                 composable("floors"){OptionalRulesStage(nav,plan,pendingRulesEnabled,::toggleExistingRules){ProjectFloorsScreen(nav,plan){updateProject(it)}}}
-                composable("3d"){OptionalRulesStage(nav,plan,pendingRulesEnabled,::toggleExistingRules){Production3DScreenV2(nav,plan)}}
+                composable("3d"){OptionalRulesStage(nav,plan,pendingRulesEnabled,::toggleExistingRules){Production3DScreenV3(nav,plan)}}
                 composable("walkthrough"){OptionalRulesStage(nav,plan,pendingRulesEnabled,::toggleExistingRules){WalkthroughScreen(nav,plan)}}
                 composable("saudi-audit"){OptionalRulesStage(nav,plan,pendingRulesEnabled,::toggleExistingRules){SaudiPlanAuditScreen(nav,plan)}}
                 composable("4d"){OptionalRulesStage(nav,plan,pendingRulesEnabled,::toggleExistingRules){Saudi4DScreen(nav,plan)}}
@@ -132,12 +132,12 @@ private fun ProductionHome(nav:NavHostController,plan:FloorPlan?,count:Int){
     Surface(Modifier.fillMaxSize(),color=Color(0xFFF7F4EE)){
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(20.dp)){
             Text("منزلي HAI",fontSize=22.sp,fontWeight=FontWeight.Black)
-            Text("$count مشروع • Saudi-first 2D/3D/4D • Geometry V3 • Deep Parser",color=Color.Gray,fontSize=10.sp)
+            Text("$count مشروع • Saudi-first 2D/PBR 3D/4D • Geometry V3 • Deep Parser",color=Color.Gray,fontSize=10.sp)
             Spacer(Modifier.height(18.dp));Text("مشروعك السعودي\nمن الفكرة إلى التنفيذ.",fontSize=34.sp,lineHeight=39.sp,fontWeight=FontWeight.Black);Spacer(Modifier.height(16.dp))
             if(plan!=null){
                 val type=SaudiProjectTypeEngine.infer(plan);Text("${type.label} • ${plan.title}",fontWeight=FontWeight.Bold,fontSize=11.sp,color=Color(0xFF706B62));Spacer(Modifier.height(5.dp))
                 Button(onClick={nav.navigate("editor")},modifier=Modifier.fillMaxWidth().height(54.dp)){Icon(Icons.Rounded.Architecture,null);Spacer(Modifier.width(7.dp));Text("أكمل المشروع")};Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement=Arrangement.spacedBy(7.dp)){OutlinedButton(onClick={nav.navigate("saudi-audit")},modifier=Modifier.weight(1f)){Icon(Icons.Rounded.HomeWork,null);Spacer(Modifier.width(4.dp));Text("مراجعة سعودية")};OutlinedButton(onClick={nav.navigate("3d")},modifier=Modifier.weight(1f)){Icon(Icons.Rounded.ViewInAr,null);Spacer(Modifier.width(4.dp));Text("3D واقعي")}}
+                Row(horizontalArrangement=Arrangement.spacedBy(7.dp)){OutlinedButton(onClick={nav.navigate("saudi-audit")},modifier=Modifier.weight(1f)){Icon(Icons.Rounded.HomeWork,null);Spacer(Modifier.width(4.dp));Text("مراجعة سعودية")};OutlinedButton(onClick={nav.navigate("3d")},modifier=Modifier.weight(1f)){Icon(Icons.Rounded.ViewInAr,null);Spacer(Modifier.width(4.dp));Text("3D PBR")}}
                 Spacer(Modifier.height(6.dp));Row(horizontalArrangement=Arrangement.spacedBy(7.dp)){OutlinedButton(onClick={nav.navigate("walkthrough")},modifier=Modifier.weight(1f)){Icon(Icons.Rounded.DirectionsWalk,null);Spacer(Modifier.width(4.dp));Text("جولة داخلية")};OutlinedButton(onClick={nav.navigate("4d")},modifier=Modifier.weight(1f)){Icon(Icons.Rounded.Schedule,null);Spacer(Modifier.width(4.dp));Text("4D")}}
                 Spacer(Modifier.height(6.dp));Row(horizontalArrangement=Arrangement.spacedBy(7.dp)){OutlinedButton(onClick={nav.navigate("saudi-rules")},modifier=Modifier.weight(1f)){Icon(if(plan.saudiRulesEnabled)Icons.Rounded.FactCheck else Icons.Rounded.AddTask,null);Spacer(Modifier.width(4.dp));Text(if(plan.saudiRulesEnabled)"الاشتراطات مفعلة" else "اشتراطات اختيارية")};OutlinedButton(onClick={nav.navigate("floors")},modifier=Modifier.weight(1f)){Text("الأدوار")}}
                 Spacer(Modifier.height(5.dp));Row(horizontalArrangement=Arrangement.spacedBy(7.dp)){OutlinedButton(onClick={nav.navigate("polygon")},modifier=Modifier.weight(1f)){Text("Polygon")};OutlinedButton(onClick={nav.navigate("export")},modifier=Modifier.weight(1f)){Text("تصدير")};OutlinedButton(onClick={nav.navigate("projects")},modifier=Modifier.weight(1f)){Text("مشاريعي")}}
