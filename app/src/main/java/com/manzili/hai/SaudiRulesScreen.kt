@@ -17,9 +17,11 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import com.manzili.hai.engine.SaudiRulesEngine
 import com.manzili.hai.model.FloorPlan
+import com.manzili.hai.model.PlanPoint
+import com.manzili.hai.model.RoadEdge
 
 @Composable
-fun SaudiRulesScreen(nav: NavHostController, plan: FloorPlan?) {
+fun SaudiRulesScreen(nav: NavHostController, plan: FloorPlan?, onUpdate: (FloorPlan) -> Unit) {
     Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F4EE)) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -33,9 +35,39 @@ fun SaudiRulesScreen(nav: NavHostController, plan: FloorPlan?) {
                 Text("لا يوجد مشروع مفتوح")
                 return@Column
             }
+            var city by remember(plan.revision) { mutableStateOf(plan.site.city) }
+            var roadName by remember(plan.revision) { mutableStateOf(plan.site.roads.firstOrNull()?.name ?: "الشارع الأمامي") }
+            var roadWidth by remember(plan.revision) { mutableStateOf(plan.site.roads.firstOrNull()?.widthM?.toString() ?: "") }
+            var north by remember(plan.revision) { mutableStateOf((plan.site.northDeg ?: plan.northDeg ?: 0f).toString()) }
             val report = remember(plan) { SaudiRulesEngine.inspect(plan) }
-            Text("يعرض ما تم فحصه وما يحتاج بيانات إضافية بدون افتراض أرقام غير موجودة.", color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(bottom = 12.dp))
+            Text("يعرض ما تم فحصه وما يحتاج بيانات إضافية بدون افتراض أرقام غير موجودة.", color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(bottom = 8.dp))
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFEFA)), shape = RoundedCornerShape(17.dp)) {
+                    Column(Modifier.padding(11.dp)) {
+                        Text("بيانات الموقع للفحص", fontWeight = FontWeight.Black, fontSize = 12.sp)
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedTextField(city, { city = it }, label = { Text("المدينة") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            OutlinedTextField(roadName, { roadName = it }, label = { Text("اسم الشارع") }, modifier = Modifier.weight(1.3f), singleLine = true)
+                            OutlinedTextField(roadWidth, { roadWidth = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("عرضه م") }, modifier = Modifier.weight(.7f), singleLine = true)
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedTextField(north, { north = it.filter { c -> c.isDigit() || c == '.' || c == '-' } }, label = { Text("اتجاه الشمال °") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        Spacer(Modifier.height(7.dp))
+                        Button(onClick = {
+                            val boundary = plan.site.plotBoundary.ifEmpty { plan.footprint.ifEmpty { listOf(PlanPoint(0f,0f), PlanPoint(100f,0f), PlanPoint(100f,100f), PlanPoint(0f,100f)) } }
+                            val width = roadWidth.toDoubleOrNull()?.takeIf { it > 0 }
+                            val roads = if (width != null) listOf(RoadEdge("front-road", roadName.ifBlank { "الشارع الأمامي" }, PlanPoint(0f,0f), PlanPoint(100f,0f), width)) else plan.site.roads
+                            val northDeg = north.toFloatOrNull()?.let { ((it % 360f) + 360f) % 360f }
+                            onUpdate(plan.copy(
+                                site = plan.site.copy(city = city.trim(), plotBoundary = boundary, roads = roads, northDeg = northDeg),
+                                northDeg = northDeg ?: plan.northDeg,
+                                revision = plan.revision + 1
+                            ))
+                        }, modifier = Modifier.fillMaxWidth()) { Text("حفظ بيانات الموقع ثم إعادة الفحص") }
+                    }
+                }
                 report.checks.forEach { check ->
                     Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(17.dp)) {
                         Column(Modifier.padding(11.dp)) {
