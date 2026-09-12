@@ -13,19 +13,24 @@ object ArchitecturalEngine {
     fun score(plan: FloorPlan): PlanScore {
         if (plan.rooms.isEmpty()) return PlanScore(0, 0, 0, 0, 0, listOf("لا توجد غرف كافية للتقييم"))
         val graph = SpatialGraphEngine.analyze(plan)
+        val structure = StructuralGeometryEngine.inspect(plan)
         val known = plan.rooms.filter { it.areaM2 > 0 }.sumOf { it.areaM2 }
         val circulation = plan.rooms.filter { circulation(it) && it.areaM2 > 0 }.sumOf { it.areaM2 }
         val ratio = if (known > 0) circulation / known else 0.12
         val efficiency = (100 - ratio * 190).toInt().coerceIn(35, 100)
-        val confidence = plan.rooms.map { it.confidence }.average().toInt().coerceIn(0, 100)
+        val roomConfidence = plan.rooms.map { it.confidence }.average().toInt().coerceIn(0, 100)
+        val confidence = if (structure.confidence > 0) ((roomConfidence * .72) + (structure.confidence * .28)).toInt() else roomConfidence
         val privacy = (82 - graph.privacyContacts.size * 10).coerceIn(35, 100)
-        val geometry = (100 - overlapPenalty(plan) - graph.isolated.size.coerceAtMost(4) * 4).coerceIn(20, 100)
+        val structuralPenalty = structure.errors.size * 15 + structure.warnings.size.coerceAtMost(4) * 3
+        val geometry = (100 - overlapPenalty(plan) - graph.isolated.size.coerceAtMost(4) * 4 - structuralPenalty).coerceIn(20, 100)
         val overall = (efficiency * .30 + privacy * .30 + confidence * .15 + geometry * .25).toInt().coerceIn(0, 100)
         val notes = buildList {
             if (ratio > .16) add("نسبة الممرات مرتفعة ويمكن استرداد جزء منها")
             if (graph.privacyContacts.isNotEmpty()) add("هناك تلامس مكاني بين منطقة ضيوف ومنطقة خاصة")
             if (graph.isolated.isNotEmpty()) add("بعض المساحات تبدو معزولة في القراءة الحالية")
             if (confidence < 80) add("بعض العناصر تحتاج تأكيدًا قبل التعديل")
+            if (plan.walls.isEmpty()) add("الجدران لم تتحول بعد إلى هندسة خطية موثوقة")
+            if (structure.errors.isNotEmpty()) add("بيانات الجدران أو الفتحات تحتوي خطأ هندسيًا")
             if (geometry < 85) add("التمثيل الهندسي يحتاج مراجعة قبل الاعتماد")
         }
         return PlanScore(overall, efficiency, privacy, confidence, geometry, notes)
@@ -57,6 +62,11 @@ object ArchitecturalEngine {
         val newPrivacy = afterGraph.privacyContacts.filterNot { it in beforeGraph.privacyContacts }
         if (newPrivacy.isNotEmpty()) warnings += "ظهر تلامس جديد بين الضيوف والمنطقة الخاصة: ${newPrivacy.joinToString("، ")}"
         if (afterGraph.isolated.size > beforeGraph.isolated.size) warnings += "زاد عدد المساحات المعزولة في التعديل"
+
+        val structure = StructuralGeometryEngine.compare(current, next)
+        errors += structure.errors
+        warnings += structure.warnings
+
         if (proposal.confidence < 65) warnings += "ثقة HAI في الاقتراح منخفضة (${proposal.confidence}%)"
         if (next.uncertainties.isNotEmpty()) warnings += "لا تزال هناك عناصر غير مؤكدة"
         val before = score(current)
@@ -70,7 +80,7 @@ object ArchitecturalEngine {
     fun compactBrief(plan: FloorPlan): String {
         val s = score(plan)
         val locked = plan.rooms.filter { it.locked }.joinToString("، ") { it.name }.ifBlank { "لا يوجد" }
-        return "التقييم ${s.overall}/100، الكفاءة ${s.efficiency}، الخصوصية ${s.privacy}، دقة القراءة ${s.readingConfidence}. المقفل: $locked. ${SpatialGraphEngine.compactBrief(plan)}"
+        return "التقييم ${s.overall}/100، الكفاءة ${s.efficiency}، الخصوصية ${s.privacy}، دقة القراءة ${s.readingConfidence}. المقفل: $locked. ${SpatialGraphEngine.compactBrief(plan)} ${StructuralGeometryEngine.compactBrief(plan)}"
     }
 
     private fun changed(a: Room, b: Room): Boolean =
