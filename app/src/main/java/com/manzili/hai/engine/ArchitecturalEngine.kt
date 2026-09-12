@@ -1,15 +1,33 @@
 package com.manzili.hai.engine
 
 import com.manzili.hai.model.FloorPlan
+import com.manzili.hai.model.Opening
 import com.manzili.hai.model.PlanProposal
 import com.manzili.hai.model.PlanScore
 import com.manzili.hai.model.Room
 import com.manzili.hai.model.ValidationReport
+import com.manzili.hai.model.Wall
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 
 object ArchitecturalEngine {
+    data class ArchitectSuggestion(
+        val title: String,
+        val reason: String,
+        val actionKind: String,
+        val targetIds: List<String> = emptyList(),
+        val priority: Int = 50
+    )
+
+    data class ArchitectReview(
+        val objections: List<String> = emptyList(),
+        val notes: List<String> = emptyList()
+    ) {
+        val hasMaterialObjection: Boolean get() = objections.isNotEmpty()
+    }
+
     fun score(plan: FloorPlan): PlanScore {
         if (plan.rooms.isEmpty()) return PlanScore(0, 0, 0, 0, 0, listOf("لا توجد غرف كافية للتقييم"))
         val graph = SpatialGraphEngine.analyze(plan)
@@ -67,6 +85,10 @@ object ArchitecturalEngine {
         errors += structure.errors
         warnings += structure.warnings
 
+        // رأي HAI المهني: يضيف اعتراضًا فقط عندما توجد خسارة وظيفية فعلية.
+        val architectReview = architecturalReview(current, next)
+        warnings += architectReview.objections
+
         if (proposal.confidence < 65) warnings += "ثقة HAI في الاقتراح منخفضة (${proposal.confidence}%)"
         if (next.uncertainties.isNotEmpty()) warnings += "لا تزال هناك عناصر غير مؤكدة"
         val before = score(current)
@@ -77,10 +99,169 @@ object ArchitecturalEngine {
 
     fun toggleLock(plan: FloorPlan, roomId: String) = plan.copy(rooms = plan.rooms.map { if (it.id == roomId) it.copy(locked = !it.locked) else it })
 
+    /** مقترحات استباقية: HAI لا ينتظر دائمًا أن يطلب المستخدم التعديل. */
+    fun proactiveSuggestions(plan: FloorPlan): List<ArchitectSuggestion> {
+        if (plan.rooms.isEmpty()) return emptyList()
+        val graph = SpatialGraphEngine.analyze(plan)
+        val structure = StructuralGeometryEngine.inspect(plan)
+        val out = mutableListOf<ArchitectSuggestion>()
+
+        plan.rooms.filter { !it.locked && it.areaM2 > 0 }.forEach { room ->
+            val minArea = room.minAreaM2
+            if (minArea != null && room.areaM2 + .05 < minArea) {
+                out += ArchitectSuggestion(
+                    title = "أقترح تكبير ${room.name}",
+                    reason = "مساحتها ${fmt(room.areaM2)}م² أقل من الحد التصميمي المحفوظ ${fmt(minArea)}م².",
+                    actionKind = "EXPAND_ROOM",
+                    targetIds = listOf(room.id),
+                    priority = 96
+                )
+            }
+
+            val preferred = room.preferredAreaM2
+            if (preferred != null && preferred > 0 && room.areaM2 > preferred * 1.22 && !isCoreLiving(room)) {
+                val reclaim = (room.areaM2 - preferred).coerceAtMost(room.areaM2 * .18)
+                if (reclaim >= 1.0) out += ArchitectSuggestion(
+                    title = "يمكن تصغير ${room.name} قليلًا",
+                    reason = "هناك قرابة ${fmt(reclaim)}م² فوق المساحة المفضلة ويمكن استثمارها في فراغ أنفع.",
+                    actionKind = "SHRINK_ROOM",
+                    targetIds = listOf(room.id),
+                    priority = 68
+                )
+            }
+
+            if (circulation(room) && room.areaM2 >= 7.0) {
+                val flexible = graph.candidates.firstOrNull { it.roomName == room.name }?.flexibleAreaM2 ?: 0.0
+                if (flexible >= 1.2) out += ArchitectSuggestion(
+                    title = "أقترح اختصار ${room.name}",
+                    reason = "يمكن استرداد نحو ${fmt(flexible)}م² إذا حافظنا على وضوح مسار الحركة.",
+                    actionKind = "SHRINK_ROOM",
+                    targetIds = listOf(room.id),
+                    priority = 82
+                )
+            }
+        }
+
+        if (graph.privacyContacts.isNotEmpty()) {
+            val canReasonAboutDoors = structure.doorCount > 0 && structure.confidence >= 65
+            out += ArchitectSuggestion(
+                title = if (canReasonAboutDoors) "أقترح إعادة تموضع نقطة دخول/باب" else "أقترح تحسين مسار الضيوف",
+                reason = "هناك علاقة ضيوف/خاص تحتاج فصلًا أفضل: ${graph.privacyContacts.take(2).joinToString("، ")}.",
+                actionKind = if (canReasonAboutDoors) "MOVE_OPENING" else "REPLAN_CIRCULATION",
+                priority = 94
+            )
+        }
+
+        if (graph.roomsWithoutDoor.isNotEmpty() && structure.doorCount > 0) out += ArchitectSuggestion(
+            title = "أقترح مراجعة اتصال بعض المساحات",
+            reason = "لا يظهر اتصال باب موثوق لـ ${graph.roomsWithoutDoor.take(3).joinToString("، ")}.",
+            actionKind = "REVIEW_DOORS",
+            priority = 91
+        )
+
+        if (structure.confidence in 1..64) out += ArchitectSuggestion(
+            title = "ثبّت قراءة البنية أولًا",
+            reason = "ثقة الجدران والفتحات ${structure.confidence}% فقط؛ لا أوصي بنقل بنيوي قبل تأكيد العناصر المشكوك فيها.",
+            actionKind = "VERIFY_STRUCTURE",
+            priority = 98
+        )
+
+        return out.distinctBy { it.title }.sortedByDescending { it.priority }.take(5)
+    }
+
+    /**
+     * مراجعة قبل/بعد بطريقة معماري: إذا التعديل سليم تعود القائمة فارغة ولا يظهر اعتراض للمستخدم.
+     */
+    fun architecturalReview(current: FloorPlan, next: FloorPlan): ArchitectReview {
+        val objections = mutableListOf<String>()
+        val notes = mutableListOf<String>()
+        val currentRooms = current.rooms.associateBy { it.id }
+        val nextRooms = next.rooms.associateBy { it.id }
+        val currentWalls = current.walls.associateBy { it.id }
+        val nextWalls = next.walls.associateBy { it.id }
+        val nextOpenings = next.openings.associateBy { it.id }
+
+        current.openings.filter { isDoor(it) }.forEach { old ->
+            val fresh = nextOpenings[old.id] ?: return@forEach
+            val moved = openingMoved(old, fresh)
+            val relationChanged = old.connectsRoomIds.toSet() != fresh.connectsRoomIds.toSet()
+            if (!moved && !relationChanged) return@forEach
+
+            val beforeRooms = old.connectsRoomIds.mapNotNull { currentRooms[it] }
+            val afterRooms = fresh.connectsRoomIds.mapNotNull { nextRooms[it] }
+
+            if (hasGuestPrivatePair(afterRooms) && !hasGuestPrivatePair(beforeRooms)) {
+                objections += "اعتراضي على نقل الباب ${old.id}: صار يربط منطقة ضيوف بمنطقة خاصة مباشرة، وهذا يضعف الخصوصية."
+            }
+
+            val wasEntrance = likelyEntrance(old, currentWalls)
+            val isEntranceNow = likelyEntrance(fresh, nextWalls)
+            if (wasEntrance || isEntranceNow) {
+                val privateTarget = afterRooms.firstOrNull { isPrivate(it) }
+                if (privateTarget != null) {
+                    objections += "نقل المدخل بهذا الشكل يجعله يتجه مباشرة إلى «${privateTarget.name}»؛ أفضل إبقاء منطقة انتقال قبل المساحة الخاصة."
+                } else if (relationChanged) {
+                    notes += "نقل المدخل غيّر أول مساحة وصول؛ راجع مسار الدخول عند المقارنة بين البدائل."
+                }
+            }
+
+            val oldWall = old.wallId?.let { currentWalls[it] }
+            val newWall = fresh.wallId?.let { nextWalls[it] }
+            if (oldWall?.kind == "external" && newWall != null && oldWall.id != newWall.id && newWall.kind != "external") {
+                objections += "الباب ${old.id} كان على جدار خارجي وانتقل إلى جدار غير خارجي؛ هذا يغيّر وظيفة المدخل وليس موضعه فقط."
+            }
+        }
+
+        current.walls.forEach { old ->
+            val fresh = nextWalls[old.id] ?: return@forEach
+            if (!wallMoved(old, fresh)) return@forEach
+            val carriesEntrance = current.openings.any { it.wallId == old.id && isDoor(it) && likelyEntrance(it, currentWalls) }
+            if (carriesEntrance) objections += "تحريك الجدار ${old.id} يؤثر على مدخل مرتبط به؛ لازم نراجع مسار الدخول قبل الاعتماد."
+        }
+
+        val beforeGraph = SpatialGraphEngine.analyze(current)
+        val afterGraph = SpatialGraphEngine.analyze(next)
+        val newlyNoDoor = afterGraph.roomsWithoutDoor.toSet() - beforeGraph.roomsWithoutDoor.toSet()
+        if (newlyNoDoor.isNotEmpty() && afterGraph.doorConnections.isNotEmpty()) {
+            objections += "بعد التعديل فقدت ${newlyNoDoor.take(3).joinToString("، ")} اتصال باب واضحًا؛ النقل يحتاج إعادة ربط الحركة."
+        }
+
+        val beforeScore = score(current)
+        val afterScore = score(next)
+        if (afterScore.privacy + 9 < beforeScore.privacy) {
+            objections += "الخصوصية تنخفض بوضوح (${beforeScore.privacy} ← ${afterScore.privacy})؛ أفضّل بديلًا يحافظ على الفصل بين الضيوف والعائلة."
+        }
+        if (afterScore.efficiency + 12 < beforeScore.efficiency) {
+            objections += "الحركة تصبح أقل كفاءة (${beforeScore.efficiency} ← ${afterScore.efficiency})؛ التعديل يضيف دورانًا أو هدرًا أكبر من فائدته."
+        }
+
+        current.rooms.forEach { old ->
+            val fresh = nextRooms[old.id] ?: return@forEach
+            val minArea = old.minAreaM2 ?: return@forEach
+            if (old.areaM2 + .05 >= minArea && fresh.areaM2 > 0 && fresh.areaM2 + .05 < minArea) {
+                objections += "تصغير «${old.name}» إلى ${fmt(fresh.areaM2)}م² يتجاوز الحد التصميمي المحفوظ ${fmt(minArea)}م²؛ لا أوصي به بدون تنازل صريح منك."
+            }
+        }
+
+        return ArchitectReview(objections.distinct(), notes.distinct())
+    }
+
     fun compactBrief(plan: FloorPlan): String {
         val s = score(plan)
         val locked = plan.rooms.filter { it.locked }.joinToString("، ") { it.name }.ifBlank { "لا يوجد" }
-        return "التقييم ${s.overall}/100، الكفاءة ${s.efficiency}، الخصوصية ${s.privacy}، دقة القراءة ${s.readingConfidence}. المقفل: $locked. ${SpatialGraphEngine.compactBrief(plan)} ${StructuralGeometryEngine.compactBrief(plan)}"
+        val suggestions = proactiveSuggestions(plan).take(4).joinToString(" | ") { "${it.title}: ${it.reason}" }.ifBlank { "لا توجد ملاحظة استباقية قوية" }
+        return "التقييم ${s.overall}/100، الكفاءة ${s.efficiency}، الخصوصية ${s.privacy}، دقة القراءة ${s.readingConfidence}. المقفل: $locked. ${SpatialGraphEngine.compactBrief(plan)} ${StructuralGeometryEngine.compactBrief(plan)} المقترحات المهنية الحالية: $suggestions."
+    }
+
+    fun initialArchitectMessage(plan: FloorPlan): String {
+        val suggestions = proactiveSuggestions(plan).take(3)
+        if (suggestions.isEmpty()) return plan.sourceSummary
+        val base = plan.sourceSummary.trim()
+        val advice = suggestions.joinToString("\n") { "• ${it.title} — ${it.reason}" }
+        return buildString {
+            if (base.isNotBlank()) append(base).append("\n\n")
+            append("ملاحظاتي الأولى كمراجعة معمارية:\n").append(advice)
+        }
     }
 
     private fun changed(a: Room, b: Room): Boolean =
@@ -116,5 +297,31 @@ object ArchitecturalEngine {
         val s = (r.type + " " + r.name).lowercase()
         return listOf("corridor", "hallway", "passage", "ممر", "مدخل", "لوبي").any { s.contains(it) }
     }
+
+    private fun isCoreLiving(r: Room): Boolean {
+        val s = (r.type + " " + r.name).lowercase()
+        return listOf("majlis", "مجلس", "family", "عائل", "living", "صالة").any { s.contains(it) }
+    }
+
+    private fun isDoor(o: Opening) = o.type.lowercase().contains("door") || o.type.contains("باب")
+
+    private fun likelyEntrance(o: Opening, walls: Map<String, Wall>): Boolean {
+        if (!isDoor(o)) return false
+        val externalWall = o.wallId?.let { walls[it]?.kind == "external" } == true
+        val nearBoundary = o.x <= 5f || o.x >= 95f || o.y <= 5f || o.y >= 95f
+        return (externalWall || nearBoundary) && o.connectsRoomIds.size <= 1
+    }
+
+    private fun openingMoved(a: Opening, b: Opening): Boolean =
+        hypot((a.x - b.x).toDouble(), (a.y - b.y).toDouble()) > 1.4 || abs(a.rotationDeg - b.rotationDeg) > 4f || a.wallId != b.wallId
+
+    private fun wallMoved(a: Wall, b: Wall): Boolean =
+        hypot((a.start.x - b.start.x).toDouble(), (a.start.y - b.start.y).toDouble()) > 1.0 ||
+            hypot((a.end.x - b.end.x).toDouble(), (a.end.y - b.end.y).toDouble()) > 1.0
+
+    private fun roomText(r: Room) = (r.type + " " + r.name).lowercase()
+    private fun isGuest(r: Room) = listOf("majlis", "guest", "مجلس", "ضيوف").any { roomText(r).contains(it) }
+    private fun isPrivate(r: Room) = listOf("bedroom", "master", "family", "نوم", "عائل", "خاص").any { roomText(r).contains(it) }
+    private fun hasGuestPrivatePair(rooms: List<Room>) = rooms.any { isGuest(it) } && rooms.any { isPrivate(it) }
     private fun fmt(v: Double) = "%.1f".format(v)
 }
