@@ -1,11 +1,7 @@
 package com.manzili.hai.engine
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.pdf.PdfRenderer
 import android.net.Uri
-import android.util.Base64
 import com.manzili.hai.data.HaiSettings
 import com.manzili.hai.model.Opening
 import com.manzili.hai.model.PlanPoint
@@ -17,11 +13,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 
 class RemoteFloorplanEvidenceClient(private val context: Context) {
-    data class Result(
+    data class PageResult(
+        val pageIndex: Int,
         val walls: List<Wall>,
         val openings: List<Opening>,
         val ocrLines: List<PlanTextOcrEngine.SpatialLine>,
@@ -30,14 +26,30 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         val warnings: List<String>
     )
 
+    data class Result(val pages: List<PageResult>) {
+        val walls: List<Wall> get() = pages.firstOrNull()?.walls.orEmpty()
+        val openings: List<Opening> get() = pages.firstOrNull()?.openings.orEmpty()
+        val ocrLines: List<PlanTextOcrEngine.SpatialLine> get() = pages.flatMap { it.ocrLines }
+        val modelUsed: String get() = pages.map { it.modelUsed }.distinct().joinToString("+").ifBlank { "unknown" }
+        val confidence: Int get() = if (pages.isEmpty()) 0 else pages.map { it.confidence }.average().toInt()
+        val warnings: List<String> get() = pages.flatMap { page -> page.warnings.map { "صفحة ${page.pageIndex + 1}: $it" } }
+    }
+
     private val settings = HaiSettings(context)
+    private val renderer = PdfPageRendererEngine(context)
     private val http = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(180, TimeUnit.SECONDS).build()
 
     val available: Boolean get() = settings.backendConfigured
 
-    suspend fun analyze(uri: Uri): Result = withContext(Dispatchers.IO) {
+    suspend fun analyze(uri: Uri, maxPdfPages: Int = 5): Result = withContext(Dispatchers.IO) {
         require(available) { "Backend غير مفعّل" }
-        val body = JSONObject().put("image_base64", render(uri))
+        val images = renderer.render(uri, maxPdfPages = maxPdfPages, targetMaxPx = 1800, jpegQuality = 88)
+        val pages = images.map { image -> requestPage(image.pageIndex, image.base64Jpeg) }
+        Result(pages)
+    }
+
+    private fun requestPage(pageIndex: Int, base64: String): PageResult {
+        val body = JSONObject().put("image_base64", base64).put("page_index", pageIndex)
         val req = Request.Builder()
             .url("${settings.backendBaseUrl}/v1/parse-floorplan")
             .header("Authorization", "Bearer ${settings.backendAccessToken}")
@@ -47,11 +59,12 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         http.newCall(req).execute().use { res ->
             val text = res.body?.string().orEmpty()
             if (!res.isSuccessful) error("Remote parser (${res.code}): ${text.take(260)}")
-            parse(JSONObject(text))
+            return parse(pageIndex, JSONObject(text))
         }
     }
 
-    private fun parse(root: JSONObject): Result {
+    private fun parse(pageIndex: Int, root: JSONObject): PageResult {
+        val prefix = "p$pageIndex-"
         val wallsJson = root.optJSONArray("walls")
         val walls = buildList {
             if (wallsJson != null) for (i in 0 until wallsJson.length()) {
@@ -59,7 +72,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
                 val a = w.optJSONObject("start") ?: continue
                 val b = w.optJSONObject("end") ?: continue
                 add(Wall(
-                    id = w.optString("id", "remote-$i"),
+                    id = prefix + w.optString("id", "remote-$i"),
                     start = PlanPoint(a.optDouble("x").toFloat().coerceIn(0f,100f), a.optDouble("y").toFloat().coerceIn(0f,100f)),
                     end = PlanPoint(b.optDouble("x").toFloat().coerceIn(0f,100f), b.optDouble("y").toFloat().coerceIn(0f,100f)),
                     kind = w.optString("kind", "remote-segmentation-evidence"),
@@ -74,7 +87,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
                 val type = o.optString("type").lowercase()
                 if (type != "door" && type != "window") continue
                 add(Opening(
-                    id = o.optString("id", "remote-opening-$i"),
+                    id = prefix + o.optString("id", "remote-opening-$i"),
                     type = type,
                     x = o.optDouble("x").toFloat().coerceIn(0f, 100f),
                     y = o.optDouble("y").toFloat().coerceIn(0f, 100f),
@@ -91,7 +104,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
                 val value = o.optString("text").trim()
                 if (value.isBlank()) continue
                 add(PlanTextOcrEngine.SpatialLine(
-                    text = value, pageIndex = 0,
+                    text = value, pageIndex = pageIndex,
                     leftPct = o.optDouble("left_pct").toFloat().coerceIn(0f,100f),
                     topPct = o.optDouble("top_pct").toFloat().coerceIn(0f,100f),
                     rightPct = o.optDouble("right_pct").toFloat().coerceIn(0f,100f),
@@ -104,25 +117,6 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         val warnings = buildList {
             if (warningsJson != null) for (i in 0 until warningsJson.length()) warningsJson.optString(i).takeIf { it.isNotBlank() }?.let(::add)
         }
-        return Result(walls, openings, ocr, root.optString("model_used", "unknown"), root.optInt("confidence", 0), warnings)
-    }
-
-    private fun render(uri: Uri): String {
-        val type = context.contentResolver.getType(uri).orEmpty()
-        val bitmap = if (type == "application/pdf") {
-            val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: error("تعذر فتح PDF")
-            PdfRenderer(pfd).use { renderer ->
-                require(renderer.pageCount > 0) { "PDF بلا صفحات" }
-                renderer.openPage(0).use { page ->
-                    val scale = minOf(1800f / page.width.coerceAtLeast(1), 1800f / page.height.coerceAtLeast(1))
-                    val w = (page.width * scale).toInt().coerceAtLeast(1)
-                    val h = (page.height * scale).toInt().coerceAtLeast(1)
-                    Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY) }
-                }
-            }
-        } else context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it) ?: error("تعذر قراءة الصورة") }
-        val out = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 88, out)
-        return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+        return PageResult(pageIndex, walls, openings, ocr, root.optString("model_used", "unknown"), root.optInt("confidence", 0), warnings)
     }
 }
