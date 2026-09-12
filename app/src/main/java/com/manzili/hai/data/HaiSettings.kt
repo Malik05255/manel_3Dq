@@ -26,10 +26,22 @@ class HaiSettings(context: Context) {
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
         }.getOrNull()
+
+        fun migrateSecret(oldKey: String, newKey: String = oldKey) {
+            if (secure.contains(newKey)) return
+            oldSecure?.getString(oldKey, "")?.takeIf { it.isNotBlank() }?.let {
+                secure.edit().putString(newKey, it).apply()
+            }
+        }
+        migrateSecret("backendAccessToken")
+        migrateSecret("refreshToken")
+
         if (!secure.contains("openRouterApiKey")) {
             val old = oldSecure?.getString("directApiKey", "").orEmpty()
             val endpoint = legacy.getString("endpoint", "").orEmpty()
-            if (old.isNotBlank() && endpoint.contains("openrouter", true)) secure.edit().putString("openRouterApiKey", old).apply()
+            if (old.isNotBlank() && endpoint.contains("openrouter", true)) {
+                secure.edit().putString("openRouterApiKey", old).apply()
+            }
         }
         if (!legacy.contains("openRouterModels")) {
             legacy.getString("model", "")?.takeIf { it.isNotBlank() }?.let { saveList("openRouterModels", listOf(it)) }
@@ -68,7 +80,7 @@ class HaiSettings(context: Context) {
         get() = legacy.getString("lastWorkingModel", "")!!
         set(v) = legacy.edit().putString("lastWorkingModel", v).apply()
 
-    // Existing backend/parser settings are retained for Deep Parser and migration compatibility.
+    // Existing backend/parser settings remain intact for Deep Parser.
     var backendMode: Boolean
         get() = legacy.getBoolean("backendMode", false)
         set(v) = legacy.edit().putBoolean("backendMode", v).apply()
@@ -93,10 +105,10 @@ class HaiSettings(context: Context) {
         get() = secure.getString("refreshToken", "")!!
         set(v) = secure.edit().putString("refreshToken", v.trim()).apply()
 
-    // Legacy compatibility for older call sites. New AI traffic goes through AiProviderRouter.
+    // Legacy compatibility for older call sites. New AI traffic uses AiProviderRouter.
     var directEndpoint: String
-        get() = "https://openrouter.ai/api/v1/chat/completions"
-        set(_) = Unit
+        get() = legacy.getString("endpoint", "https://openrouter.ai/api/v1/chat/completions")!!
+        set(v) = legacy.edit().putString("endpoint", v.trim()).apply()
 
     var directApiKey: String
         get() = openRouterApiKey
@@ -118,8 +130,8 @@ class HaiSettings(context: Context) {
             (googleApiKey.isNotBlank() && googleModels.isNotEmpty())
 
     var endpoint: String
-        get() = "https://openrouter.ai/api/v1/chat/completions"
-        set(_) = Unit
+        get() = directEndpoint
+        set(v) { directEndpoint = v }
 
     var apiKey: String
         get() = openRouterApiKey
@@ -132,11 +144,15 @@ class HaiSettings(context: Context) {
 
     private fun readList(key: String): List<String> = runCatching {
         val arr = JSONArray(legacy.getString(key, "[]") ?: "[]")
-        buildList { for (i in 0 until arr.length()) arr.optString(i).takeIf { it.isNotBlank() }?.let(::add) }
+        buildList {
+            for (i in 0 until arr.length()) {
+                arr.optString(i).takeIf { it.isNotBlank() }?.let(::add)
+            }
+        }
     }.getOrDefault(emptyList())
 
     private fun saveList(key: String, values: List<String>) {
-        val clean = values.map(String::trim).filter(String::isNotBlank).distinct()
+        val clean = values.map { it.trim() }.filter { it.isNotBlank() }.distinct()
         legacy.edit().putString(key, JSONArray(clean).toString()).apply()
     }
 }
