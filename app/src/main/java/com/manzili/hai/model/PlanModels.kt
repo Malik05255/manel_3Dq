@@ -12,7 +12,8 @@ data class Room(
     val confidence: Int = 100,
     val locked: Boolean = false,
     val minAreaM2: Double? = null,
-    val preferredAreaM2: Double? = null
+    val preferredAreaM2: Double? = null,
+    val polygon: List<PlanPoint> = emptyList()
 )
 
 data class PlanPoint(
@@ -41,6 +42,17 @@ data class Opening(
     val connectsRoomIds: List<String> = emptyList(),
     val confidence: Int = 80,
     val locked: Boolean = false
+)
+
+data class PlanDimension(
+    val id: String,
+    val label: String,
+    val valueM: Double,
+    val axis: String = "unknown",
+    val start: PlanPoint? = null,
+    val end: PlanPoint? = null,
+    val confidence: Int = 70,
+    val sourceText: String = ""
 )
 
 data class ProjectConstraint(
@@ -74,7 +86,11 @@ data class FloorPlan(
     val sourceSummary: String = "",
     val preferences: PlanPreferences = PlanPreferences(),
     val constraints: List<ProjectConstraint> = emptyList(),
-    val revision: Int = 1
+    val revision: Int = 1,
+    val footprint: List<PlanPoint> = emptyList(),
+    val dimensions: List<PlanDimension> = emptyList(),
+    val scaleConfidence: Int = 0,
+    val northDeg: Float? = null
 )
 
 data class PlanChange(
