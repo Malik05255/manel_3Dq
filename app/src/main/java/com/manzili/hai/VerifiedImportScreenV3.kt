@@ -4,13 +4,20 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -57,53 +64,95 @@ fun VerifiedImportScreenV3(
         }
     }
 
-    Surface(Modifier.fillMaxSize()) {
+    Surface(Modifier.fillMaxSize(), color = Color(0xFFF8F6F2)) {
         Column(
             Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .padding(horizontal = 20.dp, vertical = 10.dp)
         ) {
-            Row {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 IconButton(onClick = { nav.popBackStack() }) {
                     Icon(Icons.Rounded.ArrowForward, "رجوع")
                 }
-                Column {
-                    Text("استيراد مخطط", fontSize = 24.sp, fontWeight = FontWeight.Black)
-                    Text(
-                        buildString {
-                            append("OCR + Raster")
-                            if (remote.available) append(" + Deep Parser")
-                            if (vision.available) append(" + HAI Vision")
-                        },
-                        fontSize = 13.sp
-                    )
-                    projectType?.let {
-                        Text("النوع المختار: ${it.label}", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "المخطط",
+                    fontSize = 29.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFF181A18)
+                )
+                Spacer(Modifier.weight(1f))
+                projectType?.let {
+                    Surface(
+                        color = Color(0xFF6353D9).copy(alpha = 0.10f),
+                        shape = RoundedCornerShape(50)
+                    ) {
+                        Text(
+                            it.label,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                            color = Color(0xFF4F40B8),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
                     }
                 }
             }
 
-            Spacer(Modifier.height(18.dp))
-            OutlinedButton(
+            Spacer(Modifier.height(26.dp))
+
+            ElevatedCard(
                 onClick = { picker.launch(arrayOf("image/*", "application/pdf")) },
-                modifier = Modifier.fillMaxWidth().height(72.dp)
+                shape = RoundedCornerShape(30.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
+                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(220.dp)
             ) {
-                Text(if (source == null) "اختر PDF أو صورة" else "الملف جاهز للتحليل")
+                Column(
+                    Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    val accent = if (source == null) Color(0xFFE28B5A) else Color(0xFF6353D9)
+                    Box(
+                        Modifier
+                            .size(72.dp)
+                            .background(accent.copy(alpha = 0.12f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            if (source == null) Icons.Rounded.UploadFile else Icons.Rounded.CheckCircle,
+                            contentDescription = null,
+                            tint = accent,
+                            modifier = Modifier.size(34.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    Text(
+                        if (source == null) "اختر المخطط" else "جاهز",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Color(0xFF181A18)
+                    )
+                    Spacer(Modifier.height(5.dp))
+                    Text("PDF  •  صورة", color = Color(0xFF96918A), fontSize = 12.sp)
+                }
             }
 
-            Spacer(Modifier.height(14.dp))
-            Text(
-                "PDF: يفحص حتى أول 5 صفحات. OCR وRaster يعملان محليًا، وDeep Parser وHAI Vision يضافان عند توفرهما. عدم تفعيل HAI لا يمنعك من المتابعة.",
-                fontSize = 11.sp
-            )
-            Spacer(Modifier.height(5.dp))
-            Text(
-                "نوع المشروع المختار يساعد على تفسير الوظائف فقط، ولا يسمح باختلاق عناصر غير ظاهرة في المخطط.",
-                fontSize = 11.sp
-            )
-
             Spacer(Modifier.weight(1f))
+
+            error?.let {
+                Text(
+                    it,
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(bottom = 10.dp)
+                )
+            }
 
             Button(
                 enabled = source != null && !busy,
@@ -191,31 +240,28 @@ fun VerifiedImportScreenV3(
                             onAnalyzed(it)
                             nav.navigate("verify")
                         }.onFailure {
-                            error = it.message ?: "فشل تحليل المخطط"
+                            error = it.message ?: "تعذر تحليل المخطط"
                         }
                         busy = false
                     }
                 },
-                modifier = Modifier.fillMaxWidth().height(58.dp)
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F40B8)),
+                shape = RoundedCornerShape(22.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(60.dp)
             ) {
                 if (busy) {
-                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
+                    Spacer(Modifier.width(10.dp))
                 } else {
                     Icon(Icons.Rounded.AutoAwesome, null)
+                    Spacer(Modifier.width(8.dp))
                 }
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    when {
-                        busy -> "أحلل المخطط…"
-                        source == null -> "اختر ملفًا أولًا"
-                        else -> "حلّل المخطط ثم راجع"
-                    }
-                )
+                Text(if (busy) "جاري التحليل" else "حلّل", fontWeight = FontWeight.Black, fontSize = 17.sp)
             }
 
-            error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
-            }
+            Spacer(Modifier.navigationBarsPadding().height(8.dp))
         }
     }
 }
