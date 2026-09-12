@@ -49,33 +49,64 @@ fun VerifiedImportScreenV3(
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
             setSource(uri)
             error = null
         }
     }
 
     Surface(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(20.dp)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+        ) {
             Row {
-                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
+                IconButton(onClick = { nav.popBackStack() }) {
+                    Icon(Icons.Rounded.ArrowForward, "رجوع")
+                }
                 Column {
                     Text("استيراد مخطط", fontSize = 24.sp, fontWeight = FontWeight.Black)
-                    Text(if (remote.available) "Multi-page Vision + OCR + Raster + Deep Parser" else "Multi-page Vision + OCR + Raster")
-                    projectType?.let { Text("النوع المختار: ${it.label}", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
+                    Text(
+                        buildString {
+                            append("OCR + Raster")
+                            if (remote.available) append(" + Deep Parser")
+                            if (vision.available) append(" + HAI Vision")
+                        },
+                        fontSize = 13.sp
+                    )
+                    projectType?.let {
+                        Text("النوع المختار: ${it.label}", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
+
             Spacer(Modifier.height(18.dp))
-            OutlinedButton(onClick = { picker.launch(arrayOf("image/*", "application/pdf")) }, modifier = Modifier.fillMaxWidth().height(72.dp)) {
+            OutlinedButton(
+                onClick = { picker.launch(arrayOf("image/*", "application/pdf")) },
+                modifier = Modifier.fillMaxWidth().height(72.dp)
+            ) {
                 Text(if (source == null) "اختر PDF أو صورة" else "الملف جاهز للتحليل")
             }
+
             Spacer(Modifier.height(14.dp))
-            Text("PDF: يحلل HAI أول 5 صفحات بصريًا، والـOCR والـDeep Parser يحتفظان برقم الصفحة. كل صفحة تدخل طبقة مستقلة للمراجعة بدل تجاهلها.", fontSize = 11.sp)
+            Text(
+                "PDF: يفحص حتى أول 5 صفحات. OCR وRaster يعملان محليًا، وDeep Parser وHAI Vision يضافان عند توفرهما. عدم تفعيل HAI لا يمنعك من المتابعة.",
+                fontSize = 11.sp
+            )
             Spacer(Modifier.height(5.dp))
-            Text("نوع المشروع المختار يساعد HAI على فهم الوظائف، لكنه لا يتحول إلى دليل بصري ولا يسمح باختلاق عناصر غير ظاهرة.", fontSize = 11.sp)
+            Text(
+                "نوع المشروع المختار يساعد على تفسير الوظائف فقط، ولا يسمح باختلاق عناصر غير ظاهرة في المخطط.",
+                fontSize = 11.sp
+            )
+
             Spacer(Modifier.weight(1f))
+
             Button(
-                enabled = source != null && !busy && vision.available,
+                enabled = source != null && !busy,
                 onClick = {
                     busy = true
                     error = null
@@ -83,28 +114,78 @@ fun VerifiedImportScreenV3(
                         runCatching {
                             val uri = source!!
                             coroutineScope {
-                                val ocrJob = async { runCatching { localOcr.readSpatial(uri, maxPdfPages = 5) }.getOrNull() }
-                                val rasterJob = async { runCatching { raster.analyze(uri) }.getOrNull() }
-                                val remoteJob = async { if (remote.available) runCatching { remote.analyze(uri, maxPdfPages = 5) }.getOrNull() else null }
-                                val base = vision.analyze(uri, maxPdfPages = 5, projectType = projectType)
+                                val visionJob = async {
+                                    if (vision.available) {
+                                        runCatching {
+                                            vision.analyze(uri, maxPdfPages = 5, projectType = projectType)
+                                        }.getOrNull()
+                                    } else null
+                                }
+                                val ocrJob = async {
+                                    runCatching { localOcr.readSpatial(uri, maxPdfPages = 5) }.getOrNull()
+                                }
+                                val rasterJob = async {
+                                    runCatching { raster.analyze(uri, maxPdfPages = 5) }.getOrNull()
+                                }
+                                val remoteJob = async {
+                                    if (remote.available) {
+                                        runCatching { remote.analyze(uri, maxPdfPages = 5) }.getOrNull()
+                                    } else null
+                                }
+
+                                val visionPlan = visionJob.await()
                                 val ocr = ocrJob.await()
                                 val rasterResult = rasterJob.await()
                                 val remoteResult = remoteJob.await()
-                                val dims = DimensionEvidenceEngine.extractSpatial(ocr?.lines.orEmpty() + remoteResult?.ocrLines.orEmpty())
+
+                                val base = visionPlan ?: FloorPlan(
+                                    title = "مخطط مستورد",
+                                    sourceSummary = "تحليل استيراد متعدد المسارات بدون اشتراط مزود HAI Vision.",
+                                    observations = listOf(
+                                        "تم السماح بالتحليل عبر OCR وRaster وDeep Parser المتاح دون اشتراط HAI Vision."
+                                    ),
+                                    uncertainties = if (!vision.available) {
+                                        listOf("HAI Vision غير مفعّل؛ راجع العناصر المستخرجة في شاشة التحقق قبل اعتمادها.")
+                                    } else emptyList()
+                                )
+
+                                val dims = DimensionEvidenceEngine.extractSpatial(
+                                    ocr?.lines.orEmpty() + remoteResult?.ocrLines.orEmpty()
+                                )
+
                                 val enriched = base.copy(
-                                    dimensions = (base.dimensions + dims).distinctBy { "${it.pageIndex}:${it.id}:${"%.3f".format(it.valueM)}" },
+                                    dimensions = (base.dimensions + dims).distinctBy {
+                                        "${it.pageIndex}:${it.id}:${"%.3f".format(it.valueM)}"
+                                    },
                                     observations = (base.observations + listOfNotNull(
                                         projectType?.let { "نوع المشروع المحدد قبل التحليل: ${it.label}." },
-                                        ocr?.let { "OCR محلي: ${it.pagesAnalyzed} صفحة${if (it.truncated) " (محدود)" else ""}." },
+                                        ocr?.let {
+                                            "OCR محلي: ${it.pagesAnalyzed} صفحة${if (it.truncated) " (محدود)" else ""}."
+                                        },
                                         rasterResult?.notes?.joinToString(" "),
-                                        remoteResult?.let { "Deep Parser: ${it.pages.size} صفحة • ${it.modelUsed} • متوسط ${it.confidence}%." },
-                                        remoteResult?.warnings?.takeIf { it.isNotEmpty() }?.joinToString(" ")
+                                        remoteResult?.let {
+                                            "Deep Parser: ${it.pages.size} صفحة • ${it.modelUsed} • متوسط ${it.confidence}%."
+                                        },
+                                        remoteResult?.warnings?.takeIf { it.isNotEmpty() }?.joinToString(" "),
+                                        if (visionPlan != null) "HAI Vision شارك في التحليل." else "تمت المتابعة بدون HAI Vision."
                                     )).distinct()
                                 )
-                                val deepApplied = MultiPageEvidenceFusionEngine.apply(enriched, remoteResult?.pages.orEmpty())
-                                val locallyRefined = FloorplanParserEngine.refine(deepApplied, rasterResult?.primaryWalls.orEmpty()).plan
-                                val typed = projectType?.let { SaudiProjectTypeEngine.apply(locallyRefined, it) } ?: locallyRefined
-                                MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(typed))
+
+                                val deepApplied = MultiPageEvidenceFusionEngine.apply(
+                                    enriched,
+                                    remoteResult?.pages.orEmpty()
+                                )
+                                val locallyRefined = FloorplanParserEngine.refine(
+                                    deepApplied,
+                                    rasterResult?.primaryWalls.orEmpty()
+                                ).plan
+                                val typed = projectType?.let {
+                                    SaudiProjectTypeEngine.apply(locallyRefined, it)
+                                } ?: locallyRefined
+
+                                MultiFloorGeometryEngine.persistActive(
+                                    MultiFloorGeometryEngine.normalize(typed)
+                                )
                             }
                         }.onSuccess {
                             onAnalyzed(it)
@@ -117,12 +198,24 @@ fun VerifiedImportScreenV3(
                 },
                 modifier = Modifier.fillMaxWidth().height(58.dp)
             ) {
-                if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                else Icon(Icons.Rounded.AutoAwesome, null)
+                if (busy) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Rounded.AutoAwesome, null)
+                }
                 Spacer(Modifier.width(8.dp))
-                Text(if (busy) "أحلل جميع الصفحات…" else if (!vision.available) "فعّل HAI أولًا" else "حلّل كل الصفحات ثم راجع")
+                Text(
+                    when {
+                        busy -> "أحلل المخطط…"
+                        source == null -> "اختر ملفًا أولًا"
+                        else -> "حلّل المخطط ثم راجع"
+                    }
+                )
             }
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
+
+            error?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
+            }
         }
     }
 }
