@@ -75,7 +75,7 @@ private fun ProductionApp() {
             NavHost(nav, startDestination = "home") {
                 composable("home") { ProductionHome(nav, plan, store.listProjects().size) }
                 composable("build") { BuildChoice(nav) }
-                composable("import") { VerifiedImportScreenV2(nav, source, { source = it }, { pending = it }) }
+                composable("import") { VerifiedImportScreenV3(nav, source, { source = it }, { pending = it }) }
                 composable("verify") {
                     PlanVerificationScreen(nav, source, pending) { confirmed ->
                         createProject(confirmed)
@@ -116,7 +116,7 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
     Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F4EE)) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(20.dp)) {
             Text("منزلي HAI", fontSize = 22.sp, fontWeight = FontWeight.Black)
-            Text("$count مشروع • Geometry V3 • Global Search • Deep Parser ready", color = Color.Gray, fontSize = 10.sp)
+            Text("$count مشروع • Geometry V3 • Global Search • Deep Parser", color = Color.Gray, fontSize = 10.sp)
             Spacer(Modifier.height(20.dp))
             Text("مخطط تقرأه،\nتراجعه، ثم تعدله.", fontSize = 34.sp, lineHeight = 39.sp, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(18.dp))
