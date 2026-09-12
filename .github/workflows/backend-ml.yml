@@ -1,0 +1,53 @@
+name: Backend ML Validation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/app/cubicasa_model.py'
+      - 'backend/app/parser.py'
+      - 'backend/scripts/fetch_floorplan_model.py'
+      - 'backend/requirements-ml-cpu.txt'
+      - 'backend/Dockerfile.ml'
+      - '.github/workflows/backend-ml.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: manzili-hai-backend-ml-main
+  cancel-in-progress: true
+
+jobs:
+  validate-model:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements-ml-cpu.txt
+      - name: Install CPU inference stack
+        run: pip install -r requirements-ml-cpu.txt
+      - name: Download and verify model weights
+        run: python scripts/fetch_floorplan_model.py
+      - name: Run real segmentation inference smoke test
+        run: |
+          python - <<'PY'
+          import numpy as np
+          from app.cubicasa_model import CLASS_NAMES, load_cubicasa_runtime
+
+          runtime = load_cubicasa_runtime()
+          assert runtime is not None, 'CubiCasa runtime did not load'
+          image = np.full((256, 384, 3), 255, dtype=np.uint8)
+          image[40:215, 45:52] = 0
+          image[40:47, 45:330] = 0
+          prediction = runtime.predict(image)
+          assert prediction.shape == image.shape[:2]
+          assert prediction.dtype == np.uint8
+          assert int(prediction.min()) >= 0
+          assert int(prediction.max()) < len(CLASS_NAMES)
+          print('model smoke test ok', prediction.shape, np.unique(prediction).tolist())
+          PY
