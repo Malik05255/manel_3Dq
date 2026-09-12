@@ -1,14 +1,8 @@
 package com.manzili.hai.ai
 
 import com.manzili.hai.engine.ArchitecturalEngine
-import com.manzili.hai.model.FloorPlan
-import com.manzili.hai.model.Opening
-import com.manzili.hai.model.PlanChange
-import com.manzili.hai.model.PlanPoint
-import com.manzili.hai.model.PlanPreferences
-import com.manzili.hai.model.PlanProposal
-import com.manzili.hai.model.Room
-import com.manzili.hai.model.Wall
+import com.manzili.hai.model.*
+import org.json.JSONArray
 import org.json.JSONObject
 
 object ArchitectJson {
@@ -32,16 +26,14 @@ object ArchitectJson {
         val changes = buildList {
             if (changesJson != null) for (i in 0 until changesJson.length()) {
                 val c = changesJson.optJSONObject(i) ?: continue
-                add(
-                    PlanChange(
-                        roomId = c.optString("room_id").takeIf { it.isNotBlank() },
-                        roomName = c.optString("room_name", ""),
-                        action = c.optString("action", "MODIFY"),
-                        beforeAreaM2 = optPositiveDouble(c, "before_area_m2"),
-                        afterAreaM2 = optPositiveDouble(c, "after_area_m2"),
-                        note = c.optString("note", "")
-                    )
-                )
+                add(PlanChange(
+                    roomId = c.optString("room_id").takeIf { it.isNotBlank() },
+                    roomName = c.optString("room_name", ""),
+                    action = c.optString("action", "MODIFY"),
+                    beforeAreaM2 = optPositiveDouble(c, "before_area_m2"),
+                    afterAreaM2 = optPositiveDouble(c, "after_area_m2"),
+                    note = c.optString("note", "")
+                ))
             }
         }
         return PlanProposal(
@@ -54,69 +46,66 @@ object ArchitectJson {
     }
 
     private fun parsePlanObject(root: JSONObject): FloorPlan {
-        val roomsJson = root.optJSONArray("rooms")
-        val rooms = buildList {
-            if (roomsJson != null) for (i in 0 until roomsJson.length()) {
-                val r = roomsJson.optJSONObject(i) ?: continue
-                add(
-                    Room(
-                        id = r.optString("id", "r$i"),
-                        name = r.optString("name", "غرفة"),
-                        type = r.optString("type", "room"),
-                        x = pct(r.optDouble("x", 0.0)),
-                        y = pct(r.optDouble("y", 0.0)),
-                        width = r.optDouble("width", 20.0).toFloat().coerceIn(1f, 100f),
-                        height = r.optDouble("height", 20.0).toFloat().coerceIn(1f, 100f),
-                        areaM2 = r.optDouble("area_m2", 0.0).coerceAtLeast(0.0),
-                        confidence = r.optInt("confidence", 80).coerceIn(0, 100),
-                        locked = r.optBoolean("locked", false),
-                        minAreaM2 = optPositiveDouble(r, "min_area_m2"),
-                        preferredAreaM2 = optPositiveDouble(r, "preferred_area_m2")
-                    )
-                )
-            }
-        }
+        val rooms = root.optJSONArray("rooms")?.objects()?.mapIndexed { i, r ->
+            Room(
+                id = r.optString("id", "r$i"),
+                name = r.optString("name", "غرفة"),
+                type = r.optString("type", "room"),
+                x = pct(r.optDouble("x", 0.0)),
+                y = pct(r.optDouble("y", 0.0)),
+                width = r.optDouble("width", 20.0).toFloat().coerceIn(1f, 100f),
+                height = r.optDouble("height", 20.0).toFloat().coerceIn(1f, 100f),
+                areaM2 = r.optDouble("area_m2", 0.0).coerceAtLeast(0.0),
+                confidence = r.optInt("confidence", 80).coerceIn(0, 100),
+                locked = r.optBoolean("locked", false),
+                minAreaM2 = optPositiveDouble(r, "min_area_m2"),
+                preferredAreaM2 = optPositiveDouble(r, "preferred_area_m2"),
+                polygon = points(r.optJSONArray("polygon"))
+            )
+        }.orEmpty()
 
-        val wallsJson = root.optJSONArray("walls")
-        val walls = buildList {
-            if (wallsJson != null) for (i in 0 until wallsJson.length()) {
-                val w = wallsJson.optJSONObject(i) ?: continue
-                val start = w.optJSONObject("start") ?: JSONObject()
-                val end = w.optJSONObject("end") ?: JSONObject()
-                add(
-                    Wall(
-                        id = w.optString("id", "w$i"),
-                        start = PlanPoint(pct(start.optDouble("x", 0.0)), pct(start.optDouble("y", 0.0))),
-                        end = PlanPoint(pct(end.optDouble("x", 0.0)), pct(end.optDouble("y", 0.0))),
-                        thicknessCm = optPositiveDouble(w, "thickness_cm"),
-                        kind = w.optString("kind", "unknown"),
-                        confidence = w.optInt("confidence", 80).coerceIn(0, 100),
-                        locked = w.optBoolean("locked", false)
-                    )
-                )
-            }
-        }
+        val walls = root.optJSONArray("walls")?.objects()?.mapIndexed { i, w ->
+            val start = point(w.optJSONObject("start")) ?: PlanPoint(0f, 0f)
+            val end = point(w.optJSONObject("end")) ?: PlanPoint(0f, 0f)
+            Wall(
+                id = w.optString("id", "w$i"),
+                start = start,
+                end = end,
+                thicknessCm = optPositiveDouble(w, "thickness_cm"),
+                kind = w.optString("kind", "unknown"),
+                confidence = w.optInt("confidence", 80).coerceIn(0, 100),
+                locked = w.optBoolean("locked", false)
+            )
+        }.orEmpty()
 
-        val openingsJson = root.optJSONArray("openings")
-        val openings = buildList {
-            if (openingsJson != null) for (i in 0 until openingsJson.length()) {
-                val o = openingsJson.optJSONObject(i) ?: continue
-                add(
-                    Opening(
-                        id = o.optString("id", "o$i"),
-                        type = o.optString("type", "door"),
-                        x = pct(o.optDouble("x", 0.0)),
-                        y = pct(o.optDouble("y", 0.0)),
-                        width = o.optDouble("width", 3.0).toFloat().coerceIn(0.3f, 30f),
-                        rotationDeg = o.optDouble("rotation_deg", 0.0).toFloat(),
-                        wallId = o.optString("wall_id").takeIf { it.isNotBlank() },
-                        connectsRoomIds = strings(o, "connects_room_ids"),
-                        confidence = o.optInt("confidence", 80).coerceIn(0, 100),
-                        locked = o.optBoolean("locked", false)
-                    )
-                )
-            }
-        }
+        val openings = root.optJSONArray("openings")?.objects()?.mapIndexed { i, o ->
+            Opening(
+                id = o.optString("id", "o$i"),
+                type = o.optString("type", "door"),
+                x = pct(o.optDouble("x", 0.0)),
+                y = pct(o.optDouble("y", 0.0)),
+                width = o.optDouble("width", 3.0).toFloat().coerceIn(0.3f, 30f),
+                rotationDeg = o.optDouble("rotation_deg", 0.0).toFloat(),
+                wallId = o.optString("wall_id").takeIf { it.isNotBlank() },
+                connectsRoomIds = strings(o, "connects_room_ids"),
+                confidence = o.optInt("confidence", 80).coerceIn(0, 100),
+                locked = o.optBoolean("locked", false)
+            )
+        }.orEmpty()
+
+        val dimensions = root.optJSONArray("dimensions")?.objects()?.mapIndexedNotNull { i, d ->
+            val value = optPositiveDouble(d, "value_m") ?: return@mapIndexedNotNull null
+            PlanDimension(
+                id = d.optString("id", "d$i"),
+                label = d.optString("label", "بعد مقروء"),
+                valueM = value,
+                axis = d.optString("axis", "unknown"),
+                start = point(d.optJSONObject("start")),
+                end = point(d.optJSONObject("end")),
+                confidence = d.optInt("confidence", 65).coerceIn(0, 100),
+                sourceText = d.optString("source_text", "")
+            )
+        }.orEmpty()
 
         val prefsJson = root.optJSONObject("preferences")
         val preferences = PlanPreferences(
@@ -127,6 +116,7 @@ object ArchitectJson {
             notes = strings(prefsJson, "notes")
         )
 
+        val north = root.optDouble("north_deg", Double.NaN).takeIf { !it.isNaN() }?.toFloat()
         return FloorPlan(
             title = root.optString("title", "المخطط"),
             widthM = optPositiveDouble(root, "building_width_m"),
@@ -138,9 +128,24 @@ object ArchitectJson {
             uncertainties = strings(root, "uncertainties"),
             sourceSummary = root.optString("summary", ""),
             preferences = preferences,
-            revision = root.optInt("revision", 1).coerceAtLeast(1)
+            revision = root.optInt("revision", 1).coerceAtLeast(1),
+            footprint = points(root.optJSONArray("footprint")),
+            dimensions = dimensions,
+            scaleConfidence = root.optInt("scale_confidence", 0).coerceIn(0, 100),
+            northDeg = north
         )
     }
+
+    private fun point(root: JSONObject?): PlanPoint? {
+        if (root == null) return null
+        if (!root.has("x") || !root.has("y")) return null
+        return PlanPoint(pct(root.optDouble("x", 0.0)), pct(root.optDouble("y", 0.0)))
+    }
+
+    private fun points(array: JSONArray?): List<PlanPoint> = if (array == null) emptyList() else
+        (0 until array.length()).mapNotNull { point(array.optJSONObject(it)) }
+
+    private fun JSONArray.objects(): List<JSONObject> = (0 until length()).mapNotNull { optJSONObject(it) }
 
     private fun strings(root: JSONObject?, key: String): List<String> {
         if (root == null) return emptyList()
