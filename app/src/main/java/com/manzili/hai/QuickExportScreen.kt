@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
+import com.manzili.hai.export.DxfPlanExporter
 import com.manzili.hai.export.PdfPlanExporter
 import com.manzili.hai.export.SvgPlanExporter
 import com.manzili.hai.model.FloorPlan
@@ -29,25 +30,30 @@ fun QuickExportScreen(nav: NavHostController, plan: FloorPlan?) {
     val svg = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/svg+xml")) { uri ->
         if (uri != null && plan != null) status = if (runCatching { context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(SvgPlanExporter.render(plan)) } }.isSuccess) "تم تصدير SVG" else "تعذر تصدير SVG"
     }
+    val dxf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/dxf")) { uri ->
+        if (uri != null && plan != null) status = if (runCatching { context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(DxfPlanExporter.render(plan)) } }.isSuccess) "تم تصدير DXF" else "تعذر تصدير DXF"
+    }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(18.dp)) {
             Row {
                 IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
-                Column { Text("التصدير الهندسي", fontSize = 22.sp, fontWeight = FontWeight.Black); Text("PDF + SVG Vector", color = MaterialTheme.colorScheme.secondary, fontSize = 10.sp) }
+                Column { Text("التصدير الهندسي", fontSize = 22.sp, fontWeight = FontWeight.Black); Text("PDF + SVG + DXF CAD", color = MaterialTheme.colorScheme.secondary, fontSize = 10.sp) }
             }
             Spacer(Modifier.height(18.dp))
             if (plan == null) Text("افتح مشروعًا أولًا") else {
                 PlanCanvas(plan, Modifier.fillMaxWidth().height(280.dp), previewMode = true, onSelect = {})
                 Spacer(Modifier.height(12.dp))
-                Text(if (plan.widthM != null && plan.heightM != null) "${"%.2f".format(plan.widthM)}م × ${"%.2f".format(plan.heightM)}م • ثقة المقياس ${plan.scaleConfidence}%" else "المقياس غير مؤكد؛ سيظهر ذلك في الملف.", fontSize = 11.sp)
+                Text(if (plan.widthM != null && plan.heightM != null) "${"%.2f".format(plan.widthM)}م × ${"%.2f".format(plan.heightM)}م • ثقة المقياس ${plan.scaleConfidence}%" else "المقياس غير مؤكد؛ DXF سيخرج Unitless حتى تؤكد المقياس.", fontSize = 11.sp)
                 Spacer(Modifier.height(14.dp))
-                Button(onClick = { pdf.launch("manzili-plan.pdf") }, modifier = Modifier.fillMaxWidth().height(54.dp)) { Icon(Icons.Rounded.PictureAsPdf, null); Spacer(Modifier.width(6.dp)); Text("تصدير PDF") }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = { svg.launch("manzili-plan.svg") }, modifier = Modifier.fillMaxWidth().height(54.dp)) { Icon(Icons.Rounded.SaveAlt, null); Spacer(Modifier.width(6.dp)); Text("تصدير SVG") }
+                Button(onClick = { pdf.launch("manzili-plan.pdf") }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Icon(Icons.Rounded.PictureAsPdf, null); Spacer(Modifier.width(6.dp)); Text("تصدير PDF") }
+                Spacer(Modifier.height(7.dp))
+                OutlinedButton(onClick = { svg.launch("manzili-plan.svg") }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Icon(Icons.Rounded.SaveAlt, null); Spacer(Modifier.width(6.dp)); Text("تصدير SVG") }
+                Spacer(Modifier.height(7.dp))
+                OutlinedButton(onClick = { dxf.launch("manzili-plan.dxf") }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Icon(Icons.Rounded.SaveAlt, null); Spacer(Modifier.width(6.dp)); Text("تصدير DXF CAD") }
             }
             if (status.isNotBlank()) Text(status, modifier = Modifier.padding(top = 10.dp), fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
-            Text("المخرجات لا تمثل اعتمادًا إنشائيًا أو بلديًا.", fontSize = 9.sp, color = MaterialTheme.colorScheme.secondary)
+            Text("DXF يحفظ الجدران والغرف والفتحات والعناصر Layers منفصلة، لكنه ليس اعتمادًا إنشائيًا أو بلديًا.", fontSize = 9.sp, color = MaterialTheme.colorScheme.secondary)
         }
     }
 }
