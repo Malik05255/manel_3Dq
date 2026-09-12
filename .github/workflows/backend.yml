@@ -2,9 +2,10 @@ name: Backend Build
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, codex/seven-stage-production ]
     paths:
       - 'backend/**'
+      - 'render.yaml'
       - '.github/workflows/backend.yml'
   workflow_dispatch:
 
@@ -20,7 +21,9 @@ jobs:
         working-directory: backend
         run: pip install -r requirements.txt
       - name: Compile backend
-        run: python -m compileall backend/app
+        run: python -m compileall backend/app backend/scripts
       - name: Import FastAPI application
         working-directory: backend
-        run: python -c "from app.main import app; assert app.title == 'Manzili HAI Backend'"
+        run: python -c "from app.main import app; assert app.title == 'Manzili HAI Backend'; assert app.version == '0.41.0'"
+      - name: Validate deployment blueprint
+        run: grep -q 'healthCheckPath: /readyz' render.yaml && grep -q 'FLOORPLAN_SAFETENSORS_MODEL' render.yaml
