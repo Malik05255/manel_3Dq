@@ -9,8 +9,8 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class EngineRegressionTest {
-    private fun room(id: String, x: Float, y: Float, w: Float, h: Float) = Room(
-        id = id, name = id, type = "room", x = x, y = y, width = w, height = h,
+    private fun room(id: String, x: Float, y: Float, w: Float, h: Float, type: String = "room", name: String = id) = Room(
+        id = id, name = name, type = type, x = x, y = y, width = w, height = h,
         areaM2 = w * h / 10.0,
         polygon = listOf(PlanPoint(x,y), PlanPoint(x+w,y), PlanPoint(x+w,y+h), PlanPoint(x,y+h))
     )
@@ -72,6 +72,60 @@ class EngineRegressionTest {
         assertTrue(plan.saudiRulesEnabled); assertEquals(20.0,plan.site.roads.single().widthM!!,0.001)
         assertTrue(plan.constraints.any { it.kind==SaudiResidentialEngine.PARKING_KIND && it.value==3.0 })
         assertEquals("نجدي معاصر",SaudiResidentialEngine.styleLabel(plan))
+    }
+
+    @Test fun projectTypeIsPersistedAndDetected() {
+        val plan = SaudiProjectTypeEngine.apply(FloorPlan(), SaudiProjectTypeEngine.Type.TOWNHOUSE)
+        assertEquals(SaudiProjectTypeEngine.Type.TOWNHOUSE, SaudiProjectTypeEngine.detect(plan))
+        assertTrue(plan.constraints.any { it.kind == SaudiProjectTypeEngine.KIND && it.hard })
+    }
+
+    @Test fun nonVillaFallbackUsesTypeSpecificTopology() {
+        val program = NewBuildSolver.Program(city="الرياض",plotWidthM=18.0,plotDepthM=30.0,floorCount=2,bedrooms=8,guestEntranceIndependent=true,privacyPriority=88,circulationPriority=88,daylightPriority=80,notes="وحدات/دور=2")
+        val seeds = SaudiProjectTypeSeedEngine.generate(program, SaudiProjectTypeEngine.Type.BUILDING_TWO)
+        assertEquals(3, seeds.size)
+        assertTrue(seeds.all { SaudiProjectTypeEngine.detect(it.plan) == SaudiProjectTypeEngine.Type.BUILDING_TWO })
+        assertTrue(seeds.all { it.plan.rooms.any { r -> r.name.contains("شقة") } })
+    }
+
+    @Test fun deepBriefPersistsFutureAndNeighborContext() {
+        val base = SaudiResidentialEngine.Brief(city="جدة",parkingCars=2)
+        val deep = SaudiDeepBriefEngine.Brief(base=base,elderlyGroundSuite=true,futureExpansion=true,futureFloors=1,neighborExposure="خلفي قوي",cornerPlot=true)
+        val plan = SaudiDeepBriefEngine.apply(FloorPlan(site=SiteContext(countryCode="SA")), deep)
+        assertTrue(plan.constraints.any { it.kind == SaudiDeepBriefEngine.ELDERLY })
+        assertTrue(plan.constraints.any { it.kind == SaudiDeepBriefEngine.FUTURE && it.value == 1.0 })
+        assertTrue(plan.constraints.any { it.kind == SaudiDeepBriefEngine.NEIGHBOR })
+        assertTrue(plan.constraints.any { it.kind == SaudiDeepBriefEngine.CORNER })
+    }
+
+    @Test fun multiPageFusionCreatesIndependentFloorsAndIds() {
+        val page0 = FloorPlan(title="أرضي",rooms=listOf(room("r1",0f,0f,50f,50f)),walls=listOf(Wall("w1",PlanPoint(0f,0f),PlanPoint(50f,0f))),dimensions=listOf(PlanDimension("d1","عرض",4.0,pageIndex=0)),footprint=boundary())
+        val page1 = FloorPlan(title="أول",rooms=listOf(room("r1",50f,0f,50f,50f)),walls=listOf(Wall("w1",PlanPoint(50f,0f),PlanPoint(100f,0f))),dimensions=listOf(PlanDimension("d1","عرض",5.0,pageIndex=0)),footprint=boundary())
+        val merged = MultiPagePlanFusionEngine.merge(listOf(page0,page1),2)
+        assertEquals(2,merged.floors.size)
+        assertNotEquals(merged.floors[0].rooms.first().id,merged.floors[1].rooms.first().id)
+        assertEquals(setOf(0,1),merged.dimensions.map { it.pageIndex }.toSet())
+        assertTrue(merged.observations.any { it.contains("جميع صفحات") })
+    }
+
+    @Test fun benchmarkPerfectPredictionScoresOne() {
+        val p = FloorPlan(
+            rooms=listOf(room("m",0f,0f,50f,40f,"majlis","مجلس"),room("l",50f,0f,50f,40f,"living","صالة")),
+            walls=listOf(Wall("w",PlanPoint(0f,0f),PlanPoint(100f,0f))),
+            openings=listOf(Opening("o","door",50f,0f,3f)),
+            dimensions=listOf(PlanDimension("d","عرض",5.0)),footprint=boundary()
+        )
+        val result = SaudiPlanBenchmarkEngine.evaluate(SaudiPlanBenchmarkEngine.Sample("riyadh-1","الرياض",p,p))
+        assertEquals(1.0,result.metrics.overall,0.0001)
+        assertTrue(result.metrics.geometryValid)
+    }
+
+    @Test fun hybridGeneratorKeepsRequestedProjectTypeWithoutAi() {
+        val program=NewBuildSolver.Program(city="الرياض",plotWidthM=8.0,plotDepthM=25.0,floorCount=2,bedrooms=3,guestEntranceIndependent=true,privacyPriority=92,circulationPriority=85,daylightPriority=82)
+        val deep=SaudiDeepBriefEngine.Brief(SaudiResidentialEngine.Brief(city="الرياض"))
+        val result=SaudiGenerativeArchitectEngine.generate(program,SaudiProjectTypeEngine.Type.TOWNHOUSE,deep,null)
+        assertTrue(result.candidates.isNotEmpty())
+        assertTrue(result.candidates.all { SaudiProjectTypeEngine.detect(it.plan)==SaudiProjectTypeEngine.Type.TOWNHOUSE })
     }
 
     @Test fun saudi3DAddsPresentationParapetWithoutChangingPlan() {
