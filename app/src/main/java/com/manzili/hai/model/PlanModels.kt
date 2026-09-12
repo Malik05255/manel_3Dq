@@ -55,6 +55,38 @@ data class PlanDimension(
     val sourceText: String = ""
 )
 
+data class RoadEdge(
+    val id: String,
+    val name: String = "شارع",
+    val start: PlanPoint,
+    val end: PlanPoint,
+    val widthM: Double? = null,
+    val classification: String = "unknown"
+)
+
+data class SiteContext(
+    val countryCode: String = "SA",
+    val city: String = "",
+    val plotBoundary: List<PlanPoint> = emptyList(),
+    val roads: List<RoadEdge> = emptyList(),
+    val northDeg: Float? = null,
+    val frontSetbackM: Double? = null,
+    val rearSetbackM: Double? = null,
+    val sideSetbackM: Double? = null
+)
+
+data class FloorLevel(
+    val id: String,
+    val name: String,
+    val index: Int,
+    val elevationM: Double = 0.0,
+    val clearHeightM: Double? = null,
+    val footprint: List<PlanPoint> = emptyList(),
+    val rooms: List<Room> = emptyList(),
+    val walls: List<Wall> = emptyList(),
+    val openings: List<Opening> = emptyList()
+)
+
 data class ProjectConstraint(
     val id: String,
     val kind: String,
@@ -90,7 +122,10 @@ data class FloorPlan(
     val footprint: List<PlanPoint> = emptyList(),
     val dimensions: List<PlanDimension> = emptyList(),
     val scaleConfidence: Int = 0,
-    val northDeg: Float? = null
+    val northDeg: Float? = null,
+    val site: SiteContext = SiteContext(),
+    val floors: List<FloorLevel> = emptyList(),
+    val activeFloorId: String? = null
 )
 
 data class PlanChange(
