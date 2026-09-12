@@ -18,8 +18,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
-import com.manzili.hai.engine.Semantic3DEngine
+import com.manzili.hai.engine.Architectural3DEnhancementEngine
 import com.manzili.hai.export.DxfPlanExporter
+import com.manzili.hai.export.GltfPlanExporter
 import com.manzili.hai.export.IfcPlanExporter
 import com.manzili.hai.export.ObjPlanExporter
 import com.manzili.hai.export.PdfPlanExporter
@@ -42,6 +43,12 @@ fun QuickExportScreen(nav: NavHostController, plan: FloorPlan?) {
     val obj = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("model/obj")) { uri ->
         if (uri != null && plan != null) status = if (runCatching { context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(ObjPlanExporter.render(plan)) } }.isSuccess) "تم تصدير OBJ من نفس المجسم الهندسي" else "تعذر تصدير OBJ"
     }
+    val gltf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("model/gltf+json")) { uri ->
+        if (uri != null && plan != null) status = if (runCatching { context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(GltfPlanExporter.renderGltf(plan)) } }.isSuccess) "تم تصدير glTF 2.0" else "تعذر تصدير glTF"
+    }
+    val glb = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("model/gltf-binary")) { uri ->
+        if (uri != null && plan != null) status = if (runCatching { context.contentResolver.openOutputStream(uri)?.use { it.write(GltfPlanExporter.renderGlb(plan)) } }.isSuccess) "تم تصدير GLB ثلاثي الأبعاد" else "تعذر تصدير GLB"
+    }
     val ifc = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-step")) { uri ->
         if (uri != null && plan != null) status = if (runCatching { context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(IfcPlanExporter.render(plan)) } }.isSuccess) "تم تصدير IFC4 BIM" else "تعذر تصدير IFC؛ راجع المقياس وارتفاعات الفتحات"
     }
@@ -58,7 +65,7 @@ fun QuickExportScreen(nav: NavHostController, plan: FloorPlan?) {
                 IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
                 Column {
                     Text("التصدير الهندسي", fontSize = 22.sp, fontWeight = FontWeight.Black)
-                    Text("PDF + SVG + DXF + OBJ + IFC4", color = MaterialTheme.colorScheme.secondary, fontSize = 10.sp)
+                    Text("2D CAD + 3D GLB/glTF + IFC4 BIM", color = MaterialTheme.colorScheme.secondary, fontSize = 10.sp)
                 }
             }
             Spacer(Modifier.height(18.dp))
@@ -67,13 +74,13 @@ fun QuickExportScreen(nav: NavHostController, plan: FloorPlan?) {
             } else {
                 PlanCanvas(plan, Modifier.fillMaxWidth().height(220.dp), previewMode = true, onSelect = {})
                 Spacer(Modifier.height(12.dp))
-                val scene = remember(plan) { Semantic3DEngine.build(plan) }
+                val scene = remember(plan) { Architectural3DEnhancementEngine.build(plan) }
                 val missingVertical = scene.openings.count { !it.wallId.isNullOrBlank() && !it.verticalVerified }
                 val ifcReady = IfcPlanExporter.canExport(plan)
                 Text(
                     if (plan.widthM != null && plan.heightM != null)
                         "${"%.2f".format(plan.widthM)}م × ${"%.2f".format(plan.heightM)}م • ثقة المقياس ${plan.scaleConfidence}%"
-                    else "المقياس غير مؤكد؛ DXF/OBJ نسبيان وIFC المتري معطّل.",
+                    else "المقياس غير مؤكد؛ مخرجات 3D تبقى نسبية وIFC المتري معطّل.",
                     fontSize = 11.sp
                 )
                 Spacer(Modifier.height(14.dp))
@@ -81,18 +88,27 @@ fun QuickExportScreen(nav: NavHostController, plan: FloorPlan?) {
                     Icon(Icons.Rounded.PictureAsPdf, null); Spacer(Modifier.width(6.dp)); Text("تصدير PDF")
                 }
                 Spacer(Modifier.height(7.dp))
-                OutlinedButton(onClick = { svg.launch("manzili-plan.svg") }, modifier = Modifier.fillMaxWidth().height(50.dp)) {
-                    Icon(Icons.Rounded.SaveAlt, null); Spacer(Modifier.width(6.dp)); Text("تصدير SVG")
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    OutlinedButton(onClick = { svg.launch("manzili-plan.svg") }, modifier = Modifier.weight(1f).height(50.dp)) {
+                        Icon(Icons.Rounded.SaveAlt, null); Spacer(Modifier.width(4.dp)); Text("SVG")
+                    }
+                    OutlinedButton(onClick = { dxf.launch("manzili-plan.dxf") }, modifier = Modifier.weight(1f).height(50.dp)) {
+                        Icon(Icons.Rounded.SaveAlt, null); Spacer(Modifier.width(4.dp)); Text("DXF CAD")
+                    }
+                }
+                Spacer(Modifier.height(9.dp))
+                Text("3D قابل للنقل", fontWeight = FontWeight.Black, fontSize = 12.sp)
+                Text("GLB ملف واحد عملي للمشاركة والعرض. glTF نصي ومناسب للتطوير والويب.", fontSize = 9.sp, color = MaterialTheme.colorScheme.secondary)
+                Spacer(Modifier.height(7.dp))
+                Button(onClick = { glb.launch("manzili-semantic-3d.glb") }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                    Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(6.dp)); Text("تصدير GLB ثلاثي الأبعاد")
                 }
                 Spacer(Modifier.height(7.dp))
-                OutlinedButton(onClick = { dxf.launch("manzili-plan.dxf") }, modifier = Modifier.fillMaxWidth().height(50.dp)) {
-                    Icon(Icons.Rounded.SaveAlt, null); Spacer(Modifier.width(6.dp)); Text("تصدير DXF CAD")
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    OutlinedButton(onClick = { gltf.launch("manzili-semantic-3d.gltf") }, modifier = Modifier.weight(1f).height(50.dp)) { Text("glTF 2.0") }
+                    OutlinedButton(onClick = { obj.launch("manzili-semantic-3d.obj") }, modifier = Modifier.weight(1f).height(50.dp)) { Text("OBJ") }
                 }
-                Spacer(Modifier.height(7.dp))
-                OutlinedButton(onClick = { obj.launch("manzili-semantic-3d.obj") }, modifier = Modifier.fillMaxWidth().height(50.dp)) {
-                    Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(6.dp)); Text("تصدير OBJ ثلاثي الأبعاد")
-                }
-                Spacer(Modifier.height(7.dp))
+                Spacer(Modifier.height(10.dp))
                 Button(
                     onClick = { ifc.launch("manzili-bim.ifc") },
                     enabled = ifcReady,
@@ -125,7 +141,7 @@ fun QuickExportScreen(nav: NavHostController, plan: FloorPlan?) {
             if (status.isNotBlank()) Text(status, modifier = Modifier.padding(top = 10.dp), fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(18.dp))
             Text(
-                "OBJ وIFC يُبنيان من نفس Wall / Opening / Floor / StructuralElement. التصدير الهندسي لا يعني اعتمادًا إنشائيًا أو بلديًا.",
+                "GLB/glTF/OBJ تُبنى من نفس الجدران والفتحات والأسقف والعناصر الهندسية. التصدير الهندسي لا يعني اعتمادًا إنشائيًا أو بلديًا.",
                 fontSize = 9.sp,
                 color = MaterialTheme.colorScheme.secondary
             )
