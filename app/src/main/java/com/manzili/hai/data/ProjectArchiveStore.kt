@@ -6,7 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
 
-/** Portable HAI project archive. Schema 3 preserves polygons, site context and all floor levels. */
+/** Portable HAI project archive. Schema 4 preserves polygons, site, floors and optional rule-engine settings. */
 class ProjectArchiveStore(private val store: ProjectPlanStore) {
     data class ImportResult(val projectId: String, val plan: FloorPlan, val restoredVersions: Int)
 
@@ -20,7 +20,7 @@ class ProjectArchiveStore(private val store: ProjectPlanStore) {
         val payload = JSONArray().apply { history.forEach { put(PlanStorageCodec.encode(it)) } }
         return JSONObject().apply {
             put("format", "manzili-hai-project")
-            put("schemaVersion", 3)
+            put("schemaVersion", 4)
             put("exportedAt", System.currentTimeMillis())
             put("currentRevision", current.revision)
             put("plans", payload)
@@ -32,7 +32,7 @@ class ProjectArchiveStore(private val store: ProjectPlanStore) {
         if (raw.length !in 20..16_000_000) return null
         val root = runCatching { JSONObject(raw) }.getOrNull() ?: return null
         val schema = root.optInt("schemaVersion", -1)
-        if (root.optString("format") != "manzili-hai-project" || schema !in 1..3) return null
+        if (root.optString("format") != "manzili-hai-project" || schema !in 1..4) return null
         val payload = root.optJSONArray("plans") ?: return null
         if (payload.length() !in 1..50 || root.optString("sha256") != digest(payload.toString())) return null
         val plans = (0 until payload.length())
