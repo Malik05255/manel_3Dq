@@ -25,6 +25,7 @@ import com.manzili.hai.data.ProjectPlanStore
 import com.manzili.hai.engine.MultiFloorGeometryEngine
 import com.manzili.hai.engine.PlanVerificationEngine
 import com.manzili.hai.engine.ProjectMemoryEngine
+import com.manzili.hai.engine.SaudiProjectTypeEngine
 import com.manzili.hai.engine.SaudiResidentialEngine
 import com.manzili.hai.model.FloorPlan
 
@@ -46,6 +47,8 @@ private fun ProductionApp() {
     var pending by remember { mutableStateOf<FloorPlan?>(null) }
     var source by remember { mutableStateOf<Uri?>(null) }
     var convertTo3D by remember { mutableStateOf(false) }
+    var selectedProjectType by remember { mutableStateOf<SaudiProjectTypeEngine.Type?>(null) }
+    var afterTypeRoute by remember { mutableStateOf("editor") }
 
     fun createProject(next: FloorPlan) {
         val verified = SaudiResidentialEngine.normalize(PlanVerificationEngine.inspect(next).plan)
@@ -89,16 +92,39 @@ private fun ProductionApp() {
                     PlanVerificationScreen(nav, source, pending) { confirmed ->
                         createProject(confirmed)
                         pending = null
-                        if (convertTo3D) {
-                            convertTo3D = false
-                            nav.navigate("3d") { popUpTo("home") }
-                        } else nav.navigate("editor") { popUpTo("home") }
+                        afterTypeRoute = if (convertTo3D) "3d" else "editor"
+                        convertTo3D = false
+                        nav.navigate("edit-type") { popUpTo("home") }
                     }
                 }
                 composable("new") {
-                    SaudiNewBuildScreen(nav) {
-                        createProject(it)
+                    SaudiProjectTypeScreen(
+                        nav = nav,
+                        title = "وش ناوي تبني؟",
+                        subtitle = "اختر نوع المشروع أولًا، وبعدها HAI يغيّر الأسئلة وطريقة التصميم."
+                    ) { type ->
+                        selectedProjectType = type
+                        nav.navigate("new-brief")
+                    }
+                }
+                composable("new-brief") {
+                    val type = selectedProjectType ?: SaudiProjectTypeEngine.Type.VILLA_TWO
+                    SaudiAdaptiveBuildScreen(nav, type) {
+                        createProject(SaudiProjectTypeEngine.apply(it, type))
                         nav.navigate("editor") { popUpTo("home") }
+                    }
+                }
+                composable("edit-type") {
+                    val current = plan
+                    SaudiProjectTypeScreen(
+                        nav = nav,
+                        title = "حدد نوع المخطط",
+                        subtitle = "حتى عند تعديل مخطط سابق، HAI لازم يعرف هل هو فيلا أو عمارة أو تاون هاوس قبل ما يقترح أي تعديل.",
+                        current = current?.let(SaudiProjectTypeEngine::infer)
+                    ) { type ->
+                        selectedProjectType = type
+                        current?.let { updateProject(SaudiProjectTypeEngine.apply(it, type)) }
+                        nav.navigate(afterTypeRoute) { popUpTo("home") }
                     }
                 }
                 composable("editor") { EnhancedEditor(nav, plan) { updateProject(it) } }
@@ -133,16 +159,19 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
             Text("منزلي HAI", fontSize = 22.sp, fontWeight = FontWeight.Black)
             Text("$count مشروع • Saudi-first 2D/3D/4D • Geometry V3 • Deep Parser", color = Color.Gray, fontSize = 10.sp)
             Spacer(Modifier.height(18.dp))
-            Text("فيلا سعودية\nمن المخطط إلى التنفيذ.", fontSize = 34.sp, lineHeight = 39.sp, fontWeight = FontWeight.Black)
+            Text("مشروعك السعودي\nمن الفكرة إلى التنفيذ.", fontSize = 34.sp, lineHeight = 39.sp, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(16.dp))
             if (plan != null) {
+                val type = SaudiProjectTypeEngine.infer(plan)
+                Text("${type.label} • ${plan.title}", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF706B62))
+                Spacer(Modifier.height(5.dp))
                 Button(onClick = { nav.navigate("editor") }, modifier = Modifier.fillMaxWidth().height(54.dp)) {
-                    Icon(Icons.Rounded.Architecture, null); Spacer(Modifier.width(7.dp)); Text("أكمل ${plan.title}")
+                    Icon(Icons.Rounded.Architecture, null); Spacer(Modifier.width(7.dp)); Text("أكمل المشروع")
                 }
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     OutlinedButton(onClick = { nav.navigate("saudi-audit") }, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.HomeWork, null); Spacer(Modifier.width(4.dp)); Text("مراجعة سعودية") }
-                    OutlinedButton(onClick = { nav.navigate("3d") }, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(4.dp)); Text("3D سعودي") }
+                    OutlinedButton(onClick = { nav.navigate("3d") }, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(4.dp)); Text("3D") }
                 }
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -163,15 +192,15 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
                 Spacer(Modifier.height(8.dp))
             }
             Button(onClick = { nav.navigate("build") }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-                Icon(Icons.Rounded.AddHomeWork, null); Spacer(Modifier.width(7.dp)); Text("ابدأ فيلا سعودية جديدة")
+                Icon(Icons.Rounded.AddHomeWork, null); Spacer(Modifier.width(7.dp)); Text("ابدأ مشروع سعودي جديد")
             }
             Spacer(Modifier.height(7.dp))
             OutlinedButton(onClick = { nav.navigate("import3d") }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(7.dp)); Text("حوّل مخطط فيلا إلى 3D")
+                Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(7.dp)); Text("حوّل مخطط سابق إلى 3D")
             }
             TextButton(onClick = { nav.navigate("settings") }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Tune, null); Spacer(Modifier.width(5.dp)); Text("إعدادات HAI / Backend") }
             Spacer(Modifier.weight(1f))
-            Text("السعودية هي السياق الافتراضي للتصميم والمراجعة و3D و4D. الاشتراط الرسمي يبقى منفصلًا ولا يُختلق عند غياب المصدر.", color = Color.Gray, fontSize = 10.sp)
+            Text("نوع المشروع قيد أساسي: فيلا، عمارة، تاون هاوس، دوبلكس، بيت تقليدي أو استراحة. HAI لا يعاملها كنوع واحد.", color = Color.Gray, fontSize = 10.sp)
         }
     }
 }
