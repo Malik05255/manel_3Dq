@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: manzili-hai-deep-parser
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile.ml
+    dockerContext: ./backend
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: FLOORPLAN_MODEL_BACKEND
+        value: cubicasa
+      - key: FLOORPLAN_MODEL_PATH
+        value: /opt/models/floorplan.pt
+      - key: MANZILI_API_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
