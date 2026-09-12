@@ -22,7 +22,20 @@ jobs:
       - name: Generate Gradle wrapper
         run: gradle wrapper --gradle-version 8.7
       - name: Run engine regression tests
+        id: regression
+        continue-on-error: true
         run: ./gradlew testDebugUnitTest
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Manzili-HAI-test-reports
+          path: |
+            app/build/reports/tests/testDebugUnitTest
+            app/build/test-results/testDebugUnitTest
+          if-no-files-found: warn
+      - name: Stop on regression failure
+        if: steps.regression.outcome == 'failure'
+        run: exit 1
       - name: Build debug APK
         run: ./gradlew assembleDebug
       - name: Build optimized release APK and AAB
@@ -38,9 +51,3 @@ jobs:
             app/build/outputs/apk/release/*.apk
             app/build/outputs/bundle/release/*.aab
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: Manzili-HAI-test-reports
-          path: app/build/reports/tests/testDebugUnitTest
-          if-no-files-found: ignore
