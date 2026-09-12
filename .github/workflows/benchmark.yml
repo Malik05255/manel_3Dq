@@ -2,7 +2,7 @@ name: Saudi Benchmark Contract
 
 on:
   push:
-    branches: [main, codex/seven-stage-production]
+    branches: [main, codex/seven-production-upgrade]
     paths:
       - 'benchmarks/saudi-floorplans/**'
       - 'backend/scripts/validate_saudi_benchmark.py'
@@ -11,6 +11,7 @@ on:
     paths:
       - 'benchmarks/saudi-floorplans/**'
       - 'backend/scripts/validate_saudi_benchmark.py'
+      - '.github/workflows/benchmark.yml'
 
 jobs:
   validate:
@@ -22,3 +23,8 @@ jobs:
           python-version: '3.12'
       - name: Validate licensed Saudi benchmark manifest
         run: python backend/scripts/validate_saudi_benchmark.py
+      - name: Upload benchmark contract report
+        uses: actions/upload-artifact@v4
+        with:
+          name: saudi-benchmark-contract-report
+          path: benchmark-contract-report.json

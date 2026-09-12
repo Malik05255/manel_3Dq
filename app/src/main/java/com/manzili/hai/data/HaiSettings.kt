@@ -4,10 +4,7 @@ import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
-/**
- * Connection settings. Direct-provider mode remains for development.
- * Production should enable backendMode so provider secrets never leave the server.
- */
+/** Connection settings. Production backend is the default path; secrets remain encrypted on-device. */
 class HaiSettings(context: Context) {
     private val legacy = context.getSharedPreferences("hai_ai", Context.MODE_PRIVATE)
     private val secure = EncryptedSharedPreferences.create(
@@ -37,11 +34,11 @@ class HaiSettings(context: Context) {
         set(v) = legacy.edit().putString("model", v.trim()).apply()
 
     var backendMode: Boolean
-        get() = legacy.getBoolean("backendMode", false)
+        get() = legacy.getBoolean("backendMode", true)
         set(v) = legacy.edit().putBoolean("backendMode", v).apply()
 
     var backendBaseUrl: String
-        get() = legacy.getString("backendBaseUrl", "")!!
+        get() = legacy.getString("backendBaseUrl", "https://manzili-hai-deep-parser.onrender.com")!!
         set(v) = legacy.edit().putString("backendBaseUrl", v.trim().trimEnd('/')).apply()
 
     var backendAccessToken: String
@@ -60,7 +57,6 @@ class HaiSettings(context: Context) {
         get() = secure.getString("refreshToken", "")!!
         set(v) = secure.edit().putString("refreshToken", v.trim()).apply()
 
-    // Compatibility API consumed by HaiArchitectClient.
     var endpoint: String
         get() = if (backendMode && backendBaseUrl.isNotBlank()) "$backendBaseUrl/v1/ai/chat" else directEndpoint
         set(v) { directEndpoint = v }

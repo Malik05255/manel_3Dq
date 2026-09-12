@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from .cubicasa_model import model_status
 from .parser import parse_floorplan
 
-app = FastAPI(title="Manzili HAI Backend", version="0.44.0")
+app = FastAPI(title="Manzili HAI Backend", version="0.50.0")
 
 
 class ParseRequest(BaseModel):
