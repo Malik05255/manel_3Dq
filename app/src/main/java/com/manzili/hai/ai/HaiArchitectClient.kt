@@ -8,6 +8,7 @@ import android.net.Uri
 import android.util.Base64
 import com.manzili.hai.data.HaiSettings
 import com.manzili.hai.engine.ArchitecturalEngine
+import com.manzili.hai.engine.ArchitecturalRepairEngine
 import com.manzili.hai.engine.ArchitecturalRequestAnalyzer
 import com.manzili.hai.engine.GeometrySolver
 import com.manzili.hai.model.FloorPlan
@@ -67,14 +68,36 @@ class HaiArchitectClient(private val context: Context) {
         }
 
         val review = ArchitecturalEngine.architecturalReview(plan, next)
-        if (review.hasMaterialObjection) {
-            proposal.copy(
-                message = proposal.message + "\n\nاعتراض HAI: " + review.objections.joinToString(" ")
-            )
-        } else {
-            // لا نضيف اعتراضًا شكليًا عندما يكون التعديل سليمًا.
-            proposal
+        if (!review.hasMaterialObjection) {
+            return@withContext proposal
         }
+
+        val repairs = ArchitecturalRepairEngine.alternatives(plan, next, limit = 3)
+        val best = repairs.firstOrNull { it.remainingObjections == 0 }
+        if (best != null) {
+            val second = repairs.drop(1).firstOrNull { it.remainingObjections == 0 }
+            val alternativesText = buildString {
+                append("\n\nاعتراض HAI: ").append(review.objections.joinToString(" "))
+                append("\n\nالبديل الذي أوصي به: ").append(best.movement.ifBlank { best.candidate.reason })
+                append(". ").append(best.candidate.reason)
+                if (second != null) append("\nبديل ثانٍ متاح: ").append(second.movement.ifBlank { second.candidate.reason }).append(".")
+                append("\nأعرض البديل الآمن كمعاينة، ولن يُعتمد إلا بموافقتك.")
+            }
+            return@withContext PlanProposal(
+                message = proposal.message + alternativesText,
+                updatedPlan = best.candidate.plan,
+                changes = best.candidate.changes,
+                requiresConfirmation = true,
+                confidence = (94 - best.candidate.review.notes.size * 2).coerceIn(65, 96)
+            )
+        }
+
+        proposal.copy(
+            message = proposal.message + "\n\nاعتراض HAI: " + review.objections.joinToString(" ") +
+                "\nلم أجد بديلًا هندسيًا آمنًا تلقائيًا يحافظ على القيود الحالية، لذلك لن أعرض التعديل للاعتماد.",
+            updatedPlan = null,
+            confidence = 100
+        )
     }
 
     suspend fun advise(plan: FloorPlan, userText: String): String = proposeChange(plan, userText).message
@@ -268,6 +291,7 @@ class HaiArchitectClient(private val context: Context) {
 13) إذا ذكر الفحص غرفًا طلب المستخدم حمايتها، لا تغيرها حتى لو لم تكن مقفلة سابقًا في المشروع.
 14) GeometrySolver هو الحكم النهائي في الحدود والتداخلات وموضع الفتحات على الجدران؛ لا تحاول تجاوز نتيجة الفحص المحلي.
 15) إذا كان النقل أو التكبير سليمًا وظيفيًا فلا تصنع اعتراضًا لمجرد الشرح. اعترض فقط عندما يوجد أثر واضح واذكر الأثر المحدد.
+16) إذا اعترضت على حل، لا تتوقف عند الرفض: اقترح أقرب بديل يحافظ على نية العميل، لكن اترك للمحرك المحلي التحقق النهائي منه.
 """.trimIndent()
     }
 }
