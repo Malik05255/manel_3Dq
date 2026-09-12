@@ -41,6 +41,9 @@ object ProjectMemoryEngine {
     ): Capture {
         val text = normalize(userText)
         if (text.isBlank()) return Capture(plan, emptyList(), "", false)
+
+        manageExisting(plan, text, userText, selectedKind, selectedId)?.let { return it }
+
         val added = mutableListOf<ProjectConstraint>()
         val mentionedRooms = mentionedRooms(plan, text)
         val selectedTargets = if (selectedKind != null && selectedId != null && refersToSelected(text)) listOf(selectedId) else emptyList()
@@ -128,6 +131,118 @@ object ProjectMemoryEngine {
             message = "ثبتّها كقاعدة للمشروع: $labels. سأحترمها في الاقتراحات والسحب والبدائل القادمة.",
             memoryOnly = memoryOnly
         )
+    }
+
+    private fun manageExisting(
+        plan: FloorPlan,
+        text: String,
+        rawText: String,
+        selectedKind: String?,
+        selectedId: String?
+    ): Capture? {
+        if (plan.constraints.isEmpty()) return null
+        val wantsDelete = containsAny(text, "الغي", "الغِ", "احذف القاعد", "احذف الشرط", "انس القاعد", "انسى القاعد", "نسيان القاعد", "شيل القاعد", "شيل الشرط", "ما عاد ابي القاعد", "ما عاد ابي الشرط")
+        val wantsDisable = !wantsDelete && containsAny(text, "وقف القاعد", "اوقف القاعد", "عطل القاعد", "عطّل القاعد", "وقف الشرط", "اوقف الشرط", "مؤقتا", "مؤقتًا")
+        val wantsEnable = containsAny(text, "فعل القاعد", "فعّل القاعد", "شغل القاعد", "شغّل القاعد", "رجع القاعد", "استرجع القاعد", "فعل الشرط", "فعّل الشرط")
+        val number = extractNumber(rawText)
+        val wantsMinUpdate = number != null && containsAny(text, "عدل", "عدّل", "غير", "غيّر", "خله", "خلي", "اجعل", "الحد", "المساح")
+        if (!wantsDelete && !wantsDisable && !wantsEnable && !wantsMinUpdate) return null
+
+        val matched = matchingConstraints(plan, text, selectedKind, selectedId, includeInactive = wantsEnable)
+        if (matched.isEmpty()) {
+            return Capture(
+                plan = plan,
+                added = listOf(plan.constraints.first()),
+                message = "فهمت أنك تريد إدارة قاعدة محفوظة، لكن لم أستطع تحديد أي قاعدة تقصد بدقة. اذكر الغرفة أو نوع القاعدة مثل: «ألغي شرط عدم تصغير المجلس».",
+                memoryOnly = true
+            )
+        }
+
+        var next = plan
+        val changed = mutableListOf<ProjectConstraint>()
+        when {
+            wantsDelete -> matched.forEach { rule ->
+                changed += rule
+                next = ProjectConstraintManager.forget(next, rule.id)
+            }
+            wantsDisable -> matched.forEach { rule ->
+                changed += rule.copy(active = false)
+                next = ProjectConstraintManager.setActive(next, rule.id, false)
+            }
+            wantsEnable -> matched.forEach { rule ->
+                changed += rule.copy(active = true)
+                next = ProjectConstraintManager.setActive(next, rule.id, true)
+            }
+            wantsMinUpdate && number != null -> {
+                val areaRules = matched.filter { it.kind == MIN_ROOM_AREA }
+                if (areaRules.isEmpty()) {
+                    return Capture(
+                        plan = plan,
+                        added = listOf(matched.first()),
+                        message = "وجدت القاعدة، لكن الرقم لا يخص حد مساحة محفوظًا. قل مثلًا: «غيّر حد المجلس إلى 22 متر».",
+                        memoryOnly = true
+                    )
+                }
+                areaRules.forEach { rule ->
+                    changed += rule.copy(value = number)
+                    next = ProjectConstraintManager.updateValue(next, rule.id, number)
+                }
+            }
+        }
+
+        val description = changed.joinToString("، ") { humanLabel(next, it) }
+        val message = when {
+            wantsDelete -> "ألغيت من ذاكرة المشروع: $description. لن أفرضها على التعديلات القادمة."
+            wantsDisable -> "أوقفت مؤقتًا: $description. القاعدة ما زالت محفوظة ويمكنك تفعيلها لاحقًا."
+            wantsEnable -> "فعّلت من جديد: $description. أصبحت نافذة على السحب والاقتراحات والبدائل."
+            else -> "عدّلت قاعدة المشروع: $description. الحد الجديد أصبح ${fmt(number ?: 0.0)}م²."
+        }
+        return Capture(next, changed.ifEmpty { matched }, message, true)
+    }
+
+    private fun matchingConstraints(
+        plan: FloorPlan,
+        text: String,
+        selectedKind: String?,
+        selectedId: String?,
+        includeInactive: Boolean
+    ): List<ProjectConstraint> {
+        val pool = plan.constraints.filter { includeInactive || it.active }
+        val roomIds = mentionedRooms(plan, text).map { it.id }.toMutableSet()
+        if (selectedKind != null && selectedId != null && refersToSelected(text)) roomIds += selectedId
+
+        val kinds = mutableSetOf<String>()
+        if (containsAny(text, "خصوصي")) kinds += PRIORITY_PRIVACY
+        if (containsAny(text, "اضاء", "إضاء")) kinds += PRIORITY_DAYLIGHT
+        if (containsAny(text, "حركه", "حركة", "ممر")) kinds += PRIORITY_CIRCULATION
+        if (text.contains("مدخل") && containsAny(text, "ضيف", "ضيوف", "مجلس")) kinds += GUEST_ENTRANCE_INDEPENDENT
+        if (containsAny(text, "لا يصغر", "تصغير", "المساح", "الحد")) kinds += MIN_ROOM_AREA
+        if (containsAny(text, "لا تغير", "ثابت", "قفل", "مقفل")) kinds += LOCK_ELEMENT
+
+        val scored = pool.map { rule ->
+            var score = 0
+            if (rule.kind in kinds) score += 4
+            if (roomIds.isNotEmpty() && rule.targetIds.any { it in roomIds }) score += 6
+            val ruleText = normalize(rule.text)
+            if (ruleText.isNotBlank() && text.contains(ruleText)) score += 3
+            rule to score
+        }
+        val best = scored.maxOfOrNull { it.second } ?: 0
+        if (best > 0) return scored.filter { it.second == best }.map { it.first }
+        if (pool.size == 1 && containsAny(text, "القاعده", "القاعدة", "الشرط")) return pool
+        return emptyList()
+    }
+
+    private fun extractNumber(raw: String): Double? {
+        val converted = raw.map { ch ->
+            when (ch) {
+                '٠', '۰' -> '0'; '١', '۱' -> '1'; '٢', '۲' -> '2'; '٣', '۳' -> '3'; '٤', '۴' -> '4'
+                '٥', '۵' -> '5'; '٦', '۶' -> '6'; '٧', '۷' -> '7'; '٨', '۸' -> '8'; '٩', '۹' -> '9'
+                ',', '٫' -> '.'
+                else -> ch
+            }
+        }.joinToString("")
+        return Regex("\\d+(?:\\.\\d+)?").find(converted)?.value?.toDoubleOrNull()?.takeIf { it > 0.0 }
     }
 
     fun carryForward(current: FloorPlan, next: FloorPlan): FloorPlan {
