@@ -60,8 +60,10 @@ fun Saudi4DScreen(nav:NavHostController,plan:FloorPlan?,onPlanChange:(FloorPlan)
                     }
                 }
                 Button(onClick={
-                    var updated=plan
-                    timeline.boq.forEach{q->updated=Bim4DProductionEngine.setCostRate(updated,q.key,rates[q.key]?.toDoubleOrNull())}
+                    var updated: FloorPlan = plan
+                    timeline.boq.forEach { q ->
+                        updated = Bim4DProductionEngine.setCostRate(updated,q.key,rates[q.key]?.toDoubleOrNull())
+                    }
                     onPlanChange(updated)
                 },modifier=Modifier.fillMaxWidth()){Text("حفظ أسعار الوحدات وإعادة حساب التكلفة")}
                 Spacer(Modifier.height(8.dp))
