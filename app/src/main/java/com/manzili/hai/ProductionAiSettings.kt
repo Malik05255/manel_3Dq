@@ -2,13 +2,17 @@ package com.manzili.hai
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.CloudDone
+import androidx.compose.material.icons.rounded.CloudDownload
+import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -16,144 +20,197 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
+import com.manzili.hai.ai.AiProviderRouter
 import com.manzili.hai.data.HaiSettings
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONObject
-import java.util.concurrent.TimeUnit
-
-private data class BackendProbe(val ok: Boolean, val message: String)
 
 @Composable
 fun ProductionAiSettings(nav: NavHostController) {
     val context = LocalContext.current
     val settings = remember(context) { HaiSettings(context) }
+    val router = remember(context) { AiProviderRouter(context) }
     val scope = rememberCoroutineScope()
-    var backendMode by remember { mutableStateOf(settings.backendMode) }
-    var backendUrl by remember { mutableStateOf(settings.backendBaseUrl) }
-    var backendToken by remember { mutableStateOf(settings.backendAccessToken) }
-    var supabaseUrl by remember { mutableStateOf(settings.supabaseUrl) }
-    var publishable by remember { mutableStateOf(settings.supabasePublishableKey) }
-    var directEndpoint by remember { mutableStateOf(settings.directEndpoint) }
-    var directKey by remember { mutableStateOf(settings.directApiKey) }
-    var model by remember { mutableStateOf(settings.model) }
-    var saved by remember { mutableStateOf(false) }
-    var probing by remember { mutableStateOf(false) }
-    var probe by remember { mutableStateOf<BackendProbe?>(null) }
+
+    var openRouterKey by remember { mutableStateOf(settings.openRouterApiKey) }
+    var googleKey by remember { mutableStateOf(settings.googleApiKey) }
+    var openRouterModels by remember { mutableStateOf<List<AiProviderRouter.ModelOption>>(emptyList()) }
+    var googleModels by remember { mutableStateOf<List<AiProviderRouter.ModelOption>>(emptyList()) }
+    var selectedOpenRouter by remember { mutableStateOf(settings.openRouterModels.toSet()) }
+    var selectedGoogle by remember { mutableStateOf(settings.googleModels.toSet()) }
+    var smartRouting by remember { mutableStateOf(settings.smartRoutingEnabled) }
+    var nanoEnabled by remember { mutableStateOf(settings.nanoEnabled) }
+    var nanoState by remember { mutableStateOf(AiProviderRouter.NanoState(false, false, "يفحص…")) }
+    var loadingOpenRouter by remember { mutableStateOf(false) }
+    var loadingGoogle by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) { nanoState = router.nanoState() }
 
     Surface(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(18.dp)) {
-            Row {
+        Column(
+            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 18.dp)
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
-                Column {
-                    Text("اتصال HAI", fontSize = 23.sp, fontWeight = FontWeight.Black)
-                    Text("Backend آمن للإنتاج • Direct للتطوير", color = MaterialTheme.colorScheme.secondary, fontSize = 10.sp)
-                }
+                Text("الذكاء", fontSize = 28.sp, fontWeight = FontWeight.Black)
             }
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column(Modifier.weight(1f)) {
-                        Text("استخدم Backend الآمن", fontWeight = FontWeight.Bold)
-                        Text("عند تفعيله لا يحتاج التطبيق مفتاح مزود AI.", fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary)
+
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                ProviderCard(title = "بدون API") {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Memory, null)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Gemini Nano", fontWeight = FontWeight.Black)
+                            Text(nanoState.label, fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+                        }
+                        Switch(checked = nanoEnabled, onCheckedChange = { nanoEnabled = it })
                     }
-                    Switch(backendMode, { backendMode = it; probe = null })
+                    if (nanoState.downloadable) {
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    message = ""
+                                    nanoState = router.prepareNano()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Rounded.CloudDownload, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("تجهيز")
+                        }
+                    }
                 }
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(model, { model = it }, label = { Text("Model ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(10.dp))
-                if (backendMode) {
-                    OutlinedTextField(backendUrl, { backendUrl = it; probe = null }, label = { Text("Backend URL") }, supportingText = { Text("مثال: https://manzili-hai-deep-parser.onrender.com") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(10.dp))
+
+                ProviderCard(title = "OpenRouter") {
                     OutlinedTextField(
-                        backendToken,
-                        { backendToken = it; probe = null },
-                        label = { Text("Backend access token") },
-                        supportingText = { Text("يُخزن AES-256 مشفرًا على الجهاز ولا يُضمّن داخل APK.") },
+                        value = openRouterKey,
+                        onValueChange = { openRouterKey = it },
+                        label = { Text("API") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(8.dp))
                     OutlinedButton(
-                        enabled = !probing && backendUrl.isNotBlank() && backendToken.isNotBlank(),
+                        enabled = openRouterKey.isNotBlank() && !loadingOpenRouter,
                         onClick = {
-                            probing = true; probe = null
+                            loadingOpenRouter = true; message = ""
                             scope.launch {
-                                val result = probeBackend(backendUrl, backendToken)
-                                probe = result
-                                probing = false
+                                runCatching { router.discoverOpenRouterFree(openRouterKey) }
+                                    .onSuccess { openRouterModels = it }
+                                    .onFailure { message = it.message.orEmpty() }
+                                loadingOpenRouter = false
                             }
                         },
-                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        if (probing) CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Rounded.CloudDone, null)
-                        Spacer(Modifier.width(7.dp))
-                        Text(if (probing) "يفحص Deep Parser…" else "اختبار Backend وDeep Parser")
+                        if (loadingOpenRouter) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.Refresh, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("النماذج المجانية")
                     }
-                    probe?.let { result ->
-                        Text(
-                            result.message,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (result.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(top = 7.dp)
-                        )
+                    ModelChoices(openRouterModels, selectedOpenRouter) { id, checked ->
+                        selectedOpenRouter = if (checked) selectedOpenRouter + id else selectedOpenRouter - id
                     }
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(supabaseUrl, { supabaseUrl = it }, label = { Text("Supabase URL (اختياري)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(publishable, { publishable = it }, label = { Text("Supabase publishable key (اختياري)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    Text("يمكن استخدام جلسة Supabase بدل الرمز الثابت لاحقًا؛ كلاهما يبقى خارج ملفات التطبيق المصدرية.", fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary)
-                } else {
-                    OutlinedTextField(directEndpoint, { directEndpoint = it }, label = { Text("Provider endpoint") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(directKey, { directKey = it }, label = { Text("Provider API key") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    Text("Direct mode مناسب للتطوير فقط؛ المفتاح يُخزن مشفرًا لكنه يبقى موجودًا على جهاز العميل.", fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
                 }
+
+                ProviderCard(title = "Google AI Studio") {
+                    OutlinedTextField(
+                        value = googleKey,
+                        onValueChange = { googleKey = it },
+                        label = { Text("API") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        enabled = googleKey.isNotBlank() && !loadingGoogle,
+                        onClick = {
+                            loadingGoogle = true; message = ""
+                            scope.launch {
+                                runCatching { router.discoverGoogleFreeCandidates(googleKey) }
+                                    .onSuccess { googleModels = it }
+                                    .onFailure { message = it.message.orEmpty() }
+                                loadingGoogle = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (loadingGoogle) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.Refresh, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("النماذج المجانية")
+                    }
+                    ModelChoices(googleModels, selectedGoogle) { id, checked ->
+                        selectedGoogle = if (checked) selectedGoogle + id else selectedGoogle - id
+                    }
+                }
+
+                ProviderCard(title = "تلقائي") {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("الأقوى ثم البديل", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Switch(checked = smartRouting, onCheckedChange = { smartRouting = it })
+                    }
+                }
+
+                if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
             }
-            Button(onClick = {
-                settings.backendMode = backendMode
-                settings.backendBaseUrl = backendUrl
-                settings.backendAccessToken = backendToken
-                settings.supabaseUrl = supabaseUrl
-                settings.supabasePublishableKey = publishable
-                settings.directEndpoint = directEndpoint
-                settings.directApiKey = directKey
-                settings.model = model
-                saved = true
-            }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-                Icon(Icons.Rounded.Save, null); Spacer(Modifier.width(7.dp)); Text("حفظ الاتصال")
+
+            Button(
+                onClick = {
+                    settings.openRouterApiKey = openRouterKey
+                    settings.googleApiKey = googleKey
+                    settings.openRouterModels = selectedOpenRouter.toList()
+                    settings.googleModels = selectedGoogle.toList()
+                    settings.smartRoutingEnabled = smartRouting
+                    settings.nanoEnabled = nanoEnabled
+                    message = "تم الحفظ"
+                },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Icon(Icons.Rounded.Save, null)
+                Spacer(Modifier.width(7.dp))
+                Text("حفظ", fontWeight = FontWeight.Black)
             }
-            if (saved) Text("تم الحفظ", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
             Spacer(Modifier.height(10.dp))
         }
     }
 }
 
-private suspend fun probeBackend(rawBaseUrl: String, token: String): BackendProbe = withContext(Dispatchers.IO) {
-    val base = rawBaseUrl.trim().trimEnd('/')
-    if (!base.startsWith("https://") && !base.startsWith("http://")) return@withContext BackendProbe(false, "رابط Backend غير صحيح")
-    val client = OkHttpClient.Builder().connectTimeout(12, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
-    runCatching {
-        val request = Request.Builder()
-            .url("$base/v1/parser/status")
-            .header("Authorization", "Bearer ${token.trim()}")
-            .get()
-            .build()
-        client.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) return@use BackendProbe(false, "Backend رد ${response.code}: ${body.take(120)}")
-            val json = JSONObject(body)
-            val ready = json.optBoolean("ready", false)
-            val path = json.optString("preferred_path", "")
-            if (ready) BackendProbe(true, "متصل ✓ Deep Parser جاهز فعليًا${if (path.isNotBlank()) " • $path" else ""}")
-            else BackendProbe(false, "Backend متصل لكن نموذج Deep Parser غير جاهز")
+@Composable
+private fun ProviderCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(title, fontSize = 18.sp, fontWeight = FontWeight.Black)
+            Spacer(Modifier.height(10.dp))
+            content()
         }
-    }.getOrElse { BackendProbe(false, "فشل الاتصال: ${it.message.orEmpty().take(140)}") }
+    }
+}
+
+@Composable
+private fun ModelChoices(
+    models: List<AiProviderRouter.ModelOption>,
+    selected: Set<String>,
+    onChange: (String, Boolean) -> Unit
+) {
+    if (models.isEmpty()) return
+    Spacer(Modifier.height(8.dp))
+    models.forEach { model ->
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = model.id in selected, onCheckedChange = { onChange(model.id, it) })
+            Column(Modifier.weight(1f)) {
+                Text(model.name, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                Text(model.id, fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary, maxLines = 1)
+            }
+        }
+    }
 }
