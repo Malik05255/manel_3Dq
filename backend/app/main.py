@@ -8,9 +8,10 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from .cubicasa_model import model_status
 from .parser import parse_floorplan
 
-app = FastAPI(title="Manzili HAI Backend", version="0.20.0")
+app = FastAPI(title="Manzili HAI Backend", version="0.21.0")
 
 
 class ParseRequest(BaseModel):
@@ -54,11 +55,14 @@ async def current_user(authorization: str | None = Header(default=None)) -> dict
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
+    floorplan = model_status()
     return {
         "ok": True,
+        "version": app.version,
         "ai_configured": bool(os.getenv("AI_API_KEY")),
         "supabase_configured": bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_PUBLISHABLE_KEY")),
-        "floorplan_model_configured": bool(os.getenv("FLOORPLAN_ONNX_MODEL")),
+        "floorplan_model_configured": bool(floorplan.get("configured")),
+        "floorplan_model": floorplan,
     }
 
 
