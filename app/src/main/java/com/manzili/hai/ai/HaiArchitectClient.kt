@@ -9,6 +9,7 @@ import android.util.Base64
 import com.manzili.hai.data.HaiSettings
 import com.manzili.hai.engine.ArchitecturalEngine
 import com.manzili.hai.engine.ArchitecturalRequestAnalyzer
+import com.manzili.hai.engine.GeometrySolver
 import com.manzili.hai.model.FloorPlan
 import com.manzili.hai.model.PlanProposal
 import kotlinx.coroutines.Dispatchers
@@ -46,12 +47,34 @@ class HaiArchitectClient(private val context: Context) {
         val compact = planToJson(plan)
         val deterministicBrief = ArchitecturalEngine.compactBrief(plan)
         val requestPreflight = ArchitecturalRequestAnalyzer.preflight(plan, userText)
+        val solverBrief = GeometrySolver.brief(plan, userText)
         val prompt = CHANGE_PROMPT +
             "\n\nتقييم المحرك الهندسي المحلي:\n$deterministicBrief" +
             "\n\nفحص الطلب الحسابي قبل استدعاء الذكاء:\n$requestPreflight" +
+            "\n\nفحص GeometrySolver قبل الاقتراح:\n$solverBrief" +
             "\n\nالمخطط الحالي (هو المرجع الوحيد للأبعاد الموجودة):\n$compact" +
             "\n\nطلب العميل:\n$userText"
-        ArchitectJson.parseProposal(chatText(prompt))
+
+        val proposal = ArchitectJson.parseProposal(chatText(prompt))
+        val next = proposal.updatedPlan ?: return@withContext proposal
+        val geometry = GeometrySolver.verify(plan, next)
+        if (!geometry.feasible) {
+            return@withContext proposal.copy(
+                message = "رفضت الحل المقترح قبل عرضه لأن GeometrySolver وجد: ${geometry.errors.joinToString("، ")}",
+                updatedPlan = null,
+                confidence = 100
+            )
+        }
+
+        val review = ArchitecturalEngine.architecturalReview(plan, next)
+        if (review.hasMaterialObjection) {
+            proposal.copy(
+                message = proposal.message + "\n\nاعتراض HAI: " + review.objections.joinToString(" ")
+            )
+        } else {
+            // لا نضيف اعتراضًا شكليًا عندما يكون التعديل سليمًا.
+            proposal
+        }
     }
 
     suspend fun advise(plan: FloorPlan, userText: String): String = proposeChange(plan, userText).message
@@ -243,6 +266,8 @@ class HaiArchitectClient(private val context: Context) {
 11) إذا كانت المنطقة المطلوبة منخفضة الثقة، اطلب تأكيدًا بدل إعادة رسمها بثقة زائفة.
 12) عامل نتائج الفحص الحسابي والمحرك الهندسي المحلي كحقائق يجب احترامها، ولا تدّع توفر مساحة إذا أظهر الفحص عكس ذلك إلا مع شرح إعادة التوزيع المطلوبة.
 13) إذا ذكر الفحص غرفًا طلب المستخدم حمايتها، لا تغيرها حتى لو لم تكن مقفلة سابقًا في المشروع.
+14) GeometrySolver هو الحكم النهائي في الحدود والتداخلات وموضع الفتحات على الجدران؛ لا تحاول تجاوز نتيجة الفحص المحلي.
+15) إذا كان النقل أو التكبير سليمًا وظيفيًا فلا تصنع اعتراضًا لمجرد الشرح. اعترض فقط عندما يوجد أثر واضح واذكر الأثر المحدد.
 """.trimIndent()
     }
 }
