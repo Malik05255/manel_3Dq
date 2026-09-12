@@ -4,13 +4,15 @@ services:
     runtime: docker
     dockerfilePath: ./backend/Dockerfile.ml
     dockerContext: ./backend
-    healthCheckPath: /health
+    healthCheckPath: /readyz
     autoDeployTrigger: commit
     envVars:
-      - key: FLOORPLAN_MODEL_BACKEND
-        value: cubicasa
-      - key: FLOORPLAN_MODEL_PATH
-        value: /opt/models/floorplan.pt
+      - key: FLOORPLAN_SAFETENSORS_MODEL
+        value: /opt/manzili/models/floorplan/best.safetensors
+      - key: FLOORPLAN_DEVICE
+        value: cpu
+      - key: FLOORPLAN_TORCH_THREADS
+        value: "2"
       - key: MANZILI_API_TOKEN
         sync: false
       - key: SUPABASE_URL
