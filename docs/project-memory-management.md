@@ -1,0 +1,1 @@
+Project memory management phase: editable constraints, multiple projects, and durable revision history.
