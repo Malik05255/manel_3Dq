@@ -1,5 +1,6 @@
 package com.manzili.hai.ai
 
+import com.manzili.hai.engine.ArchitecturalEngine
 import com.manzili.hai.model.FloorPlan
 import com.manzili.hai.model.Opening
 import com.manzili.hai.model.PlanChange
@@ -19,7 +20,10 @@ object ArchitectJson {
         return clean.substring(first, last + 1)
     }
 
-    fun parsePlan(raw: String): FloorPlan = parsePlanObject(JSONObject(extractJson(raw)))
+    fun parsePlan(raw: String): FloorPlan {
+        val plan = parsePlanObject(JSONObject(extractJson(raw)))
+        return plan.copy(sourceSummary = ArchitecturalEngine.initialArchitectMessage(plan))
+    }
 
     fun parseProposal(raw: String): PlanProposal {
         val root = JSONObject(extractJson(raw))
