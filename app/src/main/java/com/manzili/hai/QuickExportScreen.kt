@@ -18,6 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
+import com.manzili.hai.engine.Semantic3DEngine
 import com.manzili.hai.export.DxfPlanExporter
 import com.manzili.hai.export.IfcPlanExporter
 import com.manzili.hai.export.ObjPlanExporter
@@ -42,7 +43,7 @@ fun QuickExportScreen(nav: NavHostController, plan: FloorPlan?) {
         if (uri != null && plan != null) status = if (runCatching { context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(ObjPlanExporter.render(plan)) } }.isSuccess) "تم تصدير OBJ من نفس المجسم الهندسي" else "تعذر تصدير OBJ"
     }
     val ifc = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-step")) { uri ->
-        if (uri != null && plan != null) status = if (runCatching { context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(IfcPlanExporter.render(plan)) } }.isSuccess) "تم تصدير IFC4 BIM" else "تعذر تصدير IFC؛ تأكد من المقياس"
+        if (uri != null && plan != null) status = if (runCatching { context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(IfcPlanExporter.render(plan)) } }.isSuccess) "تم تصدير IFC4 BIM" else "تعذر تصدير IFC؛ راجع المقياس وارتفاعات الفتحات"
     }
 
     Surface(Modifier.fillMaxSize()) {
@@ -66,6 +67,8 @@ fun QuickExportScreen(nav: NavHostController, plan: FloorPlan?) {
             } else {
                 PlanCanvas(plan, Modifier.fillMaxWidth().height(220.dp), previewMode = true, onSelect = {})
                 Spacer(Modifier.height(12.dp))
+                val scene = remember(plan) { Semantic3DEngine.build(plan) }
+                val missingVertical = scene.openings.count { !it.wallId.isNullOrBlank() && !it.verticalVerified }
                 val ifcReady = IfcPlanExporter.canExport(plan)
                 Text(
                     if (plan.widthM != null && plan.heightM != null)
@@ -95,10 +98,28 @@ fun QuickExportScreen(nav: NavHostController, plan: FloorPlan?) {
                     enabled = ifcReady,
                     modifier = Modifier.fillMaxWidth().height(50.dp)
                 ) {
-                    Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(6.dp)); Text(if (ifcReady) "تصدير IFC4 BIM" else "IFC ينتظر تأكيد المقياس")
+                    Icon(Icons.Rounded.ViewInAr, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        when {
+                            ifcReady -> "تصدير IFC4 BIM"
+                            !scene.metricReady -> "IFC ينتظر تأكيد المقياس"
+                            missingVertical > 0 -> "IFC ينتظر ارتفاع $missingVertical فتحة"
+                            else -> "IFC غير جاهز"
+                        }
+                    )
                 }
                 if (!ifcReady) {
-                    Text("لن يصدر HAI ملف BIM بأمتار مخترعة. أكد أبعاد/مقياس المخطط أولًا.", fontSize = 9.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(top = 5.dp))
+                    Text(
+                        when {
+                            !scene.metricReady -> "لن يصدر HAI ملف BIM بأمتار مخترعة. أكد أبعاد/مقياس المخطط أولًا."
+                            missingVertical > 0 -> "افتح شاشة 3D واضغط الفتحات التي تحمل «ارتفاع؟» وأكد القياسات المعروفة. القيم الافتراضية للمعاينة لا تدخل IFC."
+                            else -> "راجع بيانات المشروع قبل تصدير BIM."
+                        },
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.padding(top = 5.dp)
+                    )
                 }
             }
             if (status.isNotBlank()) Text(status, modifier = Modifier.padding(top = 10.dp), fontWeight = FontWeight.Bold)
