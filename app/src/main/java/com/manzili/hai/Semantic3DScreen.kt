@@ -10,6 +10,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Cached
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Verified
 import androidx.compose.material.icons.rounded.ViewInAr
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,8 +25,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
+import com.manzili.hai.engine.OpeningVerticalProfileEngine
 import com.manzili.hai.engine.Semantic3DEngine
 import com.manzili.hai.model.FloorPlan
+import com.manzili.hai.model.Opening
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.min
@@ -34,12 +38,20 @@ private data class PreviewPoint(val x: Float, val y: Float, val depth: Double)
 private data class PreviewFace(val points: List<PreviewPoint>, val fill: Color, val depth: Double)
 
 @Composable
-fun Semantic3DScreen(nav: NavHostController, plan: FloorPlan?) {
+fun Semantic3DScreen(
+    nav: NavHostController,
+    plan: FloorPlan?,
+    onPlanChanged: (FloorPlan) -> Unit = {}
+) {
     val scene = remember(plan) { plan?.let { Semantic3DEngine.build(it) } }
     var yaw by remember { mutableFloatStateOf(-34f) }
     var pitch by remember { mutableFloatStateOf(34f) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var selectedFloor by remember { mutableStateOf<String?>(null) }
+    var editOpeningId by remember { mutableStateOf<String?>(null) }
+    val allOpenings = remember(plan) {
+        plan?.let { (it.openings + it.floors.flatMap { floor -> floor.openings }).distinctBy { opening -> opening.id } }.orEmpty()
+    }
 
     Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F4EE)) {
         Column(
@@ -67,15 +79,16 @@ fun Semantic3DScreen(nav: NavHostController, plan: FloorPlan?) {
                 }
             }
 
-            if (scene == null) {
+            if (scene == null || plan == null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("افتح مشروعًا أولًا") }
                 return@Column
             }
 
+            val verifiedVertical = scene.openings.count { it.verticalVerified }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 MetricChip("${scene.floorIds.size}", "دور", Modifier.weight(1f))
-                MetricChip("${scene.meshes.count { it.kind == "wall" }}", "كتلة جدار", Modifier.weight(1f))
-                MetricChip("${scene.openings.size}", "فتحة", Modifier.weight(1f))
+                MetricChip("${scene.meshes.count { it.kind == "wall" }}", "جدار", Modifier.weight(1f))
+                MetricChip("$verifiedVertical/${scene.openings.size}", "ارتفاع", Modifier.weight(1f))
                 MetricChip(if (scene.metricReady) "m" else "نسبي", "المقياس", Modifier.weight(1f))
             }
             Spacer(Modifier.height(9.dp))
@@ -125,7 +138,7 @@ fun Semantic3DScreen(nav: NavHostController, plan: FloorPlan?) {
                     label = { Text("كل الأدوار", fontSize = 9.sp) }
                 )
                 scene.floorIds.forEachIndexed { index, id ->
-                    val name = plan?.floors?.firstOrNull { it.id == id }?.name ?: if (index == 0) "الأرضي" else "الدور ${index + 1}"
+                    val name = plan.floors.firstOrNull { it.id == id }?.name ?: if (index == 0) "الأرضي" else "الدور ${index + 1}"
                     FilterChip(
                         selected = selectedFloor == id,
                         onClick = { selectedFloor = id },
@@ -134,14 +147,32 @@ fun Semantic3DScreen(nav: NavHostController, plan: FloorPlan?) {
                 }
             }
 
+            if (allOpenings.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().horizontalScrollCompat().padding(top = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    allOpenings.forEach { opening ->
+                        val profile = OpeningVerticalProfileEngine.profile(plan, opening)
+                        AssistChip(
+                            onClick = { editOpeningId = opening.id },
+                            label = { Text("${opening.id} ${if (profile.verified) "✓" else "ارتفاع؟"}", fontSize = 8.5.sp) },
+                            leadingIcon = {
+                                Icon(if (profile.verified) Icons.Rounded.Verified else Icons.Rounded.Edit, null, Modifier.size(14.dp))
+                            }
+                        )
+                    }
+                }
+            }
+
             val primaryWarning = scene.warnings.firstOrNull()
             Surface(
-                color = if (scene.metricReady) Color(0xFFE9E5DC) else Color(0xFFFFF1D6),
+                color = if (scene.metricReady && verifiedVertical == scene.openings.size) Color(0xFFE9E5DC) else Color(0xFFFFF1D6),
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 8.dp)
             ) {
                 Text(
-                    primaryWarning ?: "المجسم مرتبط بالمخطط المتري نفسه؛ أي تعديل معتمد في 2D ينعكس على إعادة بناء 3D.",
+                    primaryWarning ?: "المجسم مرتبط بالمخطط نفسه؛ أي تعديل معتمد في 2D ينعكس على إعادة بناء 3D.",
                     fontSize = 9.5.sp,
                     lineHeight = 14.sp,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
@@ -149,6 +180,77 @@ fun Semantic3DScreen(nav: NavHostController, plan: FloorPlan?) {
             }
         }
     }
+
+    val editOpening = allOpenings.firstOrNull { it.id == editOpeningId }
+    if (editOpening != null && plan != null) {
+        OpeningHeightDialog(
+            plan = plan,
+            opening = editOpening,
+            onDismiss = { editOpeningId = null },
+            onSaved = { updated ->
+                onPlanChanged(updated.copy(revision = plan.revision + 1))
+                editOpeningId = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun OpeningHeightDialog(
+    plan: FloorPlan,
+    opening: Opening,
+    onDismiss: () -> Unit,
+    onSaved: (FloorPlan) -> Unit
+) {
+    val profile = OpeningVerticalProfileEngine.profile(plan, opening)
+    val window = OpeningVerticalProfileEngine.isWindow(opening.type)
+    var height by remember(opening.id, profile.heightM) { mutableStateOf(profile.heightM?.let { "%.2f".format(it) } ?: "") }
+    var sill by remember(opening.id, profile.sillHeightM) { mutableStateOf(if (window) profile.sillHeightM?.let { "%.2f".format(it) } ?: "" else "0") }
+    val heightM = parse3dMetric(height)
+    val sillM = parse3dMetric(sill)
+    val ready = heightM?.let { it in 0.4..6.0 } == true && (!window || sillM?.let { it in 0.0..3.5 } == true)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("قياس ${if (window) "النافذة" else "الباب"} ${opening.id}") },
+        text = {
+            Column {
+                Text("أدخل القياس فقط إذا كان معروفًا أو ظاهرًا في المصدر. بدون تأكيد يستخدم 3D قيمة معاينة فقط، وIFC لا يعتمدها.", fontSize = 10.sp, color = Color.Gray)
+                OutlinedTextField(height, { height = it }, label = { Text("الارتفاع بالمتر") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                if (window) OutlinedTextField(sill, { sill = it }, label = { Text("ارتفاع الجلسة بالمتر") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+                if (profile.verified) Text("القياس الحالي مؤكد ويمكن تعديله أو مسحه.", color = Color(0xFF56705E), fontSize = 9.sp, modifier = Modifier.padding(top = 6.dp))
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = ready,
+                onClick = {
+                    if (heightM != null) onSaved(OpeningVerticalProfileEngine.confirm(plan, opening.id, heightM, if (window) sillM else null))
+                }
+            ) { Text("تأكيد") }
+        },
+        dismissButton = {
+            Row {
+                if (profile.heightM != null || profile.sillHeightM != null) {
+                    TextButton(onClick = { onSaved(OpeningVerticalProfileEngine.clear(plan, opening.id)) }) { Text("مسح القياس") }
+                }
+                TextButton(onClick = onDismiss) { Text("إلغاء") }
+            }
+        }
+    )
+}
+
+private fun parse3dMetric(raw: String): Double? {
+    val western = buildString {
+        raw.trim().forEach { ch ->
+            append(when (ch) {
+                '٠' -> '0'; '١' -> '1'; '٢' -> '2'; '٣' -> '3'; '٤' -> '4'; '٥' -> '5'
+                '٦' -> '6'; '٧' -> '7'; '٨' -> '8'; '٩' -> '9'; '٫', ',' -> '.'
+                else -> ch
+            })
+        }
+    }
+    return western.toDoubleOrNull()
 }
 
 @Composable
