@@ -24,6 +24,9 @@ jobs:
         run: python -m compileall backend/app backend/scripts
       - name: Import FastAPI application
         working-directory: backend
-        run: python -c "from app.main import app; assert app.title == 'Manzili HAI Backend'; assert app.version == '0.41.0'"
+        run: |
+          python -c "from app.main import app; assert app.title == 'Manzili HAI Backend'; assert app.version == '0.41.0'"
       - name: Validate deployment blueprint
-        run: grep -q 'healthCheckPath: /readyz' render.yaml && grep -q 'FLOORPLAN_SAFETENSORS_MODEL' render.yaml
+        run: |
+          grep -q 'healthCheckPath: /readyz' render.yaml
+          grep -q 'FLOORPLAN_SAFETENSORS_MODEL' render.yaml
