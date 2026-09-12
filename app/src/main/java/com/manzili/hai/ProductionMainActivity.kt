@@ -44,6 +44,7 @@ private fun ProductionApp() {
     }
     var pending by remember { mutableStateOf<FloorPlan?>(null) }
     var source by remember { mutableStateOf<Uri?>(null) }
+    var convertTo3D by remember { mutableStateOf(false) }
 
     fun createProject(next: FloorPlan) {
         val verified = PlanVerificationEngine.inspect(next).plan
@@ -75,12 +76,24 @@ private fun ProductionApp() {
             NavHost(nav, startDestination = "home") {
                 composable("home") { ProductionHome(nav, plan, store.listProjects().size) }
                 composable("build") { BuildChoice(nav) }
-                composable("import") { VerifiedImportScreenV3(nav, source, { source = it }, { pending = it }) }
+                composable("import") {
+                    LaunchedEffect(Unit) { convertTo3D = false }
+                    VerifiedImportScreenV3(nav, source, { source = it }, { pending = it })
+                }
+                composable("import3d") {
+                    LaunchedEffect(Unit) { convertTo3D = true }
+                    VerifiedImportScreenV3(nav, source, { source = it }, { pending = it })
+                }
                 composable("verify") {
                     PlanVerificationScreen(nav, source, pending) { confirmed ->
                         createProject(confirmed)
                         pending = null
-                        nav.navigate("editor") { popUpTo("home") }
+                        if (convertTo3D) {
+                            convertTo3D = false
+                            nav.navigate("3d") { popUpTo("home") }
+                        } else {
+                            nav.navigate("editor") { popUpTo("home") }
+                        }
                     }
                 }
                 composable("new") {
@@ -92,7 +105,7 @@ private fun ProductionApp() {
                 composable("editor") { EnhancedEditor(nav, plan) { updateProject(it) } }
                 composable("polygon") { PolygonVertexEditorScreen(nav, plan) { updateProject(it) } }
                 composable("floors") { ProjectFloorsScreen(nav, plan) { updateProject(it) } }
-                composable("3d") { Semantic3DScreen(nav, plan) }
+                composable("3d") { Semantic3DScreen(nav, plan) { updateProject(it) } }
                 composable("saudi-rules") { SaudiRulesScreen(nav, plan) { updateProject(it, allowSaudiRulesSettingChange = true) } }
                 composable("projects") {
                     ProjectLibraryScreen(nav, store) { opened ->
@@ -154,9 +167,13 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
             Button(onClick = { nav.navigate("build") }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
                 Icon(Icons.Rounded.AddHomeWork, null); Spacer(Modifier.width(7.dp)); Text("ابدأ مشروعًا جديدًا")
             }
+            Spacer(Modifier.height(7.dp))
+            OutlinedButton(onClick = { nav.navigate("import3d") }, modifier = Modifier.fillMaxWidth().height(54.dp)) {
+                Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(7.dp)); Text("حوّل مخططًا إلى 3D")
+            }
             TextButton(onClick = { nav.navigate("settings") }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Tune, null); Spacer(Modifier.width(5.dp)); Text("إعدادات HAI / Backend") }
             Spacer(Modifier.weight(1f))
-            Text("Semantic 3D يُبنى من نفس الجدران والفتحات. IFC المتري لا يتاح حتى يكون المقياس مؤكدًا.", color = Color.Gray, fontSize = 10.sp)
+            Text("Semantic 3D يُبنى من نفس الجدران والفتحات. الارتفاعات غير المؤكدة تبقى معاينة فقط ولا تدخل IFC كقياسات موثوقة.", color = Color.Gray, fontSize = 10.sp)
         }
     }
 }
