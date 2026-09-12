@@ -56,7 +56,7 @@ object SaudiArchitectExperienceEngine {
         scores["future_flexibility"]=flexibility.coerceIn(0,100)
 
         val weights=mapOf("zoning" to .27,"service_compactness" to .19,"wet_core" to .14,"vertical_core" to .18,"external_exposure" to .13,"future_flexibility" to .09)
-        val total=scores.sumOf{(k,v)->v*(weights[k]?:0.0)}.toInt().coerceIn(0,100)
+        val total=scores.entries.sumOf{entry:Map.Entry<String,Int>->entry.value*(weights[entry.key]?:0.0)}.toInt().coerceIn(0,100)
         return Review(total,scores,notes.distinct())
     }
 
