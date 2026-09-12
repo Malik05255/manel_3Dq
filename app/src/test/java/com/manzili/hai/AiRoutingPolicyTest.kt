@@ -10,8 +10,9 @@ class AiRoutingPolicyTest {
         assertTrue(AiRoutingPolicy.strength("vendor/model-70b") > AiRoutingPolicy.strength("vendor/model-8b"))
     }
 
-    @Test fun openRouterFreeRouterRemainsHighPriorityFallback() {
-        assertTrue(AiRoutingPolicy.strength("openrouter/free") >= 150)
+    @Test fun genericFreeRouterStaysBehindNamedStrongModels() {
+        assertTrue(AiRoutingPolicy.strength("vendor/model-ultra") > AiRoutingPolicy.strength("openrouter/free"))
+        assertTrue(AiRoutingPolicy.strength("openrouter/free") > AiRoutingPolicy.strength("gemini-nano"))
     }
 
     @Test fun quotaTimeoutAndServerErrorsAreRetryable() {
