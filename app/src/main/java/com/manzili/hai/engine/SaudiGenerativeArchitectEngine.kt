@@ -62,7 +62,8 @@ object SaudiGenerativeArchitectEngine {
     }
 
     fun requirements(program:NewBuildSolver.Program,projectType:SaudiProjectTypeEngine.Type,brief:SaudiDeepBriefEngine.Brief,adaptiveAnswers:String=""):String {
-        val b=brief.base;val profile=SaudiProjectTypeEngine.profile(projectType)
+        val b=brief.base
+        val profile=SaudiProjectTypeEngine.profile(projectType)
         return buildString {
             appendLine("صمم مشروعًا سكنيًا سعوديًا حقيقيًا وليس رسماً زخرفياً.")
             appendLine("نوع المشروع الملزم: ${projectType.label}. ${projectType.subtitle}")
@@ -99,7 +100,8 @@ object SaudiGenerativeArchitectEngine {
 
     private fun enrich(candidate:NewBuildSolver.Candidate,projectType:SaudiProjectTypeEngine.Type,brief:SaudiDeepBriefEngine.Brief,source:String):NewBuildSolver.Candidate {
         val plan=SaudiProjectTypeEngine.apply(SaudiDeepBriefEngine.apply(candidate.plan,brief),projectType)
-        val review=SaudiResidentialEngine.inspect(plan);val critic=SaudiArchitectCriticEngine.inspect(plan,projectType,brief)
+        val review=SaudiResidentialEngine.inspect(plan)
+        val critic=SaudiArchitectCriticEngine.inspect(plan,projectType,brief)
         val adjusted=(candidate.overall*.42+review.score*.28+critic.score*.30).toInt().coerceIn(0,100)
         val note=critic.issues.firstOrNull()?:critic.strengths.firstOrNull().orEmpty()
         return candidate.copy(plan=plan,overall=adjusted,rationale="${candidate.rationale} • $source • $note",metrics=(candidate.metrics+listOf(projectType.label,"Saudi ${review.score}/100","Critic ${critic.score}/100")).distinct())
@@ -107,8 +109,11 @@ object SaudiGenerativeArchitectEngine {
 
     private fun validCandidate(plan:FloorPlan,projectType:SaudiProjectTypeEngine.Type,brief:SaudiDeepBriefEngine.Brief,source:String,id:String):NewBuildSolver.Candidate? {
         val applied=SaudiProjectTypeEngine.apply(SaudiDeepBriefEngine.apply(MultiFloorGeometryEngine.normalize(plan),brief),projectType)
-        val geometry=GeometryV3Engine.inspect(applied);if(!geometry.valid)return null
-        val architecture=ArchitecturalEngine.score(geometry.plan);val saudi=SaudiResidentialEngine.inspect(geometry.plan);val critic=SaudiArchitectCriticEngine.inspect(geometry.plan,projectType,brief)
+        val geometry=GeometryV3Engine.inspect(applied)
+        if(!geometry.valid)return null
+        val architecture=ArchitecturalEngine.score(geometry.plan)
+        val saudi=SaudiResidentialEngine.inspect(geometry.plan)
+        val critic=SaudiArchitectCriticEngine.inspect(geometry.plan,projectType,brief)
         if(critic.hardViolations.isNotEmpty())return null
         val score=(architecture.overall*.40+saudi.score*.25+critic.score*.35).toInt().coerceIn(0,100)
         return NewBuildSolver.Candidate(id,source,"$source؛ اجتاز Geometry V3 والناقد المعماري السعودي.",geometry.plan,score,listOf(projectType.label,"Geometry V3","Saudi ${saudi.score}/100","Critic ${critic.score}/100"))
@@ -116,13 +121,62 @@ object SaudiGenerativeArchitectEngine {
 
     private fun mirror(plan:FloorPlan,horizontal:Boolean)=transform(plan){p->if(horizontal)PlanPoint(100f-p.x,p.y)else PlanPoint(p.x,100f-p.y)}
     private fun rotate180(plan:FloorPlan)=transform(plan){p->PlanPoint(100f-p.x,100f-p.y)}
+
     private fun transform(plan:FloorPlan,point:(PlanPoint)->PlanPoint):FloorPlan {
-        fun room(r:Room):Room{val poly=(r.polygon.ifEmpty{listOf(PlanPoint(r.x,r.y),PlanPoint(r.x+r.width,r.y),PlanPoint(r.x+r.width,r.y+r.height),PlanPoint(r.x,r.y+r.height))}).map(point);val minX=poly.minOf{it.x};val maxX=poly.maxOf{it.x};val minY=poly.minOf{it.y};val maxY=poly.maxOf{it.y};return r.copy(x=minX,y=minY,width=maxX-minX,height=maxY-minY,polygon=poly)}
-        fun wall(w:Wall)=w.copy(start=point(w.start),end=point(w.end));fun opening(o:Opening):Opening{val p=point(PlanPoint(o.x,o.y));return o.copy(x=p.x,y=p.y)}
-        fun floor(f:FloorLevel)=f.copy(footprint=f.footprint.map(point),rooms=f.rooms.map(::room),walls=f.walls.map(::wall),openings=f.openings.map(::opening),elements=f.elements.map{e->e.copy(footprint=e.footprint.map(point))})
-        return plan.copy(rooms=plan.rooms.map(::room),walls=plan.walls.map(::wall),openings=plan.openings.map(::opening),footprint=plan.footprint.map(point),site=plan.site.copy(plotBoundary=plan.site.plotBoundary.map(point),roads=plan.site.roads.map{it.copy(start=point(it.start),end=point(it.end))}),floors=plan.floors.map(::floor),elements=plan.elements.map{it.copy(footprint=it.footprint.map(point))})
+        fun room(r:Room):Room {
+            val poly=(r.polygon.ifEmpty { listOf(
+                PlanPoint(r.x,r.y),
+                PlanPoint(r.x+r.width,r.y),
+                PlanPoint(r.x+r.width,r.y+r.height),
+                PlanPoint(r.x,r.y+r.height)
+            ) }).map(point)
+            val minX=poly.minOf{it.x}
+            val maxX=poly.maxOf{it.x}
+            val minY=poly.minOf{it.y}
+            val maxY=poly.maxOf{it.y}
+            return r.copy(x=minX,y=minY,width=maxX-minX,height=maxY-minY,polygon=poly)
+        }
+        fun wall(w:Wall):Wall = w.copy(start=point(w.start),end=point(w.end))
+        fun opening(o:Opening):Opening {
+            val p=point(PlanPoint(o.x,o.y))
+            return o.copy(x=p.x,y=p.y)
+        }
+        fun floor(f:FloorLevel):FloorLevel = f.copy(
+            footprint=f.footprint.map(point),
+            rooms=f.rooms.map(::room),
+            walls=f.walls.map(::wall),
+            openings=f.openings.map(::opening),
+            elements=f.elements.map { e->e.copy(footprint=e.footprint.map(point)) }
+        )
+        return plan.copy(
+            rooms=plan.rooms.map(::room),
+            walls=plan.walls.map(::wall),
+            openings=plan.openings.map(::opening),
+            footprint=plan.footprint.map(point),
+            site=plan.site.copy(
+                plotBoundary=plan.site.plotBoundary.map(point),
+                roads=plan.site.roads.map { it.copy(start=point(it.start),end=point(it.end)) }
+            ),
+            floors=plan.floors.map(::floor),
+            elements=plan.elements.map { it.copy(footprint=it.footprint.map(point)) }
+        )
     }
-    private fun roomPriority(room:Room)=when(room.type.lowercase()){ "majlis","guest"->100;"living","family"->95;"kitchen","service"->85;"bedroom","master"->80;else->60 }
+
+    private fun roomPriority(room:Room)=when(room.type.lowercase()){
+        "majlis","guest"->100
+        "living","family"->95
+        "kitchen","service"->85
+        "bedroom","master"->80
+        else->60
+    }
     private fun signature(plan:FloorPlan)=plan.rooms.sortedBy{it.id}.joinToString("|"){"${it.type}:${(it.x*2).toInt()}:${(it.y*2).toInt()}:${(it.width*2).toInt()}:${(it.height*2).toInt()}"}
-    private fun layoutDistance(a:FloorPlan,b:FloorPlan):Float{val byType=b.rooms.groupBy{it.type.lowercase()};val ds=mutableListOf<Float>();a.rooms.forEach{ar->val best=byType[ar.type.lowercase()].orEmpty().minByOrNull{br->abs(ar.x-br.x)+abs(ar.y-br.y)}?:return@forEach;ds+=abs(ar.x-best.x)+abs(ar.y-best.y)+.5f*abs(ar.width-best.width)+.5f*abs(ar.height-best.height)};return if(ds.isEmpty())100f else ds.average().toFloat()}
+    private fun layoutDistance(a:FloorPlan,b:FloorPlan):Float {
+        val byType=b.rooms.groupBy{it.type.lowercase()}
+        val ds=mutableListOf<Float>()
+        a.rooms.forEach { ar->
+            val best=byType[ar.type.lowercase()].orEmpty().minByOrNull { br->abs(ar.x-br.x)+abs(ar.y-br.y) } ?: return@forEach
+            ds+=abs(ar.x-best.x)+abs(ar.y-best.y)+.5f*abs(ar.width-best.width)+.5f*abs(ar.height-best.height)
+        }
+        return if(ds.isEmpty())100f else ds.average().toFloat()
+    }
 }
