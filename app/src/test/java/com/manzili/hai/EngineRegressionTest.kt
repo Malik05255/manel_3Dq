@@ -134,7 +134,7 @@ class EngineRegressionTest {
         val plan=FloorPlan(widthM=20.0,heightM=25.0,scaleConfidence=100,footprint=boundary(),site=SiteContext(countryCode="SA",city="الرياض"))
         val scene=Architectural3DEnhancementEngine.build(plan)
         assertTrue(scene.meshes.any { it.kind=="saudi-parapet" })
-        assertTrue(scene.warnings.any { it.contains("ليست قياسًا تنفيذيًا") })
+        assertTrue(scene.warnings.any { it.contains("ليست قياسات تنفيذية") && it.contains("اشتراطات رسمية") })
     }
 
     @Test fun saudi4DCoversWholeRelativeTimeline() {

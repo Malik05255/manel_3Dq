@@ -45,7 +45,9 @@ class SevenStageRegressionTest {
         val ids=plan.floors.flatMap { it.rooms }.map { it.id }.toSet()
         assertTrue(route.points.isNotEmpty())
         assertTrue(route.points.all { it.roomId in ids })
-        assertTrue(route.warnings.any { it.contains("لا يخترع") })
+        assertTrue(route.disconnectedSegments > 0)
+        assertEquals(0,route.verifiedTransitions)
+        assertTrue(route.warnings.any { it.contains("اختراع باب") })
     }
 
     @Test fun fourDDependenciesAndQuantitiesRespectMetricGate() {
