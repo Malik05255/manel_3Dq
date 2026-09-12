@@ -125,7 +125,7 @@ fun Semantic3DScreen(nav: NavHostController, plan: FloorPlan?) {
                     label = { Text("كل الأدوار", fontSize = 9.sp) }
                 )
                 scene.floorIds.forEachIndexed { index, id ->
-                    val name = plan.floors.firstOrNull { it.id == id }?.name ?: if (index == 0) "الأرضي" else "الدور ${index + 1}"
+                    val name = plan?.floors?.firstOrNull { it.id == id }?.name ?: if (index == 0) "الأرضي" else "الدور ${index + 1}"
                     FilterChip(
                         selected = selectedFloor == id,
                         onClick = { selectedFloor = id },
