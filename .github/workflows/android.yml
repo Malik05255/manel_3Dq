@@ -21,7 +21,27 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Generate Gradle wrapper
         run: gradle wrapper --gradle-version 8.7
-      - name: Run engine regression tests
+
+      - name: Test AI routing policy
+        run: ./gradlew testDebugUnitTest --tests 'com.manzili.hai.AiRoutingPolicyTest'
+      - name: Test production finalization
+        run: ./gradlew testDebugUnitTest --tests 'com.manzili.hai.EightProductionFinalizationRegressionTest'
+      - name: Test core engines
+        run: ./gradlew testDebugUnitTest --tests 'com.manzili.hai.EngineRegressionTest'
+      - name: Test opening evidence
+        run: ./gradlew testDebugUnitTest --tests 'com.manzili.hai.OpeningEvidenceFusionTest'
+      - name: Test PBR production
+        run: ./gradlew testDebugUnitTest --tests 'com.manzili.hai.PbrProductionRegressionTest'
+      - name: Test Saudi rules scope
+        run: ./gradlew testDebugUnitTest --tests 'com.manzili.hai.SaudiRulesScopeRegressionTest'
+      - name: Test semantic 3D export
+        run: ./gradlew testDebugUnitTest --tests 'com.manzili.hai.Semantic3DExportTest'
+      - name: Test seven production upgrade
+        run: ./gradlew testDebugUnitTest --tests 'com.manzili.hai.SevenProductionUpgradeRegressionTest'
+      - name: Test seven stage regression
+        run: ./gradlew testDebugUnitTest --tests 'com.manzili.hai.SevenStageRegressionTest'
+
+      - name: Run full regression suite
         id: regression
         continue-on-error: true
         run: ./gradlew testDebugUnitTest
@@ -42,7 +62,9 @@ jobs:
               except Exception:
                   continue
               for case in suite.findall('testcase'):
-                  bad = case.find('failure') or case.find('error')
+                  bad = case.find('failure')
+                  if bad is None:
+                      bad = case.find('error')
                   if bad is not None:
                       print(f"FAILED {case.get('classname')}.{case.get('name')}")
                       print((bad.get('message') or '').strip())
@@ -59,6 +81,7 @@ jobs:
       - name: Stop on regression failure
         if: steps.regression.outcome == 'failure'
         run: exit 1
+
       - name: Build debug APK
         run: ./gradlew assembleDebug
       - name: Build optimized release APK and AAB
