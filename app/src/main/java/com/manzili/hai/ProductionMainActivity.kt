@@ -106,7 +106,7 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
     Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F4EE)) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(20.dp)) {
             Text("منزلي HAI", fontSize = 22.sp, fontWeight = FontWeight.Black)
-            Text("$count مشروع • Multi-floor • Solver ×3 • Saudi Rules • Polygon", color = Color.Gray, fontSize = 10.sp)
+            Text("$count مشروع • Multi-floor • Solver ×3 • Optional Saudi Rules • Polygon", color = Color.Gray, fontSize = 10.sp)
             Spacer(Modifier.height(20.dp))
             Text("مخطط تقرأه،\nتراجعه، ثم تعدله.", fontSize = 34.sp, lineHeight = 39.sp, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(18.dp))
@@ -117,7 +117,11 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
                 Spacer(Modifier.height(7.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     OutlinedButton(onClick = { nav.navigate("floors") }, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.Layers, null); Spacer(Modifier.width(4.dp)); Text("الأدوار") }
-                    OutlinedButton(onClick = { nav.navigate("saudi-rules") }, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.FactCheck, null); Spacer(Modifier.width(4.dp)); Text("قواعد السعودية") }
+                    OutlinedButton(onClick = { nav.navigate("saudi-rules") }, modifier = Modifier.weight(1f)) {
+                        Icon(if (plan.saudiRulesEnabled) Icons.Rounded.FactCheck else Icons.Rounded.AddTask, null)
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (plan.saudiRulesEnabled) "اشتراطات ✓" else "إضافة اشتراطات")
+                    }
                 }
                 Spacer(Modifier.height(7.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -137,7 +141,7 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
             }
             TextButton(onClick = { nav.navigate("settings") }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Tune, null); Spacer(Modifier.width(5.dp)); Text("إعدادات HAI") }
             Spacer(Modifier.weight(1f))
-            Text("الحفظ المحلي الآن يحتفظ بالمضلعات، الموقع، الأبعاد والأدوار داخل كل نسخة من المشروع.", color = Color.Gray, fontSize = 10.sp)
+            Text("محرك الاشتراطات السعودية إضافة اختيارية لكل مشروع؛ التصميم الأساسي لا يعتمد عليه عند إيقافه.", color = Color.Gray, fontSize = 10.sp)
         }
     }
 }
