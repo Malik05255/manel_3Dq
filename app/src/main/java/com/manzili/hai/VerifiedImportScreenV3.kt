@@ -24,6 +24,7 @@ import com.manzili.hai.engine.MultiPageEvidenceFusionEngine
 import com.manzili.hai.engine.PlanTextOcrEngine
 import com.manzili.hai.engine.RasterFloorplanParserEngine
 import com.manzili.hai.engine.RemoteFloorplanEvidenceClient
+import com.manzili.hai.engine.SaudiProjectTypeEngine
 import com.manzili.hai.model.FloorPlan
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -34,7 +35,8 @@ fun VerifiedImportScreenV3(
     nav: NavHostController,
     source: Uri?,
     setSource: (Uri) -> Unit,
-    onAnalyzed: (FloorPlan) -> Unit
+    onAnalyzed: (FloorPlan) -> Unit,
+    projectType: SaudiProjectTypeEngine.Type? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -60,6 +62,7 @@ fun VerifiedImportScreenV3(
                 Column {
                     Text("استيراد مخطط", fontSize = 24.sp, fontWeight = FontWeight.Black)
                     Text(if (remote.available) "Multi-page Vision + OCR + Raster + Deep Parser" else "Multi-page Vision + OCR + Raster")
+                    projectType?.let { Text("النوع المختار: ${it.label}", fontSize = 10.sp, fontWeight = FontWeight.Bold) }
                 }
             }
             Spacer(Modifier.height(18.dp))
@@ -69,7 +72,7 @@ fun VerifiedImportScreenV3(
             Spacer(Modifier.height(14.dp))
             Text("PDF: يحلل HAI أول 5 صفحات بصريًا، والـOCR والـDeep Parser يحتفظان برقم الصفحة. كل صفحة تدخل طبقة مستقلة للمراجعة بدل تجاهلها.", fontSize = 11.sp)
             Spacer(Modifier.height(5.dp))
-            Text("الجدران والأبواب والنوافذ القادمة من النماذج تعتبر أدلة؛ لا تتحول إلى هندسة موثوقة إلا بعد الدمج والتحقق.", fontSize = 11.sp)
+            Text("نوع المشروع المختار يساعد HAI على فهم الوظائف، لكنه لا يتحول إلى دليل بصري ولا يسمح باختلاق عناصر غير ظاهرة.", fontSize = 11.sp)
             Spacer(Modifier.weight(1f))
             Button(
                 enabled = source != null && !busy && vision.available,
@@ -83,7 +86,7 @@ fun VerifiedImportScreenV3(
                                 val ocrJob = async { runCatching { localOcr.readSpatial(uri, maxPdfPages = 5) }.getOrNull() }
                                 val rasterJob = async { runCatching { raster.analyze(uri) }.getOrNull() }
                                 val remoteJob = async { if (remote.available) runCatching { remote.analyze(uri, maxPdfPages = 5) }.getOrNull() else null }
-                                val base = vision.analyze(uri, maxPdfPages = 5)
+                                val base = vision.analyze(uri, maxPdfPages = 5, projectType = projectType)
                                 val ocr = ocrJob.await()
                                 val rasterResult = rasterJob.await()
                                 val remoteResult = remoteJob.await()
@@ -91,6 +94,7 @@ fun VerifiedImportScreenV3(
                                 val enriched = base.copy(
                                     dimensions = (base.dimensions + dims).distinctBy { "${it.pageIndex}:${it.id}:${"%.3f".format(it.valueM)}" },
                                     observations = (base.observations + listOfNotNull(
+                                        projectType?.let { "نوع المشروع المحدد قبل التحليل: ${it.label}." },
                                         ocr?.let { "OCR محلي: ${it.pagesAnalyzed} صفحة${if (it.truncated) " (محدود)" else ""}." },
                                         rasterResult?.notes?.joinToString(" "),
                                         remoteResult?.let { "Deep Parser: ${it.pages.size} صفحة • ${it.modelUsed} • متوسط ${it.confidence}%." },
@@ -99,7 +103,8 @@ fun VerifiedImportScreenV3(
                                 )
                                 val deepApplied = MultiPageEvidenceFusionEngine.apply(enriched, remoteResult?.pages.orEmpty())
                                 val locallyRefined = FloorplanParserEngine.refine(deepApplied, rasterResult?.primaryWalls.orEmpty()).plan
-                                MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(locallyRefined))
+                                val typed = projectType?.let { SaudiProjectTypeEngine.apply(locallyRefined, it) } ?: locallyRefined
+                                MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(typed))
                             }
                         }.onSuccess {
                             onAnalyzed(it)
