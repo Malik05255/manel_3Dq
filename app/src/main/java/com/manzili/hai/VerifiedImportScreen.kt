@@ -19,7 +19,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import com.manzili.hai.ai.HaiArchitectClient
+import com.manzili.hai.engine.DimensionEvidenceEngine
 import com.manzili.hai.engine.FloorplanParserEngine
+import com.manzili.hai.engine.PlanTextOcrEngine
 import com.manzili.hai.model.FloorPlan
 import kotlinx.coroutines.launch
 
@@ -32,6 +34,7 @@ fun VerifiedImportScreen(nav: NavHostController, source: Uri?, setSource: (Uri) 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val client = remember { HaiArchitectClient(context) }
+    val ocr = remember { PlanTextOcrEngine(context) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -47,7 +50,7 @@ fun VerifiedImportScreen(nav: NavHostController, source: Uri?, setSource: (Uri) 
                 IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
                 Column {
                     Text("استيراد مخطط", fontSize = 24.sp, fontWeight = FontWeight.Black)
-                    Text("Vision extraction → Parser هندسي → تحقق قبل المحرر", color = Color.Gray, fontSize = 10.sp)
+                    Text("Vision + OCR محلي + Parser هندسي + تحقق", color = Color.Gray, fontSize = 10.sp)
                 }
             }
             Spacer(Modifier.height(18.dp))
@@ -56,11 +59,11 @@ fun VerifiedImportScreen(nav: NavHostController, source: Uri?, setSource: (Uri) 
                     Icon(if (source == null) Icons.Rounded.UploadFile else Icons.Rounded.TaskAlt, null, tint = VIBronze, modifier = Modifier.size(42.dp))
                     Spacer(Modifier.height(10.dp))
                     Text(if (source == null) "اختر PDF أو صورة" else "الملف جاهز للتحليل", fontWeight = FontWeight.Bold)
-                    Text("لن أربط فتحة بجدار أو أعتمد مقياسًا إلا عند وجود دليل كافٍ", color = Color.Gray, fontSize = 10.5.sp)
+                    Text("OCR للأبعاد يعمل كدليل مستقل ولا يحول كل رقم إلى قياس", color = Color.Gray, fontSize = 10.5.sp)
                 }
             }
             Spacer(Modifier.height(16.dp))
-            Text("قراءة → Polygon canonical → Snap موثوق للفتحات → أدلة أبعاد → شاشة تحقق", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
+            Text("قراءة بصرية → OCR أبعاد → Polygon canonical → Snap موثوق → شاشة تحقق", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
             Text("أي موضع بعيد أو منخفض الثقة يبقى uncertainty بدل أن يتحول إلى حقيقة صامتة.", color = Color.Gray, lineHeight = 18.sp, fontSize = 10.5.sp, modifier = Modifier.padding(top = 5.dp))
             Spacer(Modifier.weight(1f))
             Button(
@@ -69,8 +72,12 @@ fun VerifiedImportScreen(nav: NavHostController, source: Uri?, setSource: (Uri) 
                     busy = true; error = null
                     scope.launch {
                         runCatching {
-                            val extracted = client.analyzePlan(source!!)
-                            FloorplanParserEngine.refine(extracted).plan
+                            val uri = source!!
+                            val ocrLines = runCatching { ocr.read(uri) }.getOrDefault(emptyList())
+                            val extracted = client.analyzePlan(uri)
+                            val evidence = DimensionEvidenceEngine.extract(ocrLines)
+                            val enriched = extracted.copy(dimensions = (extracted.dimensions + evidence).distinctBy { "${it.id}:${"%.3f".format(it.valueM)}" })
+                            FloorplanParserEngine.refine(enriched).plan
                         }.onSuccess { onAnalyzed(it); nav.navigate("verify") }
                             .onFailure { error = it.message ?: "فشل تحليل المخطط" }
                         busy = false
@@ -79,7 +86,7 @@ fun VerifiedImportScreen(nav: NavHostController, source: Uri?, setSource: (Uri) 
                 modifier = Modifier.fillMaxWidth().height(58.dp), shape = RoundedCornerShape(18.dp)
             ) {
                 if (busy) CircularProgressIndicator(Modifier.size(21.dp), strokeWidth = 2.dp, color = Color.White) else Icon(Icons.Rounded.AutoAwesome, null)
-                Spacer(Modifier.width(8.dp)); Text(if (busy) "أقرأ وأبني النموذج الهندسي…" else "حلّل ثم راجع القراءة", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(8.dp)); Text(if (busy) "أقرأ النص والهندسة…" else "حلّل ثم راجع القراءة", fontWeight = FontWeight.Bold)
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp)) }
             Spacer(Modifier.height(14.dp))
