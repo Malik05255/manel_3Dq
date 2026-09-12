@@ -92,9 +92,9 @@ object SaudiResidentialEngine {
         return normalize(plan.copy(
             site = plan.site.copy(countryCode="SA", city=brief.city, roads=if(roads.isNotEmpty()) roads else plan.site.roads, northDeg=brief.northDeg),
             northDeg = brief.northDeg,
-            saudiRulesEnabled = true,
+            saudiRulesEnabled = plan.saudiRulesEnabled,
             constraints = merged,
-            observations = (plan.observations + listOf("برنامج أسرة سعودية: ${brief.familySize} أفراد • ${brief.parkingCars} سيارة.", "الهوية: ${style.label} • ${ctx.regionLabel}.")).distinct()
+            observations = (plan.observations + listOf("برنامج أسرة سعودية: ${brief.familySize} أفراد • ${brief.parkingCars} سيارة.", "الهوية: ${style.label} • ${ctx.regionLabel}.", "الاشتراطات الرسمية اختيارية ولا تُفعّل تلقائيًا بواسطة محرك التصميم.")).distinct()
         ))
     }
 
