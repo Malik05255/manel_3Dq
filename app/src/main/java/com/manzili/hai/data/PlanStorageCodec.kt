@@ -8,7 +8,7 @@ import org.json.JSONObject
 object PlanStorageCodec {
     fun encode(plan: FloorPlan): JSONObject {
         val root = JSONObject()
-        root.put("schemaVersion", 4)
+        root.put("schemaVersion", 5)
         root.put("title", plan.title)
         plan.widthM?.let { root.put("widthM", it) }
         plan.heightM?.let { root.put("heightM", it) }
@@ -24,6 +24,7 @@ object PlanStorageCodec {
         root.put("rooms", JSONArray().apply { plan.rooms.forEach { put(encodeRoom(it)) } })
         root.put("walls", JSONArray().apply { plan.walls.forEach { put(encodeWall(it)) } })
         root.put("openings", JSONArray().apply { plan.openings.forEach { put(encodeOpening(it)) } })
+        root.put("elements", JSONArray().apply { plan.elements.forEach { put(encodeElement(it)) } })
         root.put("preferences", encodePreferences(plan.preferences))
         root.put("constraints", JSONArray().apply { plan.constraints.forEach { put(encodeConstraint(it)) } })
         root.put("site", encodeSite(plan.site))
@@ -61,7 +62,8 @@ object PlanStorageCodec {
             site = decodeSite(root.optJSONObject("site"), north),
             floors = decodeFloors(root.optJSONArray("floors")),
             activeFloorId = root.optString("activeFloorId").takeIf { it.isNotBlank() },
-            saudiRulesEnabled = root.optBoolean("saudiRulesEnabled", false)
+            saudiRulesEnabled = root.optBoolean("saudiRulesEnabled", false),
+            elements = decodeElements(root.optJSONArray("elements"))
         )
     }
 
@@ -78,6 +80,7 @@ object PlanStorageCodec {
         put("id", w.id); put("start", encodePoint(w.start)); put("end", encodePoint(w.end))
         w.thicknessCm?.let { put("thicknessCm", it) }
         put("kind", w.kind); put("confidence", w.confidence); put("locked", w.locked)
+        put("adjacentRoomIds", JSONArray(w.adjacentRoomIds))
     }
 
     private fun encodeOpening(o: Opening): JSONObject = JSONObject().apply {
@@ -88,9 +91,15 @@ object PlanStorageCodec {
 
     private fun encodeDimension(d: PlanDimension): JSONObject = JSONObject().apply {
         put("id", d.id); put("label", d.label); put("valueM", d.valueM); put("axis", d.axis)
-        put("confidence", d.confidence); put("sourceText", d.sourceText)
+        put("confidence", d.confidence); put("sourceText", d.sourceText); put("pageIndex", d.pageIndex)
         d.start?.let { put("start", encodePoint(it)) }
         d.end?.let { put("end", encodePoint(it)) }
+    }
+
+    private fun encodeElement(e: StructuralElement): JSONObject = JSONObject().apply {
+        put("id", e.id); put("type", e.type); put("footprint", encodePoints(e.footprint)); put("rotationDeg", e.rotationDeg)
+        e.widthM?.let { put("widthM", it) }; e.depthM?.let { put("depthM", it) }
+        put("confidence", e.confidence); put("locked", e.locked); put("connectsFloorIds", JSONArray(e.connectsFloorIds)); put("notes", e.notes)
     }
 
     private fun encodePreferences(p: PlanPreferences): JSONObject = JSONObject().apply {
@@ -131,6 +140,7 @@ object PlanStorageCodec {
         put("rooms", JSONArray().apply { f.rooms.forEach { put(encodeRoom(it)) } })
         put("walls", JSONArray().apply { f.walls.forEach { put(encodeWall(it)) } })
         put("openings", JSONArray().apply { f.openings.forEach { put(encodeOpening(it)) } })
+        put("elements", JSONArray().apply { f.elements.forEach { put(encodeElement(it)) } })
     }
 
     private fun decodeRooms(a: JSONArray?): List<Room> {
@@ -160,7 +170,8 @@ object PlanStorageCodec {
                 start = decodePoint(w.optJSONObject("start")) ?: PlanPoint(0f, 0f),
                 end = decodePoint(w.optJSONObject("end")) ?: PlanPoint(0f, 0f),
                 thicknessCm = positive(w, "thicknessCm"), kind = w.optString("kind", "unknown"),
-                confidence = w.optInt("confidence", 80).coerceIn(0, 100), locked = w.optBoolean("locked", false)
+                confidence = w.optInt("confidence", 80).coerceIn(0, 100), locked = w.optBoolean("locked", false),
+                adjacentRoomIds = decodeStrings(w.optJSONArray("adjacentRoomIds"))
             )
         }
         return out
@@ -190,7 +201,25 @@ object PlanStorageCodec {
             out += PlanDimension(
                 id = d.optString("id", "d$i"), label = d.optString("label", "بعد"), valueM = value, axis = d.optString("axis", "unknown"),
                 start = decodePoint(d.optJSONObject("start")), end = decodePoint(d.optJSONObject("end")),
-                confidence = d.optInt("confidence", 70).coerceIn(0, 100), sourceText = d.optString("sourceText", "")
+                confidence = d.optInt("confidence", 70).coerceIn(0, 100), sourceText = d.optString("sourceText", ""),
+                pageIndex = d.optInt("pageIndex", 0).coerceAtLeast(0)
+            )
+        }
+        return out
+    }
+
+    private fun decodeElements(a: JSONArray?): List<StructuralElement> {
+        if (a == null) return emptyList()
+        val out = mutableListOf<StructuralElement>()
+        for (i in 0 until a.length()) {
+            val e = a.optJSONObject(i) ?: continue
+            val footprint = decodePoints(e.optJSONArray("footprint"))
+            if (footprint.isEmpty()) continue
+            out += StructuralElement(
+                id = e.optString("id", "element-$i"), type = e.optString("type", "unknown"), footprint = footprint,
+                rotationDeg = e.optDouble("rotationDeg", 0.0).toFloat(), widthM = positive(e, "widthM"), depthM = positive(e, "depthM"),
+                confidence = e.optInt("confidence", 80).coerceIn(0, 100), locked = e.optBoolean("locked", false),
+                connectsFloorIds = decodeStrings(e.optJSONArray("connectsFloorIds")), notes = e.optString("notes", "")
             )
         }
         return out
@@ -242,7 +271,8 @@ object PlanStorageCodec {
                 id = f.optString("id", "floor-$i"), name = f.optString("name", "الدور ${i + 1}"), index = f.optInt("index", i),
                 elevationM = f.optDouble("elevationM", 0.0), clearHeightM = positive(f, "clearHeightM"),
                 footprint = decodePoints(f.optJSONArray("footprint")), rooms = decodeRooms(f.optJSONArray("rooms")),
-                walls = decodeWalls(f.optJSONArray("walls")), openings = decodeOpenings(f.optJSONArray("openings"))
+                walls = decodeWalls(f.optJSONArray("walls")), openings = decodeOpenings(f.optJSONArray("openings")),
+                elements = decodeElements(f.optJSONArray("elements"))
             )
         }
         return out
