@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
+import com.manzili.hai.data.ProjectLibraryOps
 import com.manzili.hai.data.ProjectPlanStore
 import com.manzili.hai.engine.ProjectConstraintManager
 import com.manzili.hai.engine.ProjectMemoryEngine
@@ -30,8 +31,12 @@ private val PMMist = Color(0xFFE9E5DC)
 
 @Composable
 fun ProjectLibraryScreen(nav: NavHostController, store: ProjectPlanStore, onPlanChanged: (FloorPlan?) -> Unit) {
+    val ops = remember(store) { ProjectLibraryOps(store) }
     var projects by remember { mutableStateOf(store.listProjects()) }
     var expanded by remember { mutableStateOf(store.activeProjectId()) }
+    var renameTarget by remember { mutableStateOf<ProjectPlanStore.ProjectSummary?>(null) }
+    var renameValue by remember { mutableStateOf("") }
+    var deleteTarget by remember { mutableStateOf<ProjectPlanStore.ProjectSummary?>(null) }
     fun refresh() { projects = store.listProjects() }
 
     PMPage {
@@ -54,6 +59,7 @@ fun ProjectLibraryScreen(nav: NavHostController, store: ProjectPlanStore, onPlan
                                 Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, tint = if (project.active) Color.White else Color.Black)
                             }
                         }
+
                         Button(
                             onClick = {
                                 store.open(project.id)?.let {
@@ -63,6 +69,22 @@ fun ProjectLibraryScreen(nav: NavHostController, store: ProjectPlanStore, onPlan
                             modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
                             colors = if (project.active) ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = PMDeep) else ButtonDefaults.buttonColors()
                         ) { Text(if (project.active) "فتح المشروع" else "تبديل وفتح", fontSize = 10.sp) }
+
+                        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton(onClick = { renameTarget = project; renameValue = project.title }, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Rounded.Edit, null, Modifier.size(14.dp)); Spacer(Modifier.width(3.dp)); Text("تسمية", fontSize = 9.sp, color = if (project.active) Color.White else PMDeep)
+                            }
+                            TextButton(onClick = {
+                                ops.duplicate(project.id)?.let { copied ->
+                                    onPlanChanged(copied); refresh(); expanded = store.activeProjectId()
+                                }
+                            }, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Rounded.ContentCopy, null, Modifier.size(14.dp)); Spacer(Modifier.width(3.dp)); Text("نسخ", fontSize = 9.sp, color = if (project.active) Color.White else PMDeep)
+                            }
+                            TextButton(onClick = { deleteTarget = project }, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(14.dp)); Spacer(Modifier.width(3.dp)); Text("حذف", fontSize = 9.sp, color = if (project.active) Color.White else PMBronze)
+                            }
+                        }
 
                         if (open) {
                             HorizontalDivider(color = if (project.active) Color.White.copy(alpha = .15f) else PMMist, modifier = Modifier.padding(vertical = 8.dp))
@@ -88,6 +110,37 @@ fun ProjectLibraryScreen(nav: NavHostController, store: ProjectPlanStore, onPlan
             }
             if (projects.isEmpty()) Text("لا توجد مشاريع محفوظة بعد.", color = Color.Gray, modifier = Modifier.padding(top = 30.dp))
         }
+    }
+
+    renameTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("إعادة تسمية المشروع") },
+            text = { OutlinedTextField(renameValue, { renameValue = it }, label = { Text("اسم المشروع") }, singleLine = true) },
+            confirmButton = { TextButton(onClick = {
+                ops.rename(target.id, renameValue)?.let { renamed ->
+                    if (target.active) onPlanChanged(renamed)
+                    refresh()
+                }
+                renameTarget = null
+            }) { Text("حفظ") } },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("إلغاء") } }
+        )
+    }
+
+    deleteTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            icon = { Icon(Icons.Rounded.WarningAmber, null, tint = PMBronze) },
+            title = { Text("حذف المشروع؟") },
+            text = { Text("سيتم حذف «${target.title}» وسجل نسخه المحلي من هذا الجهاز. هذا الإجراء لا يمكن التراجع عنه.") },
+            confirmButton = { TextButton(onClick = {
+                val next = ops.delete(target.id)
+                if (target.active) onPlanChanged(next)
+                refresh(); expanded = store.activeProjectId(); deleteTarget = null
+            }) { Text("حذف", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("إلغاء") } }
+        )
     }
 }
 
