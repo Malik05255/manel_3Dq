@@ -13,6 +13,7 @@ import java.util.Base64
 /** Single-file glTF 2.0 / GLB export from the exact semantic 3D scene used by the app. */
 object GltfPlanExporter {
     private data class Slice(val offset: Int, val length: Int)
+    private data class Built(val json: JSONObject, val bin: ByteArray)
 
     fun renderGltf(plan: FloorPlan): String {
         val built = build(plan)
@@ -28,19 +29,17 @@ object GltfPlanExporter {
         val bin = built.bin.pad4(0x00)
         val total = 12 + 8 + json.size + 8 + bin.size
         val out = ByteBuffer.allocate(total).order(ByteOrder.LITTLE_ENDIAN)
-        out.putInt(0x46546C67) // glTF
+        out.putInt(0x46546C67)
         out.putInt(2)
         out.putInt(total)
         out.putInt(json.size)
-        out.putInt(0x4E4F534A) // JSON
+        out.putInt(0x4E4F534A)
         out.put(json)
         out.putInt(bin.size)
-        out.putInt(0x004E4942) // BIN
+        out.putInt(0x004E4942)
         out.put(bin)
         return out.array()
     }
-
-    private data class Built(val json: JSONObject, val bin: ByteArray)
 
     private fun build(plan: FloorPlan): Built {
         val scene = Architectural3DEnhancementEngine.build(plan)
@@ -54,20 +53,27 @@ object GltfPlanExporter {
         scene.meshes.forEach { mesh ->
             val posBytes = ByteBuffer.allocate(mesh.vertices.size * 12).order(ByteOrder.LITTLE_ENDIAN)
             val converted = mesh.vertices.map { v -> floatArrayOf(v.x.toFloat(), v.z.toFloat(), (-v.y).toFloat()) }
-            converted.forEach { p -> p.forEach(posBytes::putFloat) }
+            converted.forEach { p -> p.forEach { value -> posBytes.putFloat(value) } }
             val posSlice = appendAligned(bin, posBytes.array())
             val posView = bufferViews.length()
             bufferViews.put(JSONObject().put("buffer", 0).put("byteOffset", posSlice.offset).put("byteLength", posSlice.length).put("target", 34962))
             val posAccessor = accessors.length()
-            val xs = converted.map { it[0] }; val ys = converted.map { it[1] }; val zs = converted.map { it[2] }
-            accessors.put(JSONObject()
-                .put("bufferView", posView).put("componentType", 5126).put("count", converted.size).put("type", "VEC3")
-                .put("min", JSONArray(listOf(xs.minOrNull() ?: 0f, ys.minOrNull() ?: 0f, zs.minOrNull() ?: 0f)))
-                .put("max", JSONArray(listOf(xs.maxOrNull() ?: 0f, ys.maxOrNull() ?: 0f, zs.maxOrNull() ?: 0f))))
+            val xs = converted.map { it[0] }
+            val ys = converted.map { it[1] }
+            val zs = converted.map { it[2] }
+            accessors.put(
+                JSONObject()
+                    .put("bufferView", posView)
+                    .put("componentType", 5126)
+                    .put("count", converted.size)
+                    .put("type", "VEC3")
+                    .put("min", JSONArray(listOf(xs.minOrNull() ?: 0f, ys.minOrNull() ?: 0f, zs.minOrNull() ?: 0f)))
+                    .put("max", JSONArray(listOf(xs.maxOrNull() ?: 0f, ys.maxOrNull() ?: 0f, zs.maxOrNull() ?: 0f)))
+            )
 
             val triangles = triangulate(mesh.faces)
             val indexBytes = ByteBuffer.allocate(triangles.size * 4).order(ByteOrder.LITTLE_ENDIAN)
-            triangles.forEach(indexBytes::putInt)
+            triangles.forEach { indexBytes.putInt(it) }
             val idxSlice = appendAligned(bin, indexBytes.array())
             val idxView = bufferViews.length()
             bufferViews.put(JSONObject().put("buffer", 0).put("byteOffset", idxSlice.offset).put("byteLength", idxSlice.length).put("target", 34963))
@@ -81,8 +87,12 @@ object GltfPlanExporter {
                 .put("mode", 4)
             val meshIndex = meshesJson.length()
             meshesJson.put(JSONObject().put("name", mesh.name).put("primitives", JSONArray().put(primitive)))
-            nodes.put(JSONObject().put("name", mesh.id).put("mesh", meshIndex).put("extras", JSONObject()
-                .put("kind", mesh.kind).put("floorId", mesh.floorId).put("sourceId", mesh.sourceId)))
+            nodes.put(
+                JSONObject()
+                    .put("name", mesh.id)
+                    .put("mesh", meshIndex)
+                    .put("extras", JSONObject().put("kind", mesh.kind).put("floorId", mesh.floorId).put("sourceId", mesh.sourceId))
+            )
         }
 
         val rootNodes = JSONArray((0 until nodes.length()).toList())
@@ -110,21 +120,37 @@ object GltfPlanExporter {
         .put(material("Other", 0.70, 0.68, 0.64, 1.0, 0.80))
 
     private fun material(name: String, r: Double, g: Double, b: Double, a: Double, roughness: Double, blend: Boolean = false): JSONObject =
-        JSONObject().put("name", name).put("pbrMetallicRoughness", JSONObject()
-            .put("baseColorFactor", JSONArray(listOf(r, g, b, a))).put("metallicFactor", 0.0).put("roughnessFactor", roughness))
+        JSONObject()
+            .put("name", name)
+            .put(
+                "pbrMetallicRoughness",
+                JSONObject()
+                    .put("baseColorFactor", JSONArray(listOf(r, g, b, a)))
+                    .put("metallicFactor", 0.0)
+                    .put("roughnessFactor", roughness)
+            )
             .apply { if (blend) { put("alphaMode", "BLEND"); put("doubleSided", true) } }
 
     private fun materialIndex(kind: String): Int = when (kind) {
-        "wall" -> 0; "slab" -> 1; "structural" -> 2; "door" -> 3; "window" -> 4; "roof" -> 5; else -> 6
+        "wall" -> 0
+        "slab" -> 1
+        "structural" -> 2
+        "door" -> 3
+        "window" -> 4
+        "roof" -> 5
+        else -> 6
     }
 
     private fun triangulate(faces: List<Semantic3DEngine.Face>): IntArray {
         val out = mutableListOf<Int>()
         faces.forEach { face ->
             val idx = face.indices
-            if (idx.size < 3) return@forEach
-            for (i in 1 until idx.size - 1) {
-                out += idx[0]; out += idx[i]; out += idx[i + 1]
+            if (idx.size >= 3) {
+                for (i in 1 until idx.size - 1) {
+                    out += idx[0]
+                    out += idx[i]
+                    out += idx[i + 1]
+                }
             }
         }
         return out.toIntArray()
