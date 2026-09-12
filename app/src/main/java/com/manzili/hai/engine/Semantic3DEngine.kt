@@ -39,7 +39,8 @@ object Semantic3DEngine {
         val width: Double,
         val sillHeight: Double,
         val height: Double,
-        val confidence: Int
+        val confidence: Int,
+        val verticalVerified: Boolean = false
     )
 
     data class RoomNode(
@@ -80,6 +81,7 @@ object Semantic3DEngine {
     )
 
     private data class Vec2(val x: Double, val y: Double)
+    private data class VerticalOpening(val sill: Double, val height: Double, val verified: Boolean)
 
     fun build(input: FloorPlan): Scene {
         val plan = GeometryV3Engine.normalize(input)
@@ -129,6 +131,7 @@ object Semantic3DEngine {
             floor.walls.forEach { wall ->
                 val wallOpenings = openingsByWall[wall.id].orEmpty().sortedBy { projectionFraction(it, wall) }
                 val built = buildWall(
+                    plan = plan,
                     wall = wall,
                     openings = wallOpenings,
                     floorId = floor.id,
@@ -142,20 +145,19 @@ object Semantic3DEngine {
                 openingNodes += built.second
             }
 
-            // Keep unlinked opening evidence visible in the semantic scene instead of silently
-            // pretending it cuts a wall.
             floor.openings.filter { it.wallId.isNullOrBlank() || floor.walls.none { w -> w.id == it.wallId } }.forEach { opening ->
-                val (sill, height) = verticalOpening(opening.type, clearHeight, metricReady)
+                val vertical = verticalOpening(plan, opening, clearHeight, metricReady)
                 openingNodes += OpeningNode(
                     id = opening.id,
                     type = opening.type,
                     floorId = floor.id,
                     wallId = opening.wallId,
-                    center = Vec3(opening.x * sx, opening.y * sy, elevation + sill + height / 2.0),
+                    center = Vec3(opening.x * sx, opening.y * sy, elevation + vertical.sill + vertical.height / 2.0),
                     width = if (metricReady) opening.width * (sx + sy) / 2.0 else opening.width.toDouble(),
-                    sillHeight = sill,
-                    height = height,
-                    confidence = opening.confidence
+                    sillHeight = vertical.sill,
+                    height = vertical.height,
+                    confidence = opening.confidence,
+                    verticalVerified = vertical.verified
                 )
                 warnings += "${floor.name}: الفتحة ${opening.id} غير مرتبطة بجدار؛ تظهر كدليل فقط ولا تقطع المجسم."
             }
@@ -182,6 +184,10 @@ object Semantic3DEngine {
         }
 
         if (!metricReady) warnings += "المقياس غير مؤكد؛ العرض الثلاثي نسبي فقط وIFC المتري معطّل حتى تأكيد الأبعاد."
+        val unverifiedVertical = openingNodes.filter { !it.verticalVerified }
+        if (metricReady && unverifiedVertical.isNotEmpty()) {
+            warnings += "${unverifiedVertical.size} فتحة بلا ارتفاع رأسي مؤكد؛ تظهر بافتراض معاينة فقط ولا تُعد بيانات BIM موثوقة."
+        }
         return Scene(
             title = plan.title,
             metricReady = metricReady,
@@ -228,6 +234,7 @@ object Semantic3DEngine {
     )
 
     private fun buildWall(
+        plan: FloorPlan,
         wall: Wall,
         openings: List<Opening>,
         floorId: String,
@@ -266,10 +273,10 @@ object Semantic3DEngine {
             }
             if (endDist <= effectiveStart + 1e-4) return@forEachIndexed
 
-            val (sill, openingHeight) = verticalOpening(opening.type, clearHeight, metricReady)
-            val openingTop = (sill + openingHeight).coerceAtMost(clearHeight)
-            if (sill > 1e-4) {
-                meshes += wallSection(wall, floorId, a, b, length, effectiveStart, endDist, thickness, elevation, elevation + sill, "sill-$index")
+            val vertical = verticalOpening(plan, opening, clearHeight, metricReady)
+            val openingTop = (vertical.sill + vertical.height).coerceAtMost(clearHeight)
+            if (vertical.sill > 1e-4) {
+                meshes += wallSection(wall, floorId, a, b, length, effectiveStart, endDist, thickness, elevation, elevation + vertical.sill, "sill-$index")
             }
             if (openingTop < clearHeight - 1e-4) {
                 meshes += wallSection(wall, floorId, a, b, length, effectiveStart, endDist, thickness, elevation + openingTop, elevation + clearHeight, "lintel-$index")
@@ -281,11 +288,12 @@ object Semantic3DEngine {
                 type = opening.type,
                 floorId = floorId,
                 wallId = wall.id,
-                center = Vec3(center.x, center.y, elevation + sill + openingHeight / 2.0),
+                center = Vec3(center.x, center.y, elevation + vertical.sill + vertical.height / 2.0),
                 width = (endDist - effectiveStart).coerceAtLeast(0.0),
-                sillHeight = sill,
-                height = openingHeight,
-                confidence = opening.confidence
+                sillHeight = vertical.sill,
+                height = vertical.height,
+                confidence = opening.confidence,
+                verticalVerified = vertical.verified
             )
             cursor = maxOf(cursor, endDist)
         }
@@ -372,22 +380,28 @@ object Semantic3DEngine {
         return Mesh(id, kind, name, floorId, sourceId, vertices, faces)
     }
 
-    private fun verticalOpening(type: String, clearHeight: Double, metricReady: Boolean): Pair<Double, Double> {
+    private fun verticalOpening(plan: FloorPlan, opening: Opening, clearHeight: Double, metricReady: Boolean): VerticalOpening {
         if (!metricReady) {
-            return if (isWindow(type)) 3.0 to minOf(4.0, clearHeight - 3.0) else 0.0 to minOf(7.4, clearHeight)
+            return if (isWindow(opening.type)) VerticalOpening(3.0, minOf(4.0, clearHeight - 3.0), false)
+            else VerticalOpening(0.0, minOf(7.4, clearHeight), false)
         }
-        return if (isWindow(type)) {
+        val profile = OpeningVerticalProfileEngine.profile(plan, opening)
+        if (profile.verified && profile.heightM != null) {
+            val sill = if (isWindow(opening.type)) profile.sillHeightM ?: 0.0 else 0.0
+            val height = profile.heightM
+            if (sill >= 0.0 && height > 0.0 && sill + height <= clearHeight + 0.02) {
+                return VerticalOpening(sill, height, true)
+            }
+        }
+        return if (isWindow(opening.type)) {
             val sill = minOf(0.90, clearHeight * 0.40)
-            sill to minOf(1.20, (clearHeight - sill).coerceAtLeast(0.40))
+            VerticalOpening(sill, minOf(1.20, (clearHeight - sill).coerceAtLeast(0.40)), false)
         } else {
-            0.0 to minOf(2.10, clearHeight)
+            VerticalOpening(0.0, minOf(2.10, clearHeight), false)
         }
     }
 
-    private fun isWindow(type: String): Boolean {
-        val t = type.lowercase()
-        return "window" in t || "شباك" in t || "نافذة" in t
-    }
+    private fun isWindow(type: String): Boolean = OpeningVerticalProfileEngine.isWindow(type)
 
     private fun projectionFraction(opening: Opening, wall: Wall): Double {
         val dx = (wall.end.x - wall.start.x).toDouble()
