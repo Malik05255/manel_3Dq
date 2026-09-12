@@ -1,7 +1,9 @@
 package com.manzili.hai
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -11,6 +13,7 @@ import androidx.compose.material.icons.rounded.HomeWork
 import androidx.compose.material.icons.rounded.House
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -27,45 +30,107 @@ fun SaudiProjectTypeScreen(
     current: SaudiProjectTypeEngine.Type? = null,
     onChoose: (SaudiProjectTypeEngine.Type) -> Unit
 ) {
-    Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F4EE)) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 18.dp)) {
-            Row(Modifier.fillMaxWidth()) {
-                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
-                Column(Modifier.weight(1f)) {
-                    Text(title, fontSize = 23.sp, fontWeight = FontWeight.Black)
-                    Text(subtitle, color = Color.Gray, fontSize = 10.5.sp)
+    Surface(Modifier.fillMaxSize(), color = Color(0xFFF8F6F2)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 18.dp)
+        ) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { nav.popBackStack() }) {
+                    Icon(Icons.Rounded.ArrowForward, "رجوع")
                 }
+                Text(
+                    title,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFF181A18)
+                )
             }
-            Spacer(Modifier.height(12.dp))
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                SaudiProjectTypeEngine.Type.entries.forEach { type ->
-                    val profile = SaudiProjectTypeEngine.profile(type)
-                    ElevatedCard(
-                        onClick = { onChoose(type) },
-                        colors = CardDefaults.elevatedCardColors(containerColor = if (current == type) Color(0xFFFFF1D6) else Color.White),
-                        shape = RoundedCornerShape(20.dp),
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 9.dp)
+
+            Spacer(Modifier.height(18.dp))
+
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                SaudiProjectTypeEngine.Type.entries.chunked(2).forEach { rowTypes ->
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Row(Modifier.padding(14.dp)) {
-                            Icon(
-                                when {
-                                    type.apartmentMode -> Icons.Rounded.Apartment
-                                    type == SaudiProjectTypeEngine.Type.TRADITIONAL || type == SaudiProjectTypeEngine.Type.REST_HOUSE -> Icons.Rounded.House
-                                    else -> Icons.Rounded.HomeWork
-                                }, null, modifier = Modifier.size(28.dp), tint = Color(0xFF9A7447)
+                        rowTypes.forEach { type ->
+                            ProjectTypeCard(
+                                type = type,
+                                selected = current == type,
+                                modifier = Modifier.weight(1f),
+                                onClick = { onChoose(type) }
                             )
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(type.label, fontWeight = FontWeight.Black, fontSize = 16.sp)
-                                Text(type.subtitle, color = Color.Gray, fontSize = 10.5.sp, lineHeight = 15.sp)
-                                Spacer(Modifier.height(5.dp))
-                                Text(profile.priorities.take(3).joinToString(" • "), fontSize = 9.5.sp, color = Color(0xFF5B625E))
-                            }
                         }
+                        if (rowTypes.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
-                Text("بعد اختيار النوع ستتغير أسئلة HAI تلقائيًا، ولن أتعامل مع عمارة أو تاون هاوس بنفس منطق الفيلا.", color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(vertical = 10.dp))
+                Spacer(Modifier.height(8.dp))
             }
+        }
+    }
+}
+
+@Composable
+private fun ProjectTypeCard(
+    type: SaudiProjectTypeEngine.Type,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val accent = if (type.apartmentMode) Color(0xFF6353D9) else Color(0xFFE28B5A)
+    ElevatedCard(
+        onClick = onClick,
+        modifier = modifier.height(126.dp),
+        shape = RoundedCornerShape(26.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = if (selected) accent.copy(alpha = 0.10f) else Color.White
+        ),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = if (selected) 5.dp else 1.dp)
+    ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Box(
+                Modifier
+                    .size(42.dp)
+                    .background(accent.copy(alpha = 0.12f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    when {
+                        type.apartmentMode -> Icons.Rounded.Apartment
+                        type == SaudiProjectTypeEngine.Type.TRADITIONAL || type == SaudiProjectTypeEngine.Type.REST_HOUSE -> Icons.Rounded.House
+                        else -> Icons.Rounded.HomeWork
+                    },
+                    contentDescription = null,
+                    tint = accent,
+                    modifier = Modifier.size(23.dp)
+                )
+            }
+            Text(
+                type.label,
+                fontWeight = FontWeight.Black,
+                fontSize = 15.sp,
+                color = Color(0xFF181A18),
+                maxLines = 2
+            )
         }
     }
 }

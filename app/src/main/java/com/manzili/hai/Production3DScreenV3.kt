@@ -2,6 +2,8 @@ package com.manzili.hai
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.DirectionsWalk
@@ -37,8 +39,26 @@ import java.nio.ByteBuffer
 @Composable
 fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
     if (plan == null) {
-        Scaffold(topBar = { TopAppBar(title = { Text("3D PBR") }, navigationIcon = { IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowBack, null) } }) }) { pad ->
-            Box(Modifier.fillMaxSize().padding(pad), contentAlignment = Alignment.Center) { Text("لا يوجد مشروع مفتوح") }
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("المجسم", fontWeight = FontWeight.Black) },
+                    navigationIcon = {
+                        IconButton(onClick = { nav.popBackStack() }) {
+                            Icon(Icons.Rounded.ArrowBack, "رجوع")
+                        }
+                    }
+                )
+            }
+        ) { pad ->
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .padding(pad),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Rounded.ViewInAr, null, tint = Color(0xFFB0AAA2), modifier = Modifier.size(48.dp))
+            }
         }
         return
     }
@@ -50,17 +70,17 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
     }
 
     val semanticScene = remember(plan) { ProductionSceneEngine.build(plan) }
-    val visual = remember(plan) { SaudiVisualRenderEngine.build(plan,SaudiVisualRenderEngine.Quality.HIGH) }
+    val visual = remember(plan) { SaudiVisualRenderEngine.build(plan, SaudiVisualRenderEngine.Quality.HIGH) }
     val frame = remember(semanticScene) { PbrSceneFramingEngine.frame(semanticScene) }
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
-    val lightIntensity=(115_000f*visual.sun.intensity).coerceIn(80_000f,145_000f)
+    val lightIntensity = (115_000f * visual.sun.intensity).coerceIn(80_000f, 145_000f)
     val mainLight = rememberMainLightNode(engine) { intensity = lightIntensity }
     val cameraManipulator = rememberCameraManipulator(
         orbitHomePosition = Position(frame.cameraX, frame.cameraY, frame.cameraZ),
         targetPosition = Position(frame.targetX, frame.targetY, frame.targetZ)
     )
-    val background=when(SaudiResidentialEngine.context(plan.site.city).climate){
+    val background = when (SaudiResidentialEngine.context(plan.site.city).climate) {
         SaudiResidentialEngine.Climate.HOT_DRY -> Color(0xFFE9E1D2)
         SaudiResidentialEngine.Climate.HOT_HUMID -> Color(0xFFE0E7E5)
         SaudiResidentialEngine.Climate.HIGHLAND_MILD -> Color(0xFFE4E7DF)
@@ -93,26 +113,35 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
     val renderError = modelLoad?.exceptionOrNull()
 
     Scaffold(
+        containerColor = Color(0xFFF8F6F2),
         topBar = {
             TopAppBar(
-                title = {
-                    Column {
-                        Text("3D واقعي • PBR", fontWeight = FontWeight.Black)
-                        Text("Filament • Geometry V3 • ${visual.facade.style}", fontSize = 10.sp, color = Color.Gray)
+                title = { Text("المجسم", fontSize = 26.sp, fontWeight = FontWeight.Black) },
+                navigationIcon = {
+                    IconButton(onClick = { nav.popBackStack() }) {
+                        Icon(Icons.Rounded.ArrowBack, "رجوع")
                     }
                 },
-                navigationIcon = { IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowBack, null) } },
                 actions = {
-                    TextButton(onClick = { nav.navigate("walkthrough") }) {
-                        Icon(Icons.Rounded.DirectionsWalk, null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("جولة")
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFF6353D9).copy(alpha = 0.10f),
+                        modifier = Modifier.padding(end = 10.dp)
+                    ) {
+                        IconButton(onClick = { nav.navigate("walkthrough") }) {
+                            Icon(Icons.Rounded.DirectionsWalk, "جولة", tint = Color(0xFF4F40B8))
+                        }
                     }
                 }
             )
         }
     ) { pad ->
-        Box(Modifier.fillMaxSize().padding(pad).background(background)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(pad)
+                .background(background)
+        ) {
             if (renderError == null) {
                 Scene(
                     modifier = Modifier.fillMaxSize(),
@@ -127,34 +156,40 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
             when {
                 glb == null -> Surface(
                     modifier = Modifier.align(Alignment.Center),
-                    shape = MaterialTheme.shapes.large,
-                    tonalElevation = 6.dp
-                ) { Row(Modifier.padding(horizontal = 18.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text("يبني مجسم PBR وسياق الموقع…") } }
-
-                renderError != null -> Card(Modifier.align(Alignment.Center).padding(24.dp)) {
-                    Column(Modifier.padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Rounded.ViewInAr, null)
-                        Spacer(Modifier.height(8.dp))
-                        Text("تعذر تشغيل Filament على هذا الجهاز", fontWeight = FontWeight.Bold)
-                        Text(renderError.message.orEmpty().take(160), fontSize = 10.sp, color = Color.Gray)
-                        Spacer(Modifier.height(12.dp))
-                        Button(onClick = { compatibilityMode = true }) { Text("فتح العرض المتوافق") }
+                    shape = CircleShape,
+                    color = Color.White.copy(alpha = 0.94f),
+                    shadowElevation = 4.dp
+                ) {
+                    Box(Modifier.size(64.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(
+                            Modifier.size(26.dp),
+                            strokeWidth = 2.5.dp,
+                            color = Color(0xFF6353D9)
+                        )
                     }
                 }
 
-                modelNode != null -> {
-                    Surface(
-                        modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
-                        color = Color(0xEFFFFFFF),
-                        shape = MaterialTheme.shapes.large
+                renderError != null -> Card(
+                    Modifier
+                        .align(Alignment.Center)
+                        .padding(24.dp),
+                    shape = RoundedCornerShape(28.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                ) {
+                    Column(
+                        Modifier.padding(22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("اسحب للدوران • إصبعين للتحريك والتقريب", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            Text(
-                                if (semanticScene.metricReady) "PBR + ظلال + واجهة هندسية + سياق موقع بالمتر" else "PBR + واجهة وسياق نسبي حتى تأكيد المقياس",
-                                fontSize = 9.sp,
-                                color = Color.Gray
-                            )
+                        Icon(Icons.Rounded.ViewInAr, null, tint = Color(0xFFE28B5A), modifier = Modifier.size(36.dp))
+                        Spacer(Modifier.height(12.dp))
+                        Text("تعذر العرض", fontWeight = FontWeight.Black, fontSize = 18.sp)
+                        Spacer(Modifier.height(14.dp))
+                        Button(
+                            onClick = { compatibilityMode = true },
+                            shape = RoundedCornerShape(18.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F40B8))
+                        ) {
+                            Text("عرض بديل")
                         }
                     }
                 }
