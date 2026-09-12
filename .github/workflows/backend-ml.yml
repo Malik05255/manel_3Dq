@@ -2,7 +2,7 @@ name: Backend ML Validation
 
 on:
   push:
-    branches: [ main, codex/seven-stage-production, codex/three-priority-production, codex/seven-production-upgrade ]
+    branches: [ main, codex/seven-stage-production, codex/three-priority-production, codex/seven-production-upgrade, codex/eight-production-upgrade ]
     paths:
       - 'backend/app/cubicasa_model.py'
       - 'backend/app/parser.py'
@@ -40,7 +40,6 @@ jobs:
           python - <<'PY'
           import numpy as np
           from app.cubicasa_model import CLASS_NAMES, load_cubicasa_runtime, model_status
-
           runtime = load_cubicasa_runtime()
           assert runtime is not None, 'CubiCasa runtime did not load'
           status = model_status()
