@@ -48,8 +48,6 @@ import com.manzili.hai.model.*
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.hypot
-import kotlin.math.max
-import kotlin.math.min
 
 private val Sand = Color(0xFFF7F4EE)
 private val Paper = Color(0xFFFFFEFA)
@@ -60,7 +58,7 @@ private val Deep = Color(0xFF27312C)
 private val Sage = Color(0xFF64756B)
 private val SoftBlue = Color(0xFF70808A)
 
-private data class PlanSelection(val kind: String, val id: String)
+data class PlanSelection(val kind: String, val id: String)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
