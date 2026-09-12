@@ -1,6 +1,6 @@
 package com.manzili.hai.export
 
-import com.manzili.hai.engine.Architectural3DEnhancementEngine
+import com.manzili.hai.engine.ProductionSceneEngine
 import com.manzili.hai.engine.Semantic3DEngine
 import com.manzili.hai.model.FloorPlan
 import org.json.JSONArray
@@ -11,7 +11,6 @@ import java.nio.ByteOrder
 import java.util.Base64
 import kotlin.math.sqrt
 
-/** Single-file glTF 2.0 / GLB export from canonical Geometry V3 with Filament-ready PBR materials. */
 object GltfPlanExporter {
     private data class Slice(val offset:Int,val length:Int)
     private data class Built(val json:JSONObject,val bin:ByteArray)
@@ -35,7 +34,7 @@ object GltfPlanExporter {
     }
 
     private fun build(plan:FloorPlan):Built {
-        val scene=Architectural3DEnhancementEngine.build(plan)
+        val scene=ProductionSceneEngine.build(plan)
         val bin=ByteArrayOutputStream();val bufferViews=JSONArray();val accessors=JSONArray();val meshesJson=JSONArray();val nodes=JSONArray();val materials=materialLibrary()
         scene.meshes.forEach{mesh->
             if(mesh.vertices.isEmpty())return@forEach
@@ -57,11 +56,11 @@ object GltfPlanExporter {
         }
         val rootNodes=JSONArray((0 until nodes.length()).toList())
         val json=JSONObject()
-            .put("asset",JSONObject().put("version","2.0").put("generator","Manzili HAI 0.50"))
+            .put("asset",JSONObject().put("version","2.0").put("generator","Manzili HAI 0.60"))
             .put("scene",0).put("scenes",JSONArray().put(JSONObject().put("nodes",rootNodes).put("name",scene.title)))
             .put("nodes",nodes).put("meshes",meshesJson).put("materials",materials).put("bufferViews",bufferViews).put("accessors",accessors)
             .put("buffers",JSONArray().put(JSONObject().put("byteLength",bin.size())))
-            .put("extras",JSONObject().put("metricReady",scene.metricReady).put("units",scene.units).put("pbrReady",true).put("geometrySource","Geometry V3").put("facadeGeometry",true))
+            .put("extras",JSONObject().put("metricReady",scene.metricReady).put("units",scene.units).put("pbrReady",true).put("geometrySource","Geometry V3").put("facadeGeometry",true).put("siteContext",true).put("productionScene",true))
         return Built(json,bin.toByteArray())
     }
 
@@ -76,16 +75,20 @@ object GltfPlanExporter {
     }
 
     private fun materialLibrary():JSONArray=JSONArray()
-        .put(material("Saudi Plaster",0.86,0.82,0.74,1.0,0.78))
-        .put(material("Concrete Slab",0.55,0.56,0.54,1.0,0.92))
-        .put(material("Structure",0.46,0.34,0.23,1.0,0.83))
-        .put(material("Timber Door",0.30,0.16,0.075,1.0,0.48))
-        .put(material("Architectural Glass",0.25,0.52,0.64,0.30,0.08,true))
-        .put(material("Roof / Parapet",0.54,0.51,0.46,1.0,0.86))
-        .put(material("Architectural Accent",0.64,0.60,0.53,1.0,0.70))
-        .put(material("Saudi Limestone",0.72,0.65,0.53,1.0,0.72))
-        .put(material("Shade Metal",0.20,0.21,0.20,1.0,0.36,metallic=0.46))
-        .put(material("Hijazi Screen",0.40,0.25,0.14,1.0,0.52,metallic=0.08))
+        .put(material("Saudi Plaster",0.86,0.82,0.74,1.0,0.74))
+        .put(material("Concrete Slab",0.55,0.56,0.54,1.0,0.90))
+        .put(material("Structure",0.46,0.34,0.23,1.0,0.82))
+        .put(material("Timber Door",0.30,0.16,0.075,1.0,0.43))
+        .put(material("Architectural Glass",0.18,0.42,0.55,0.24,0.06,true))
+        .put(material("Roof / Parapet",0.54,0.51,0.46,1.0,0.84))
+        .put(material("Architectural Accent",0.64,0.60,0.53,1.0,0.66))
+        .put(material("Saudi Limestone",0.72,0.65,0.53,1.0,0.68))
+        .put(material("Shade Metal",0.20,0.21,0.20,1.0,0.30,metallic=0.55))
+        .put(material("Hijazi Screen",0.40,0.25,0.14,1.0,0.48,metallic=0.08))
+        .put(material("Warm Site Ground",0.48,0.43,0.35,1.0,0.96))
+        .put(material("Saudi Paving",0.62,0.58,0.50,1.0,0.78))
+        .put(material("Parking Concrete",0.40,0.41,0.40,1.0,0.90))
+        .put(material("Planting Soil",0.22,0.20,0.12,1.0,1.0))
 
     private fun material(name:String,r:Double,g:Double,b:Double,a:Double,roughness:Double,blend:Boolean=false,metallic:Double=0.0):JSONObject=JSONObject()
         .put("name",name).put("pbrMetallicRoughness",JSONObject().put("baseColorFactor",JSONArray(listOf(r,g,b,a))).put("metallicFactor",metallic).put("roughnessFactor",roughness))
@@ -93,7 +96,8 @@ object GltfPlanExporter {
 
     private fun materialIndex(kind:String):Int=when(kind){
         "wall"->0;"slab"->1;"structural"->2;"door"->3;"window"->4;"roof","saudi-parapet"->5
-        "facade-stone"->7;"facade-shade","facade-frame"->8;"facade-screen"->9;"facade-accent"->6;else->6
+        "facade-stone"->7;"facade-shade","facade-frame"->8;"facade-screen"->9;"facade-accent"->6
+        "site-ground"->10;"site-paving"->11;"site-parking"->12;"site-planting"->13;else->6
     }
 
     private fun triangulate(faces:List<Semantic3DEngine.Face>):IntArray{val out=mutableListOf<Int>();faces.forEach{face->val idx=face.indices;if(idx.size>=3)for(i in 1 until idx.size-1){out+=idx[0];out+=idx[i];out+=idx[i+1]}};return out.toIntArray()}

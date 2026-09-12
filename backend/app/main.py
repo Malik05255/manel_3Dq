@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from .cubicasa_model import model_status
 from .parser import parse_floorplan
 
-app = FastAPI(title="Manzili HAI Backend", version="0.50.0")
+app = FastAPI(title="Manzili HAI Backend", version="0.60.0")
 
 
 class ParseRequest(BaseModel):
@@ -37,158 +37,83 @@ async def current_user(authorization: str | None = Header(default=None)) -> dict
     publishable = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
     if supabase_url and publishable:
         async with httpx.AsyncClient(timeout=20) as client:
-            res = await client.get(
-                f"{supabase_url}/auth/v1/user",
-                headers={"Authorization": f"Bearer {token}", "apikey": publishable},
-            )
-        if res.status_code != 200:
-            raise HTTPException(401, "invalid Supabase session")
+            res = await client.get(f"{supabase_url}/auth/v1/user",headers={"Authorization": f"Bearer {token}", "apikey": publishable})
+        if res.status_code != 200: raise HTTPException(401, "invalid Supabase session")
         body = res.json()
-        if not body.get("id"):
-            raise HTTPException(401, "invalid Supabase user")
+        if not body.get("id"): raise HTTPException(401, "invalid Supabase user")
         return body
-
     static_token = os.getenv("MANZILI_API_TOKEN", "")
-    if not static_token or not hmac.compare_digest(token, static_token):
-        raise HTTPException(401, "backend authentication is not configured")
+    if not static_token or not hmac.compare_digest(token, static_token): raise HTTPException(401, "backend authentication is not configured")
     return {"id": "self-hosted"}
 
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
     floorplan = model_status()
-    return {
-        "ok": True,
-        "version": app.version,
-        "ai_configured": bool(os.getenv("AI_API_KEY")),
-        "supabase_configured": bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_PUBLISHABLE_KEY")),
-        "floorplan_model_configured": bool(floorplan.get("configured")),
-        "deep_parser_ready": bool(floorplan.get("configured")),
-        "floorplan_model": floorplan,
-    }
+    return {"ok":True,"version":app.version,"ai_configured":bool(os.getenv("AI_API_KEY")),"supabase_configured":bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_PUBLISHABLE_KEY")),"floorplan_model_configured":bool(floorplan.get("configured")),"deep_parser_ready":bool(floorplan.get("configured")),"floorplan_model":floorplan}
 
 
 @app.get("/readyz")
 async def readiness() -> dict[str, Any]:
-    floorplan = model_status()
-    if not floorplan.get("configured"):
-        raise HTTPException(503, "Deep Parser model weights are not loaded")
-    return {
-        "ok": True,
-        "version": app.version,
-        "deep_parser_ready": True,
-        "model": floorplan,
-    }
+    floorplan=model_status()
+    if not floorplan.get("configured"): raise HTTPException(503,"Deep Parser model weights are not loaded")
+    return {"ok":True,"version":app.version,"deep_parser_ready":True,"model":floorplan}
 
 
 @app.get("/v1/parser/status")
-async def parser_status(_: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
-    status = model_status()
-    return {
-        "ready": bool(status.get("configured")),
-        "model": status,
-        "preferred_path": "cubicasa-unet-resnet34" if status.get("configured") else "fallback",
-    }
+async def parser_status(_:dict[str,Any]=Depends(current_user))->dict[str,Any]:
+    status=model_status();return {"ready":bool(status.get("configured")),"model":status,"preferred_path":"cubicasa-unet-resnet34" if status.get("configured") else "fallback"}
 
 
 @app.post("/v1/ai/chat")
-async def ai_chat(payload: dict[str, Any], _: dict[str, Any] = Depends(current_user)) -> Any:
-    endpoint = os.getenv("AI_ENDPOINT", "https://openrouter.ai/api/v1/chat/completions")
-    api_key = os.getenv("AI_API_KEY", "")
-    if not api_key:
-        raise HTTPException(503, "AI provider is not configured on the server")
-    outgoing = dict(payload)
-    if not outgoing.get("model"):
-        outgoing["model"] = os.getenv("AI_MODEL_DEFAULT", "google/gemini-2.5-flash")
-    async with httpx.AsyncClient(timeout=180) as client:
-        res = await client.post(
-            endpoint,
-            json=outgoing,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        )
-    if res.status_code >= 400:
-        raise HTTPException(res.status_code, res.text[:600])
+async def ai_chat(payload:dict[str,Any],_:dict[str,Any]=Depends(current_user))->Any:
+    endpoint=os.getenv("AI_ENDPOINT","https://openrouter.ai/api/v1/chat/completions");api_key=os.getenv("AI_API_KEY","")
+    if not api_key: raise HTTPException(503,"AI provider is not configured on the server")
+    outgoing=dict(payload)
+    if not outgoing.get("model"): outgoing["model"]=os.getenv("AI_MODEL_DEFAULT","google/gemini-2.5-flash")
+    async with httpx.AsyncClient(timeout=180) as client: res=await client.post(endpoint,json=outgoing,headers={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"})
+    if res.status_code>=400: raise HTTPException(res.status_code,res.text[:600])
     return res.json()
 
 
 @app.post("/v1/parse-floorplan")
-async def parse_plan(payload: ParseRequest, _: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+async def parse_plan(payload:ParseRequest,_:dict[str,Any]=Depends(current_user))->dict[str,Any]:
     try:
-        result = parse_floorplan(payload.image_base64)
-        result["page_index"] = payload.page_index
-        return result
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        result=parse_floorplan(payload.image_base64);result["page_index"]=payload.page_index;return result
+    except ValueError as exc: raise HTTPException(400,str(exc)) from exc
 
 
-def _supabase_headers(token: str, prefer: str | None = None) -> dict[str, str]:
-    key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
-    headers = {"Authorization": f"Bearer {token}", "apikey": key, "Content-Type": "application/json"}
-    if prefer:
-        headers["Prefer"] = prefer
+def _supabase_headers(token:str,prefer:str|None=None)->dict[str,str]:
+    key=os.getenv("SUPABASE_PUBLISHABLE_KEY","");headers={"Authorization":f"Bearer {token}","apikey":key,"Content-Type":"application/json"}
+    if prefer: headers["Prefer"]=prefer
     return headers
 
 
 @app.get("/v1/projects")
-async def list_projects(authorization: str | None = Header(default=None), user: dict[str, Any] = Depends(current_user)) -> Any:
-    token = _bearer(authorization)
-    base = os.getenv("SUPABASE_URL", "").rstrip("/")
-    if not base:
-        raise HTTPException(503, "cloud sync is not configured")
-    async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.get(
-            f"{base}/rest/v1/manzili_projects?select=id,title,revision,updated_at&order=updated_at.desc",
-            headers=_supabase_headers(token),
-        )
-    if res.status_code >= 400:
-        raise HTTPException(res.status_code, res.text[:600])
+async def list_projects(authorization:str|None=Header(default=None),user:dict[str,Any]=Depends(current_user))->Any:
+    token=_bearer(authorization);base=os.getenv("SUPABASE_URL","").rstrip("/")
+    if not base: raise HTTPException(503,"cloud sync is not configured")
+    async with httpx.AsyncClient(timeout=30) as client: res=await client.get(f"{base}/rest/v1/manzili_projects?select=id,title,revision,updated_at&order=updated_at.desc",headers=_supabase_headers(token))
+    if res.status_code>=400: raise HTTPException(res.status_code,res.text[:600])
     return res.json()
 
 
 @app.get("/v1/projects/{project_id}")
-async def get_project(project_id: str, authorization: str | None = Header(default=None), user: dict[str, Any] = Depends(current_user)) -> Any:
-    token = _bearer(authorization)
-    base = os.getenv("SUPABASE_URL", "").rstrip("/")
-    if not base:
-        raise HTTPException(503, "cloud sync is not configured")
-    async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.get(
-            f"{base}/rest/v1/manzili_projects?id=eq.{project_id}&select=id,title,revision,plan,updated_at&limit=1",
-            headers=_supabase_headers(token),
-        )
-    if res.status_code >= 400:
-        raise HTTPException(res.status_code, res.text[:600])
-    rows = res.json()
-    if not rows:
-        raise HTTPException(404, "project not found")
+async def get_project(project_id:str,authorization:str|None=Header(default=None),user:dict[str,Any]=Depends(current_user))->Any:
+    token=_bearer(authorization);base=os.getenv("SUPABASE_URL","").rstrip("/")
+    if not base: raise HTTPException(503,"cloud sync is not configured")
+    async with httpx.AsyncClient(timeout=30) as client: res=await client.get(f"{base}/rest/v1/manzili_projects?id=eq.{project_id}&select=id,title,revision,plan,updated_at&limit=1",headers=_supabase_headers(token))
+    if res.status_code>=400: raise HTTPException(res.status_code,res.text[:600])
+    rows=res.json()
+    if not rows: raise HTTPException(404,"project not found")
     return rows[0]
 
 
 @app.put("/v1/projects/{project_id}")
-async def put_project(
-    project_id: str,
-    payload: ProjectPayload,
-    authorization: str | None = Header(default=None),
-    user: dict[str, Any] = Depends(current_user),
-) -> Any:
-    token = _bearer(authorization)
-    base = os.getenv("SUPABASE_URL", "").rstrip("/")
-    if not base:
-        raise HTTPException(503, "cloud sync is not configured")
-    body = {
-        "id": project_id,
-        "user_id": user["id"],
-        "title": payload.title[:160],
-        "revision": max(1, payload.revision),
-        "plan": payload.plan,
-    }
-    async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.post(
-            f"{base}/rest/v1/manzili_projects?on_conflict=id",
-            json=body,
-            headers=_supabase_headers(token, "resolution=merge-duplicates,return=representation"),
-        )
-    if res.status_code >= 400:
-        raise HTTPException(res.status_code, res.text[:600])
-    rows = res.json()
-    return rows[0] if rows else body
+async def put_project(project_id:str,payload:ProjectPayload,authorization:str|None=Header(default=None),user:dict[str,Any]=Depends(current_user))->Any:
+    token=_bearer(authorization);base=os.getenv("SUPABASE_URL","").rstrip("/")
+    if not base: raise HTTPException(503,"cloud sync is not configured")
+    body={"id":project_id,"user_id":user["id"],"title":payload.title[:160],"revision":max(1,payload.revision),"plan":payload.plan}
+    async with httpx.AsyncClient(timeout=30) as client: res=await client.post(f"{base}/rest/v1/manzili_projects?on_conflict=id",json=body,headers=_supabase_headers(token,"resolution=merge-duplicates,return=representation"))
+    if res.status_code>=400: raise HTTPException(res.status_code,res.text[:600])
+    rows=res.json();return rows[0] if rows else body

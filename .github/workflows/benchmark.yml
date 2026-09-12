@@ -1,30 +1,48 @@
-name: Saudi Benchmark Contract
+name: Saudi Benchmark Production Gate
 
 on:
   push:
-    branches: [main, codex/seven-production-upgrade]
+    branches: [main, 'codex/**']
     paths:
       - 'benchmarks/saudi-floorplans/**'
       - 'backend/scripts/validate_saudi_benchmark.py'
+      - 'backend/scripts/run_saudi_benchmark.py'
+      - 'backend/app/parser.py'
+      - 'backend/app/cubicasa_model.py'
       - '.github/workflows/benchmark.yml'
   pull_request:
     paths:
       - 'benchmarks/saudi-floorplans/**'
-      - 'backend/scripts/validate_saudi_benchmark.py'
+      - 'backend/scripts/**'
+      - 'backend/app/parser.py'
+      - 'backend/app/cubicasa_model.py'
       - '.github/workflows/benchmark.yml'
 
 jobs:
-  validate:
+  validate-and-measure:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Validate licensed Saudi benchmark manifest
+      - name: Validate rights, de-identification and splits
         run: python backend/scripts/validate_saudi_benchmark.py
-      - name: Upload benchmark contract report
+      - name: Install real CPU parser stack
+        run: pip install -r backend/requirements-ml-cpu.txt
+      - name: Fetch and verify Deep Parser weights
+        env:
+          FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
+        run: python backend/scripts/fetch_floorplan_model.py
+      - name: Execute licensed Saudi benchmark cases
+        env:
+          FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
+        run: python backend/scripts/run_saudi_benchmark.py
+      - name: Upload benchmark reports
         uses: actions/upload-artifact@v4
         with:
-          name: saudi-benchmark-contract-report
-          path: benchmark-contract-report.json
+          name: saudi-benchmark-reports
+          path: |
+            benchmark-contract-report.json
+            benchmark-execution-report.json
+          if-no-files-found: error

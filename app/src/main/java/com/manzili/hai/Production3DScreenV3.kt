@@ -16,8 +16,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
-import com.manzili.hai.engine.Architectural3DEnhancementEngine
 import com.manzili.hai.engine.PbrSceneFramingEngine
+import com.manzili.hai.engine.ProductionSceneEngine
+import com.manzili.hai.engine.SaudiResidentialEngine
+import com.manzili.hai.engine.SaudiVisualRenderEngine
 import com.manzili.hai.export.GltfPlanExporter
 import com.manzili.hai.model.FloorPlan
 import io.github.sceneview.Scene
@@ -31,13 +33,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 
-/**
- * Production GPU/PBR viewer.
- *
- * The model is generated from the exact Geometry V3 semantic scene via GltfPlanExporter and loaded
- * in Filament through SceneView. This layer never edits the floor plan. If Filament/model loading
- * is unavailable on a device, the previous deterministic Canvas viewer remains an explicit fallback.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
@@ -54,15 +49,23 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
         return
     }
 
-    val semanticScene = remember(plan) { Architectural3DEnhancementEngine.build(plan) }
+    val semanticScene = remember(plan) { ProductionSceneEngine.build(plan) }
+    val visual = remember(plan) { SaudiVisualRenderEngine.build(plan,SaudiVisualRenderEngine.Quality.HIGH) }
     val frame = remember(semanticScene) { PbrSceneFramingEngine.frame(semanticScene) }
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
-    val mainLight = rememberMainLightNode(engine) { intensity = 115_000.0f }
+    val lightIntensity=(115_000f*visual.sun.intensity).coerceIn(80_000f,145_000f)
+    val mainLight = rememberMainLightNode(engine) { intensity = lightIntensity }
     val cameraManipulator = rememberCameraManipulator(
         orbitHomePosition = Position(frame.cameraX, frame.cameraY, frame.cameraZ),
         targetPosition = Position(frame.targetX, frame.targetY, frame.targetZ)
     )
+    val background=when(SaudiResidentialEngine.context(plan.site.city).climate){
+        SaudiResidentialEngine.Climate.HOT_DRY -> Color(0xFFE9E1D2)
+        SaudiResidentialEngine.Climate.HOT_HUMID -> Color(0xFFE0E7E5)
+        SaudiResidentialEngine.Climate.HIGHLAND_MILD -> Color(0xFFE4E7DF)
+        SaudiResidentialEngine.Climate.DESERT_CONTINENTAL -> Color(0xFFE8E2D8)
+    }
 
     val glb by produceState<ByteArray?>(initialValue = null, plan) {
         value = withContext(Dispatchers.Default) { GltfPlanExporter.renderGlb(plan) }
@@ -94,8 +97,8 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
             TopAppBar(
                 title = {
                     Column {
-                        Text("3D حقيقي • PBR", fontWeight = FontWeight.Black)
-                        Text("Filament GPU • Geometry V3", fontSize = 10.sp, color = Color.Gray)
+                        Text("3D واقعي • PBR", fontWeight = FontWeight.Black)
+                        Text("Filament • Geometry V3 • ${visual.facade.style}", fontSize = 10.sp, color = Color.Gray)
                     }
                 },
                 navigationIcon = { IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowBack, null) } },
@@ -109,7 +112,7 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
             )
         }
     ) { pad ->
-        Box(Modifier.fillMaxSize().padding(pad).background(Color(0xFFECE9E1))) {
+        Box(Modifier.fillMaxSize().padding(pad).background(background)) {
             if (renderError == null) {
                 Scene(
                     modifier = Modifier.fillMaxSize(),
@@ -126,7 +129,7 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                     modifier = Modifier.align(Alignment.Center),
                     shape = MaterialTheme.shapes.large,
                     tonalElevation = 6.dp
-                ) { Row(Modifier.padding(horizontal = 18.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text("يبني مجسم PBR من المخطط…") } }
+                ) { Row(Modifier.padding(horizontal = 18.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp); Spacer(Modifier.width(10.dp)); Text("يبني مجسم PBR وسياق الموقع…") } }
 
                 renderError != null -> Card(Modifier.align(Alignment.Center).padding(24.dp)) {
                     Column(Modifier.padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -148,7 +151,7 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                         Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("اسحب للدوران • إصبعين للتحريك والتقريب", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             Text(
-                                if (semanticScene.metricReady) "المجسم بالمتر • PBR + إضاءة وظلال فعلية" else "المجسم نسبي حتى تأكيد المقياس • PBR فعلي",
+                                if (semanticScene.metricReady) "PBR + ظلال + واجهة هندسية + سياق موقع بالمتر" else "PBR + واجهة وسياق نسبي حتى تأكيد المقياس",
                                 fontSize = 9.sp,
                                 color = Color.Gray
                             )
