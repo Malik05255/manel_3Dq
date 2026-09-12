@@ -1,6 +1,7 @@
 package com.manzili.hai.engine
 
 import com.manzili.hai.model.FloorPlan
+import com.manzili.hai.model.ProjectConstraint
 
 /**
  * Optional, versioned Saudi-code readiness layer.
@@ -13,6 +14,11 @@ object SaudiRulesEngine {
     const val EFFECTIVE_DATE = "2025-06-30"
     const val RESIDENTIAL_CODE = "SBC 1101-1102"
     const val OFFICIAL_SCOPE_SOURCE = "SBC 1101 Section 101.2 + Saudi Building Code residential inspection guidance"
+
+    const val SCOPE_BASEMENT_COUNT = "SBC_SCOPE_BASEMENT_COUNT"
+    const val SCOPE_FAMILY_COUNT = "SBC_SCOPE_FAMILY_COUNT"
+    const val SCOPE_INDEPENDENT_EGRESS = "SBC_SCOPE_INDEPENDENT_EGRESS"
+    const val SCOPE_OPEN_SIDES = "SBC_SCOPE_OPEN_SIDES"
 
     enum class Status { PASS, NEEDS_DATA, REVIEW, INFO, NOT_APPLICABLE }
 
@@ -31,6 +37,17 @@ object SaudiRulesEngine {
         val codeScopeReady: Boolean get() = checks.any { it.id == "residential-scope" && it.status == Status.PASS }
     }
 
+    fun setScopeInputs(plan:FloorPlan,basementCount:Int?,familyCount:Int?,independentEgress:Boolean?,openSides:Int?):FloorPlan {
+        val kinds=setOf(SCOPE_BASEMENT_COUNT,SCOPE_FAMILY_COUNT,SCOPE_INDEPENDENT_EGRESS,SCOPE_OPEN_SIDES)
+        val additions=buildList {
+            basementCount?.takeIf { it>=0 }?.let { add(ProjectConstraint("sbc-scope-basements",SCOPE_BASEMENT_COUNT,"عدد الأدوار أسفل الأرض أدخله المستخدم: $it",value=it.toDouble(),hard=false,priority=100)) }
+            familyCount?.takeIf { it>=1 }?.let { add(ProjectConstraint("sbc-scope-families",SCOPE_FAMILY_COUNT,"عدد الأسر أدخله المستخدم: $it",value=it.toDouble(),hard=false,priority=100)) }
+            independentEgress?.let { add(ProjectConstraint("sbc-scope-egress",SCOPE_INDEPENDENT_EGRESS,"خروج مستقل لكل عائلة: ${if(it)"نعم" else "لا"}",value=if(it)1.0 else 0.0,hard=false,priority=100)) }
+            openSides?.takeIf { it>=0 }?.let { add(ProjectConstraint("sbc-scope-open-sides",SCOPE_OPEN_SIDES,"عدد الجهات المفتوحة أدخله المستخدم: $it",value=it.toDouble(),hard=false,priority=100)) }
+        }
+        return plan.copy(constraints=(plan.constraints.filterNot { it.kind in kinds }+additions).distinctBy { it.id })
+    }
+
     fun inspect(plan: FloorPlan): Report {
         if (!plan.saudiRulesEnabled) return Report(emptyList())
         if (!plan.site.countryCode.equals("SA", true)) {
@@ -46,6 +63,10 @@ object SaudiRulesEngine {
             SaudiProjectTypeEngine.Type.TOWNHOUSE
         )
         val explicitlyMultiUnit = type in setOf(SaudiProjectTypeEngine.Type.BUILDING_ONE, SaudiProjectTypeEngine.Type.BUILDING_TWO)
+        val basementCount=value(plan,SCOPE_BASEMENT_COUNT)?.toInt()
+        val familyCount=value(plan,SCOPE_FAMILY_COUNT)?.toInt()
+        val independentEgress=value(plan,SCOPE_INDEPENDENT_EGRESS)?.let { it>=.5 }
+        val openSides=value(plan,SCOPE_OPEN_SIDES)?.toInt()
 
         val checks = mutableListOf<Check>()
         checks += Check(
@@ -80,32 +101,28 @@ object SaudiRulesEngine {
             OFFICIAL_SCOPE_SOURCE, true
         )
 
-        // The current domain model does not encode basements/family count/independent egress/open-side count reliably.
-        checks += Check(
-            "basement-scope", "الأدوار أسفل الأرض", Status.NEEDS_DATA,
-            "نطاق SBC 1101 يذكر حدًا أقصى لطابق واحد أسفل مستوى الأرض. نموذج المشروع الحالي لا يميز القبو بشكل موثوق؛ أدخل هذه البيانات قبل اعتماد النطاق.",
-            OFFICIAL_SCOPE_SOURCE, true
-        )
-        checks += if (explicitlyMultiUnit) Check(
-            "family-count", "عدد الأسر", Status.REVIEW,
-            "نوع المشروع متعدد الوحدات، بينما نطاق SBC 1101 السكني المبسط يشترط أسرة أو أسرتين بحد أقصى.",
-            OFFICIAL_SCOPE_SOURCE, true
-        ) else Check(
-            "family-count", "عدد الأسر", Status.NEEDS_DATA,
-            "يجب تأكيد أن المبنى يخدم أسرة أو أسرتين بحد أقصى قبل اعتبار نطاق SBC 1101 مكتملًا.",
-            OFFICIAL_SCOPE_SOURCE, true
-        )
-        checks += Check(
-            "independent-egress", "وسائل الخروج لكل عائلة", Status.NEEDS_DATA,
-            "يجب تأكيد وجود وسيلة خروج مستقلة لكل عائلة؛ لا أستنتج ذلك من أسماء الغرف أو الرسم فقط.",
-            OFFICIAL_SCOPE_SOURCE, true
-        )
+        checks += when {
+            basementCount==null -> Check("basement-scope","الأدوار أسفل الأرض",Status.NEEDS_DATA,"أدخل عدد الأدوار أسفل الأرض. نطاق SBC 1101 يسمح بطابق واحد أسفل مستوى الأرض بحد أقصى.",OFFICIAL_SCOPE_SOURCE,true)
+            basementCount<=1 -> Check("basement-scope","الأدوار أسفل الأرض",Status.PASS,"عدد الأدوار أسفل الأرض = $basementCount، ضمن الحد الممثل في فحص النطاق.",OFFICIAL_SCOPE_SOURCE,true)
+            else -> Check("basement-scope","الأدوار أسفل الأرض",Status.REVIEW,"عدد الأدوار أسفل الأرض = $basementCount ويتجاوز حد طابق واحد في نطاق SBC 1101 المختصر.",OFFICIAL_SCOPE_SOURCE,true)
+        }
+        checks += when {
+            explicitlyMultiUnit -> Check("family-count","عدد الأسر",Status.REVIEW,"نوع المشروع متعدد الوحدات، بينما نطاق SBC 1101 المختصر يشترط أسرة أو أسرتين بحد أقصى.",OFFICIAL_SCOPE_SOURCE,true)
+            familyCount==null -> Check("family-count","عدد الأسر",Status.NEEDS_DATA,"أدخل عدد الأسر؛ النطاق الرسمي يشترط أسرة أو أسرتين بحد أقصى.",OFFICIAL_SCOPE_SOURCE,true)
+            familyCount<=2 -> Check("family-count","عدد الأسر",Status.PASS,"عدد الأسر = $familyCount، ضمن حد أسرتين في فحص النطاق.",OFFICIAL_SCOPE_SOURCE,true)
+            else -> Check("family-count","عدد الأسر",Status.REVIEW,"عدد الأسر = $familyCount؛ يتجاوز حد أسرتين في نطاق SBC 1101 المختصر.",OFFICIAL_SCOPE_SOURCE,true)
+        }
+        checks += when(independentEgress){
+            null -> Check("independent-egress","وسائل الخروج لكل عائلة",Status.NEEDS_DATA,"حدد هل توجد وسيلة خروج مستقلة لكل عائلة؛ لا أستنتجها من الرسم فقط.",OFFICIAL_SCOPE_SOURCE,true)
+            true -> Check("independent-egress","وسائل الخروج لكل عائلة",Status.PASS,"تم تأكيد وجود وسيلة خروج مستقلة لكل عائلة كبيان مشروع.",OFFICIAL_SCOPE_SOURCE,true)
+            false -> Check("independent-egress","وسائل الخروج لكل عائلة",Status.REVIEW,"تم تحديد عدم وجود وسيلة خروج مستقلة لكل عائلة؛ لا يكتمل نطاق SBC 1101 المختصر.",OFFICIAL_SCOPE_SOURCE,true)
+        }
         if (type == SaudiProjectTypeEngine.Type.TOWNHOUSE) {
-            checks += Check(
-                "townhouse-open-sides", "المساحة المفتوحة للتاون هاوس", Status.NEEDS_DATA,
-                "للتاؤن هاوس/الفيلا المتلاصقة من جهتين يلزم التحقق من وجود مساحة مفتوحة من جهتين على الأقل وفق دليل النطاق الرسمي.",
-                OFFICIAL_SCOPE_SOURCE, true
-            )
+            checks += when {
+                openSides==null -> Check("townhouse-open-sides","المساحة المفتوحة للتاون هاوس",Status.NEEDS_DATA,"أدخل عدد الجهات المفتوحة؛ يلزم وجود مساحة مفتوحة من جهتين على الأقل للفيلا المتلاصقة من جهتين/التاون هاوس.",OFFICIAL_SCOPE_SOURCE,true)
+                openSides>=2 -> Check("townhouse-open-sides","المساحة المفتوحة للتاون هاوس",Status.PASS,"عدد الجهات المفتوحة = $openSides، يحقق شرط الجهتين في فحص النطاق.",OFFICIAL_SCOPE_SOURCE,true)
+                else -> Check("townhouse-open-sides","المساحة المفتوحة للتاون هاوس",Status.REVIEW,"عدد الجهات المفتوحة = $openSides؛ أقل من جهتين.",OFFICIAL_SCOPE_SOURCE,true)
+            }
         }
 
         val scopeDependencies = checks.filter { it.id in setOf("residential-type","above-grade-floors","basement-scope","family-count","independent-egress","townhouse-open-sides") }
@@ -119,7 +136,7 @@ object SaudiRulesEngine {
             "residential-scope", "اكتمال نطاق الكود السكني", scopeStatus,
             when (scopeStatus) {
                 Status.PASS -> "شروط النطاق الممثلة في التطبيق مكتملة مبدئيًا؛ استمر لبقية فحوص الكود دون اعتبارها موافقة رسمية."
-                Status.NEEDS_DATA -> "نوع/ارتفاع المشروع مبدئيًا مناسب، لكن توجد بيانات نطاق رسمية غير ممثلة بعد ويجب إدخالها."
+                Status.NEEDS_DATA -> "نوع/ارتفاع المشروع مبدئيًا مناسب، لكن توجد بيانات نطاق رسمية ناقصة ويجب إدخالها."
                 else -> "هناك شرط نطاق لا يطابق المسار السكني المختصر؛ يلزم مراجعة مسار الكود العام/المختص."
             },
             OFFICIAL_SCOPE_SOURCE, true
@@ -142,6 +159,7 @@ object SaudiRulesEngine {
         return Report(checks)
     }
 
+    private fun value(plan:FloorPlan,kind:String)=plan.constraints.firstOrNull { it.kind==kind && it.active }?.value
     private fun dataCheck(id: String, title: String, ok: Boolean, missing: String) = Check(
         id, title, if (ok) Status.PASS else Status.NEEDS_DATA,
         if (ok) "البيانات المطلوبة متوفرة للفحص اللاحق." else missing,
