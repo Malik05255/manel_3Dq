@@ -2,7 +2,7 @@ name: Android Build
 
 on:
   push:
-    branches: [ main, codex/seven-stage-production ]
+    branches: [ main, codex/seven-stage-production, codex/three-priority-production ]
   workflow_dispatch:
 
 concurrency:
