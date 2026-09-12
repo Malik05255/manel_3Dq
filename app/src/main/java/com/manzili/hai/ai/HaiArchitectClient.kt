@@ -15,21 +15,13 @@ import com.manzili.hai.model.FloorPlan
 import com.manzili.hai.model.PlanProposal
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.util.concurrent.TimeUnit
 
 class HaiArchitectClient(private val context: Context) {
     private val settings = HaiSettings(context)
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(150, TimeUnit.SECONDS)
-        .build()
+    private val router = AiProviderRouter(context)
 
     suspend fun analyzePlan(uri: Uri): FloorPlan = withContext(Dispatchers.IO) {
         check(settings.configured) { "أدخل إعدادات الذكاء الاصطناعي أولًا" }
@@ -68,9 +60,7 @@ class HaiArchitectClient(private val context: Context) {
         }
 
         val review = ArchitecturalEngine.architecturalReview(plan, next)
-        if (!review.hasMaterialObjection) {
-            return@withContext proposal
-        }
+        if (!review.hasMaterialObjection) return@withContext proposal
 
         val repairs = ArchitecturalRepairEngine.alternatives(plan, next, limit = 3)
         val best = repairs.firstOrNull { it.remainingObjections == 0 }
@@ -111,96 +101,41 @@ class HaiArchitectClient(private val context: Context) {
         put("rooms", JSONArray().apply {
             plan.rooms.forEach { r ->
                 put(JSONObject().apply {
-                    put("id", r.id)
-                    put("name", r.name)
-                    put("type", r.type)
-                    put("area_m2", r.areaM2)
-                    put("x", r.x)
-                    put("y", r.y)
-                    put("width", r.width)
-                    put("height", r.height)
-                    put("confidence", r.confidence)
-                    put("locked", r.locked)
-                    r.minAreaM2?.let { put("min_area_m2", it) }
-                    r.preferredAreaM2?.let { put("preferred_area_m2", it) }
+                    put("id", r.id); put("name", r.name); put("type", r.type); put("area_m2", r.areaM2)
+                    put("x", r.x); put("y", r.y); put("width", r.width); put("height", r.height)
+                    put("confidence", r.confidence); put("locked", r.locked)
+                    r.minAreaM2?.let { put("min_area_m2", it) }; r.preferredAreaM2?.let { put("preferred_area_m2", it) }
                 })
             }
         })
         put("walls", JSONArray().apply {
             plan.walls.forEach { w ->
                 put(JSONObject().apply {
-                    put("id", w.id)
-                    put("start", JSONObject().put("x", w.start.x).put("y", w.start.y))
-                    put("end", JSONObject().put("x", w.end.x).put("y", w.end.y))
-                    w.thicknessCm?.let { put("thickness_cm", it) }
-                    put("kind", w.kind)
-                    put("confidence", w.confidence)
-                    put("locked", w.locked)
+                    put("id", w.id); put("start", JSONObject().put("x", w.start.x).put("y", w.start.y)); put("end", JSONObject().put("x", w.end.x).put("y", w.end.y))
+                    w.thicknessCm?.let { put("thickness_cm", it) }; put("kind", w.kind); put("confidence", w.confidence); put("locked", w.locked)
                 })
             }
         })
         put("openings", JSONArray().apply {
             plan.openings.forEach { o ->
                 put(JSONObject().apply {
-                    put("id", o.id)
-                    put("type", o.type)
-                    put("x", o.x)
-                    put("y", o.y)
-                    put("width", o.width)
-                    put("rotation_deg", o.rotationDeg)
-                    o.wallId?.let { put("wall_id", it) }
-                    put("connects_room_ids", JSONArray(o.connectsRoomIds))
-                    put("confidence", o.confidence)
-                    put("locked", o.locked)
+                    put("id", o.id); put("type", o.type); put("x", o.x); put("y", o.y); put("width", o.width); put("rotation_deg", o.rotationDeg)
+                    o.wallId?.let { put("wall_id", it) }; put("connects_room_ids", JSONArray(o.connectsRoomIds)); put("confidence", o.confidence); put("locked", o.locked)
                 })
             }
         })
         put("observations", JSONArray(plan.observations))
         put("uncertainties", JSONArray(plan.uncertainties))
         put("preferences", JSONObject().apply {
-            put("privacy", plan.preferences.privacyPriority)
-            put("circulation", plan.preferences.circulationPriority)
-            put("daylight", plan.preferences.daylightPriority)
-            put("future_flexibility", plan.preferences.futureFlexibilityPriority)
+            put("privacy", plan.preferences.privacyPriority); put("circulation", plan.preferences.circulationPriority)
+            put("daylight", plan.preferences.daylightPriority); put("future_flexibility", plan.preferences.futureFlexibilityPriority)
             put("notes", JSONArray(plan.preferences.notes))
         })
     }
 
-    private fun chatText(prompt: String): String {
-        val messages = JSONArray()
-            .put(JSONObject().put("role", "system").put("content", SYSTEM_PROMPT))
-            .put(JSONObject().put("role", "user").put("content", prompt))
-        return request(messages)
-    }
+    private suspend fun chatText(prompt: String): String = router.complete(SYSTEM_PROMPT, prompt)
 
-    private fun chatVision(prompt: String, base64: String): String {
-        val content = JSONArray()
-            .put(JSONObject().put("type", "text").put("text", prompt))
-            .put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$base64")))
-        val messages = JSONArray()
-            .put(JSONObject().put("role", "system").put("content", SYSTEM_PROMPT))
-            .put(JSONObject().put("role", "user").put("content", content))
-        return request(messages)
-    }
-
-    private fun request(messages: JSONArray): String {
-        val payload = JSONObject()
-            .put("model", settings.model)
-            .put("messages", messages)
-            .put("temperature", 0.08)
-        val req = Request.Builder()
-            .url(settings.endpoint)
-            .header("Authorization", "Bearer ${settings.apiKey}")
-            .header("Content-Type", "application/json")
-            .post(payload.toString().toRequestBody("application/json".toMediaType()))
-            .build()
-        http.newCall(req).execute().use { res ->
-            val body = res.body?.string().orEmpty()
-            if (!res.isSuccessful) error("فشل اتصال HAI (${res.code}): ${body.take(350)}")
-            val root = JSONObject(body)
-            return root.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
-        }
-    }
+    private suspend fun chatVision(prompt: String, base64: String): String = router.complete(SYSTEM_PROMPT, prompt, base64)
 
     private fun renderToBase64Jpeg(uri: Uri): String {
         val type = context.contentResolver.getType(uri).orEmpty()
@@ -211,15 +146,11 @@ class HaiArchitectClient(private val context: Context) {
                     val scale = 1800f / page.width.coerceAtLeast(1)
                     val w = 1800
                     val h = (page.height * scale).toInt().coerceAtLeast(1)
-                    Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also {
-                        page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    }
+                    Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY) }
                 }
             }
         } else {
-            context.contentResolver.openInputStream(uri).use {
-                BitmapFactory.decodeStream(it) ?: error("تعذر قراءة الصورة")
-            }
+            context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it) ?: error("تعذر قراءة الصورة") }
         }
         val max = 2000
         val resized = if (bitmap.width > max || bitmap.height > max) {
