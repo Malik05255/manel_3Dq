@@ -25,6 +25,7 @@ import com.manzili.hai.data.ProjectPlanStore
 import com.manzili.hai.engine.MultiFloorGeometryEngine
 import com.manzili.hai.engine.PlanVerificationEngine
 import com.manzili.hai.engine.ProjectMemoryEngine
+import com.manzili.hai.engine.SaudiResidentialEngine
 import com.manzili.hai.model.FloorPlan
 
 class ProductionMainActivity : ComponentActivity() {
@@ -40,21 +41,21 @@ private fun ProductionApp() {
     val context = LocalContext.current
     val store = remember { ProjectPlanStore(context) }
     var plan by remember {
-        mutableStateOf(store.load()?.let { MultiFloorGeometryEngine.normalize(PlanVerificationEngine.inspect(it).plan) })
+        mutableStateOf(store.load()?.let { MultiFloorGeometryEngine.normalize(SaudiResidentialEngine.normalize(PlanVerificationEngine.inspect(it).plan)) })
     }
     var pending by remember { mutableStateOf<FloorPlan?>(null) }
     var source by remember { mutableStateOf<Uri?>(null) }
     var convertTo3D by remember { mutableStateOf(false) }
 
     fun createProject(next: FloorPlan) {
-        val verified = PlanVerificationEngine.inspect(next).plan
+        val verified = SaudiResidentialEngine.normalize(PlanVerificationEngine.inspect(next).plan)
         val ready = MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(ProjectMemoryEngine.reconcile(verified)))
         store.createProject(ready)
         plan = MultiFloorGeometryEngine.normalize(ready)
     }
 
     fun updateProject(next: FloorPlan, allowSaudiRulesSettingChange: Boolean = false) {
-        val verified = PlanVerificationEngine.inspect(next).plan
+        val verified = SaudiResidentialEngine.normalize(PlanVerificationEngine.inspect(next).plan)
         val current = plan
         val hydrated = if (current != null && verified.floors.isEmpty() && current.floors.isNotEmpty()) {
             verified.copy(
@@ -91,13 +92,11 @@ private fun ProductionApp() {
                         if (convertTo3D) {
                             convertTo3D = false
                             nav.navigate("3d") { popUpTo("home") }
-                        } else {
-                            nav.navigate("editor") { popUpTo("home") }
-                        }
+                        } else nav.navigate("editor") { popUpTo("home") }
                     }
                 }
                 composable("new") {
-                    NewBuildSolverScreen(nav) {
+                    SaudiNewBuildScreen(nav) {
                         createProject(it)
                         nav.navigate("editor") { popUpTo("home") }
                     }
@@ -106,16 +105,18 @@ private fun ProductionApp() {
                 composable("polygon") { PolygonVertexEditorScreen(nav, plan) { updateProject(it) } }
                 composable("floors") { ProjectFloorsScreen(nav, plan) { updateProject(it) } }
                 composable("3d") { Semantic3DScreen(nav, plan) { updateProject(it) } }
+                composable("saudi-audit") { SaudiPlanAuditScreen(nav, plan) }
+                composable("4d") { Saudi4DScreen(nav, plan) }
                 composable("saudi-rules") { SaudiRulesScreen(nav, plan) { updateProject(it, allowSaudiRulesSettingChange = true) } }
                 composable("projects") {
                     ProjectLibraryScreen(nav, store) { opened ->
-                        plan = opened?.let { MultiFloorGeometryEngine.normalize(PlanVerificationEngine.inspect(it).plan) }
+                        plan = opened?.let { MultiFloorGeometryEngine.normalize(SaudiResidentialEngine.normalize(PlanVerificationEngine.inspect(it).plan)) }
                     }
                 }
                 composable("memory") { ProjectMemoryManagerScreen(nav, plan) { updateProject(it) } }
                 composable("tools") {
                     ProjectToolsScreen(nav, store, plan) { opened ->
-                        plan = opened?.let { MultiFloorGeometryEngine.normalize(PlanVerificationEngine.inspect(it).plan) }
+                        plan = opened?.let { MultiFloorGeometryEngine.normalize(SaudiResidentialEngine.normalize(PlanVerificationEngine.inspect(it).plan)) }
                     }
                 }
                 composable("export") { QuickExportScreen(nav, plan) }
@@ -130,50 +131,47 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
     Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F4EE)) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(20.dp)) {
             Text("منزلي HAI", fontSize = 22.sp, fontWeight = FontWeight.Black)
-            Text("$count مشروع • Geometry V3 • Semantic 3D • Deep Parser", color = Color.Gray, fontSize = 10.sp)
-            Spacer(Modifier.height(20.dp))
-            Text("مخطط تقرأه،\nتراجعه، ثم تبنيه.", fontSize = 34.sp, lineHeight = 39.sp, fontWeight = FontWeight.Black)
+            Text("$count مشروع • Saudi-first 2D/3D/4D • Geometry V3 • Deep Parser", color = Color.Gray, fontSize = 10.sp)
             Spacer(Modifier.height(18.dp))
+            Text("فيلا سعودية\nمن المخطط إلى التنفيذ.", fontSize = 34.sp, lineHeight = 39.sp, fontWeight = FontWeight.Black)
+            Spacer(Modifier.height(16.dp))
             if (plan != null) {
-                Button(onClick = { nav.navigate("editor") }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+                Button(onClick = { nav.navigate("editor") }, modifier = Modifier.fillMaxWidth().height(54.dp)) {
                     Icon(Icons.Rounded.Architecture, null); Spacer(Modifier.width(7.dp)); Text("أكمل ${plan.title}")
                 }
-                Spacer(Modifier.height(7.dp))
-                OutlinedButton(onClick = { nav.navigate("3d") }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                    Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(7.dp)); Text("3D هندسي مرتبط بالمخطط")
-                }
-                Spacer(Modifier.height(7.dp))
+                Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    OutlinedButton(onClick = { nav.navigate("floors") }, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.Layers, null); Spacer(Modifier.width(4.dp)); Text("الأدوار") }
-                    OutlinedButton(onClick = { nav.navigate("saudi-rules") }, modifier = Modifier.weight(1f)) {
-                        Icon(if (plan.saudiRulesEnabled) Icons.Rounded.FactCheck else Icons.Rounded.AddTask, null)
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (plan.saudiRulesEnabled) "اشتراطات ✓" else "إضافة اشتراطات")
-                    }
+                    OutlinedButton(onClick = { nav.navigate("saudi-audit") }, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.HomeWork, null); Spacer(Modifier.width(4.dp)); Text("مراجعة سعودية") }
+                    OutlinedButton(onClick = { nav.navigate("3d") }, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(4.dp)); Text("3D سعودي") }
                 }
-                Spacer(Modifier.height(7.dp))
+                Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    OutlinedButton(onClick = { nav.navigate("4d") }, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.Schedule, null); Spacer(Modifier.width(4.dp)); Text("4D التنفيذ") }
+                    OutlinedButton(onClick = { nav.navigate("saudi-rules") }, modifier = Modifier.weight(1f)) { Icon(if (plan.saudiRulesEnabled) Icons.Rounded.FactCheck else Icons.Rounded.AddTask, null); Spacer(Modifier.width(4.dp)); Text("الاشتراطات") }
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    OutlinedButton(onClick = { nav.navigate("floors") }, modifier = Modifier.weight(1f)) { Text("الأدوار") }
                     OutlinedButton(onClick = { nav.navigate("polygon") }, modifier = Modifier.weight(1f)) { Text("Polygon") }
                     OutlinedButton(onClick = { nav.navigate("export") }, modifier = Modifier.weight(1f)) { Text("تصدير") }
-                    OutlinedButton(onClick = { nav.navigate("tools") }, modifier = Modifier.weight(1f)) { Text("النسخ") }
                 }
-                Spacer(Modifier.height(7.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     TextButton(onClick = { nav.navigate("memory") }, modifier = Modifier.weight(1f)) { Text("قواعد HAI") }
                     TextButton(onClick = { nav.navigate("projects") }, modifier = Modifier.weight(1f)) { Text("مشاريعي") }
+                    TextButton(onClick = { nav.navigate("tools") }, modifier = Modifier.weight(1f)) { Text("النسخ") }
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(8.dp))
             }
             Button(onClick = { nav.navigate("build") }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-                Icon(Icons.Rounded.AddHomeWork, null); Spacer(Modifier.width(7.dp)); Text("ابدأ مشروعًا جديدًا")
+                Icon(Icons.Rounded.AddHomeWork, null); Spacer(Modifier.width(7.dp)); Text("ابدأ فيلا سعودية جديدة")
             }
             Spacer(Modifier.height(7.dp))
-            OutlinedButton(onClick = { nav.navigate("import3d") }, modifier = Modifier.fillMaxWidth().height(54.dp)) {
-                Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(7.dp)); Text("حوّل مخططًا إلى 3D")
+            OutlinedButton(onClick = { nav.navigate("import3d") }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(7.dp)); Text("حوّل مخطط فيلا إلى 3D")
             }
             TextButton(onClick = { nav.navigate("settings") }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Tune, null); Spacer(Modifier.width(5.dp)); Text("إعدادات HAI / Backend") }
             Spacer(Modifier.weight(1f))
-            Text("Semantic 3D يُبنى من نفس الجدران والفتحات. الارتفاعات غير المؤكدة تبقى معاينة فقط ولا تدخل IFC كقياسات موثوقة.", color = Color.Gray, fontSize = 10.sp)
+            Text("السعودية هي السياق الافتراضي للتصميم والمراجعة و3D و4D. الاشتراط الرسمي يبقى منفصلًا ولا يُختلق عند غياب المصدر.", color = Color.Gray, fontSize = 10.sp)
         }
     }
 }
