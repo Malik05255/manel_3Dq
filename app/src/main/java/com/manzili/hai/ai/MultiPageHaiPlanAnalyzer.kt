@@ -5,6 +5,7 @@ import android.net.Uri
 import com.manzili.hai.data.HaiSettings
 import com.manzili.hai.engine.MultiPagePlanFusionEngine
 import com.manzili.hai.engine.PdfPageRendererEngine
+import com.manzili.hai.engine.SaudiProjectTypeEngine
 import com.manzili.hai.model.FloorPlan
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -16,7 +17,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-/** Multi-page vision path. Images continue through HaiArchitectClient; PDFs are read page-by-page. */
+/** Multi-page vision path. The chosen Saudi project type is treated as context, never as visual evidence. */
 class MultiPageHaiPlanAnalyzer(private val context:Context) {
     private val settings=HaiSettings(context)
     private val renderer=PdfPageRendererEngine(context)
@@ -24,16 +25,27 @@ class MultiPageHaiPlanAnalyzer(private val context:Context) {
     private val http=OkHttpClient.Builder().connectTimeout(30,TimeUnit.SECONDS).readTimeout(180,TimeUnit.SECONDS).build()
     val available:Boolean get()=settings.configured
 
-    suspend fun analyze(uri:Uri,maxPdfPages:Int=5):FloorPlan=withContext(Dispatchers.IO) {
+    suspend fun analyze(
+        uri:Uri,
+        maxPdfPages:Int=5,
+        projectType:SaudiProjectTypeEngine.Type?=null
+    ):FloorPlan=withContext(Dispatchers.IO) {
         check(settings.configured){"أدخل إعدادات الذكاء الاصطناعي أولًا"}
-        if(!renderer.isPdf(uri)) return@withContext single.analyzePlan(uri)
+        if(!renderer.isPdf(uri)) {
+            val read=single.analyzePlan(uri)
+            return@withContext projectType?.let { SaudiProjectTypeEngine.apply(read,it) } ?: read
+        }
         val total=renderer.pageCount(uri)
         val images=renderer.render(uri,maxPdfPages=maxPdfPages,targetMaxPx=1800,jpegQuality=88)
+        val typeContext=projectType?.let { type ->
+            "\n\nاختيار المستخدم المسبق: نوع المشروع هو «${type.label}». استخدمه فقط لفهم وظيفة المساحات والتسميات؛ لا تجبر الصورة على عناصر غير ظاهرة، ولا تحول اختيار المستخدم إلى دليل بصري."
+        }.orEmpty()
         val plans=images.map { page ->
-            val prompt=ANALYZE_PROMPT+"\n\nهذه الصفحة رقم ${page.pageIndex+1} من PDF. حلّل هذه الصفحة وحدها ولا تنقل عناصر من صفحات أخرى."
+            val prompt=ANALYZE_PROMPT+typeContext+"\n\nهذه الصفحة رقم ${page.pageIndex+1} من PDF. حلّل هذه الصفحة وحدها ولا تنقل عناصر من صفحات أخرى."
             ArchitectJson.parsePlan(chatVision(prompt,page.base64Jpeg))
         }
-        MultiPagePlanFusionEngine.merge(plans,totalPdfPages=total)
+        val merged=MultiPagePlanFusionEngine.merge(plans,totalPdfPages=total)
+        projectType?.let { SaudiProjectTypeEngine.apply(merged,it) } ?: merged
     }
 
     private fun chatVision(prompt:String,base64:String):String {
