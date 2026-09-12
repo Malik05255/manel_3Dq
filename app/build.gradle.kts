@@ -17,8 +17,8 @@ android {
         applicationId = "com.manzili.hai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 60
-        versionName = "0.60.0"
+        versionCode = 61
+        versionName = "0.61.0"
     }
 
     if (releaseSigningReady) {
