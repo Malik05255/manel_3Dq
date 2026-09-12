@@ -6,6 +6,7 @@ import com.manzili.hai.export.ObjPlanExporter
 import com.manzili.hai.model.FloorPlan
 import com.manzili.hai.model.Opening
 import com.manzili.hai.model.PlanPoint
+import com.manzili.hai.model.ProjectConstraint
 import com.manzili.hai.model.Room
 import com.manzili.hai.model.Wall
 import org.junit.Assert.assertEquals
@@ -36,6 +37,11 @@ class Semantic3DExportTest {
         openings = listOf(
             Opening("d1", "door", 50f, 0f, 10f, wallId = "w1", confidence = 95),
             Opening("win1", "window", 100f, 50f, 12f, wallId = "w2", confidence = 90)
+        ),
+        constraints = listOf(
+            ProjectConstraint("opening-height-d1", "OPENING_HEIGHT_M", "confirmed", listOf("d1"), 2.20, true, 100, true),
+            ProjectConstraint("opening-height-win1", "OPENING_HEIGHT_M", "confirmed", listOf("win1"), 1.40, true, 100, true),
+            ProjectConstraint("opening-sill-win1", "OPENING_SILL_M", "confirmed", listOf("win1"), 0.85, true, 100, true)
         )
     )
 
@@ -45,8 +51,9 @@ class Semantic3DExportTest {
         assertTrue(scene.metricReady)
         assertEquals("m", scene.units)
         assertEquals(2, scene.openings.size)
+        assertTrue(scene.openings.all { it.verticalVerified })
         assertEquals(2, scene.rooms.size)
-        assertTrue(scene.wallMeshCount > 4) // door/window split their source wall into solids
+        assertTrue(scene.wallMeshCount > 4)
         assertTrue(scene.meshes.any { it.kind == "slab" })
         assertTrue(scene.meshes.all { mesh -> mesh.vertices.isNotEmpty() && mesh.faces.isNotEmpty() })
     }
