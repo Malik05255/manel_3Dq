@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import com.manzili.hai.ai.HaiArchitectClient
 import com.manzili.hai.engine.ArchitecturalEngine
+import com.manzili.hai.engine.ArchitecturalRepairEngine
 import com.manzili.hai.engine.GeometrySolver
 import com.manzili.hai.engine.StructuralGeometryEngine
 import com.manzili.hai.model.*
@@ -152,10 +153,11 @@ fun EnhancedEditor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan
                 enabled = pending == null && solverOptions.isEmpty(),
                 onSelect = { selection = it },
                 onPreview = { livePreview = it },
+                onAdjusted = { note -> messages = messages + ArchitectMessage(false, note) },
                 onCommit = { if (it != null) commitCandidate(it) },
                 onUnavailable = {
                     livePreview = null
-                    messages = messages + ArchitectMessage(false, "اعتراضي هنا أن السحب لا يمكن تنفيذه بأمان من البيانات الحالية؛ لن أحرّك العنصر بصمت.")
+                    messages = messages + ArchitectMessage(false, "اعتراضي هنا أن السحب لا يمكن تنفيذه بأمان من البيانات الحالية، ولم أجد موضعًا بديلًا موثوقًا قريبًا من نيتك. لن أحرّك العنصر بصمت.")
                 }
             )
         }
@@ -212,7 +214,7 @@ fun EnhancedEditor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan
             Spacer(Modifier.width(6.dp))
             Text("مهندس HAI", fontWeight = FontWeight.Black, fontSize = 15.sp)
             Spacer(Modifier.weight(1f))
-            Text("يعترض عند الضرر • يسكت إذا القرار سليم", color = Color.Gray, fontSize = 9.sp)
+            Text("يعترض عند الضرر • يصحح المسار عند وجود بديل", color = Color.Gray, fontSize = 9.sp)
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) { messages.takeLast(6).forEach { EditorBubble(it) } }
 
@@ -278,6 +280,7 @@ private fun DirectManipulationLayer(
     enabled: Boolean,
     onSelect: (PlanSelection?) -> Unit,
     onPreview: (FloorPlan?) -> Unit,
+    onAdjusted: (String) -> Unit,
     onCommit: (GeometrySolver.Candidate?) -> Unit,
     onUnavailable: () -> Unit
 ) {
@@ -307,13 +310,26 @@ private fun DirectManipulationLayer(
                 var totalY = 0f
                 var last: GeometrySolver.Candidate? = null
                 var moved = false
+                var correctionNote: String? = null
                 detectDragGestures(
-                    onDragStart = { totalX = 0f; totalY = 0f; last = null; moved = false },
-                    onDragCancel = { onPreview(null) },
+                    onDragStart = {
+                        totalX = 0f
+                        totalY = 0f
+                        last = null
+                        moved = false
+                        correctionNote = null
+                    },
+                    onDragCancel = {
+                        correctionNote = null
+                        onPreview(null)
+                    },
                     onDragEnd = {
                         onPreview(null)
                         if (moved) {
-                            if (last != null) onCommit(last) else onUnavailable()
+                            if (last != null) {
+                                correctionNote?.let(onAdjusted)
+                                onCommit(last)
+                            } else onUnavailable()
                         }
                     },
                     onDrag = { _, drag ->
@@ -322,8 +338,36 @@ private fun DirectManipulationLayer(
                         if (abs(totalX) + abs(totalY) > 8f) moved = true
                         val dx = totalX / size.width.toFloat().coerceAtLeast(1f) * 100f
                         val dy = totalY / size.height.toFloat().coerceAtLeast(1f) * 100f
-                        last = GeometrySolver.drag(basePlan, selected.kind, selected.id, dx, dy)
-                        onPreview(last?.plan)
+                        val raw = GeometrySolver.drag(basePlan, selected.kind, selected.id, dx, dy)
+                        if (raw == null) {
+                            last = null
+                            correctionNote = null
+                            onPreview(null)
+                            return@detectDragGestures
+                        }
+
+                        if (!raw.review.hasMaterialObjection) {
+                            last = raw
+                            correctionNote = null
+                            onPreview(raw.plan)
+                            return@detectDragGestures
+                        }
+
+                        val repair = ArchitecturalRepairEngine.alternatives(basePlan, raw.plan, limit = 3)
+                            .firstOrNull { it.remainingObjections == 0 }
+                        if (repair != null) {
+                            last = repair.candidate
+                            correctionNote = buildString {
+                                append("اعترض HAI على الموضع الذي سحبته لأنه يسبب أثرًا معماريًا غير مرغوب. صححت المعاينة تلقائيًا إلى أقرب بديل آمن")
+                                if (repair.movement.isNotBlank()) append(": ${repair.movement}")
+                                append(". ما زال القرار معروضًا للمعاينة فقط.")
+                            }
+                            onPreview(repair.candidate.plan)
+                        } else {
+                            last = null
+                            correctionNote = null
+                            onPreview(null)
+                        }
                     }
                 )
             }
