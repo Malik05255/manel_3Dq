@@ -3,8 +3,9 @@ package com.manzili.hai.engine
 import com.manzili.hai.model.FloorPlan
 
 /**
- * Versioned Saudi-code readiness layer. It never invents municipal minima.
- * PASS here means the cited scope/data condition was checked, not that the design has an official approval.
+ * Optional, versioned Saudi-code readiness layer.
+ * It is completely inactive unless the project owner explicitly enables it.
+ * PASS means the implemented check passed; it is never an official approval.
  */
 object SaudiRulesEngine {
     const val EDITION = "2024"
@@ -29,6 +30,7 @@ object SaudiRulesEngine {
     }
 
     fun inspect(plan: FloorPlan): Report {
+        if (!plan.saudiRulesEnabled) return Report(emptyList())
         if (!plan.site.countryCode.equals("SA", true)) {
             return Report(listOf(Check("country", "نطاق كود البناء السعودي", Status.NOT_APPLICABLE, "المشروع ليس محددًا داخل السعودية.", "SBC 2024", true)))
         }
