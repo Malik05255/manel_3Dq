@@ -82,7 +82,7 @@ private fun ProductionApp() {
                 composable("editor") { EnhancedEditor(nav, plan) { updateProject(it) } }
                 composable("polygon") { PolygonVertexEditorScreen(nav, plan) { updateProject(it) } }
                 composable("floors") { ProjectFloorsScreen(nav, plan) { updateProject(it) } }
-                composable("saudi-rules") { SaudiRulesScreen(nav, plan) }
+                composable("saudi-rules") { SaudiRulesScreen(nav, plan) { updateProject(it) } }
                 composable("projects") {
                     ProjectLibraryScreen(nav, store) { opened ->
                         plan = opened?.let { MultiFloorGeometryEngine.normalize(PlanVerificationEngine.inspect(it).plan) }
