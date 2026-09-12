@@ -2,18 +2,20 @@ name: Backend ML Validation
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, codex/seven-stage-production ]
     paths:
       - 'backend/app/cubicasa_model.py'
       - 'backend/app/parser.py'
+      - 'backend/app/main.py'
       - 'backend/scripts/fetch_floorplan_model.py'
       - 'backend/requirements-ml-cpu.txt'
       - 'backend/Dockerfile.ml'
+      - 'render.yaml'
       - '.github/workflows/backend-ml.yml'
   workflow_dispatch:
 
 concurrency:
-  group: manzili-hai-backend-ml-main
+  group: manzili-hai-backend-ml-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -37,10 +39,12 @@ jobs:
         run: |
           python - <<'PY'
           import numpy as np
-          from app.cubicasa_model import CLASS_NAMES, load_cubicasa_runtime
+          from app.cubicasa_model import CLASS_NAMES, load_cubicasa_runtime, model_status
 
           runtime = load_cubicasa_runtime()
           assert runtime is not None, 'CubiCasa runtime did not load'
+          status = model_status()
+          assert status.get('configured') is True, status
           image = np.full((256, 384, 3), 255, dtype=np.uint8)
           image[40:215, 45:52] = 0
           image[40:47, 45:330] = 0
