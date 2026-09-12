@@ -1,6 +1,8 @@
 package com.manzili.hai.engine
 
 import com.manzili.hai.model.*
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** Type-aware local fallback seeds so non-villa projects never fall back to a villa-only topology. */
 object SaudiProjectTypeSeedEngine {
@@ -146,16 +148,75 @@ object SaudiProjectTypeSeedEngine {
         polygon=listOf(PlanPoint(x,y),PlanPoint(x+w,y),PlanPoint(x+w,y+h),PlanPoint(x,y+h))
     )
 
+    /**
+     * Produces canonical wall segments. Long room edges are split at every T/cross junction before
+     * deduplication, so Geometry V3 never sees one wall segment touching three rooms at once.
+     */
     private fun topology(rooms: List<Room>): Pair<List<Wall>, List<Opening>> {
-        val walls = mutableListOf<Wall>(); val openings = mutableListOf<Opening>()
-        rooms.filterNot { it.type == "courtyard" }.forEach { r ->
-            val p = r.polygon; if (p.size < 4) return@forEach
-            val ids = (0..3).map { "${r.id}-w$it" }
-            walls += Wall(ids[0],p[0],p[1],confidence=100); walls += Wall(ids[1],p[1],p[2],confidence=100)
-            walls += Wall(ids[2],p[2],p[3],confidence=100); walls += Wall(ids[3],p[3],p[0],confidence=100)
-            openings += Opening("${r.id}-door","door",(p[0].x+p[1].x)/2f,p[0].y,2.8f,wallId=ids[0],connectsRoomIds=listOf(r.id),confidence=100)
+        val solidRooms = rooms.filterNot { it.type == "courtyard" }
+        val allCorners = solidRooms.flatMap { it.polygon }
+        val wallsByKey = linkedMapOf<String, Wall>()
+        val roomWallIds = linkedMapOf<String, MutableList<String>>()
+
+        solidRooms.forEach { room ->
+            val polygon = room.polygon
+            if (polygon.size < 3) return@forEach
+            polygon.indices.forEach { index ->
+                val a = polygon[index]
+                val b = polygon[(index + 1) % polygon.size]
+                splitEdge(a, b, allCorners).forEach { (start, end) ->
+                    if (abs(start.x - end.x) < .001f && abs(start.y - end.y) < .001f) return@forEach
+                    val key = segmentKey(start, end)
+                    val wall = wallsByKey[key] ?: Wall(
+                        id = "seed-wall-${wallsByKey.size + 1}",
+                        start = start,
+                        end = end,
+                        confidence = 100
+                    ).also { wallsByKey[key] = it }
+                    roomWallIds.getOrPut(room.id) { mutableListOf() }.add(wall.id)
+                }
+            }
         }
-        return walls to openings
+
+        val openings = solidRooms.mapNotNull { room ->
+            val wallId = roomWallIds[room.id].orEmpty().firstOrNull() ?: return@mapNotNull null
+            val wall = wallsByKey.values.firstOrNull { it.id == wallId } ?: return@mapNotNull null
+            Opening(
+                id = "${room.id}-door",
+                type = "door",
+                x = (wall.start.x + wall.end.x) / 2f,
+                y = (wall.start.y + wall.end.y) / 2f,
+                width = 2.8f,
+                wallId = wall.id,
+                connectsRoomIds = listOf(room.id),
+                confidence = 100
+            )
+        }
+        return wallsByKey.values.toList() to openings
+    }
+
+    private fun splitEdge(a: PlanPoint, b: PlanPoint, corners: List<PlanPoint>): List<Pair<PlanPoint, PlanPoint>> {
+        val horizontal = abs(a.y - b.y) < .001f
+        val vertical = abs(a.x - b.x) < .001f
+        if (!horizontal && !vertical) return listOf(a to b)
+
+        if (horizontal) {
+            val low = minOf(a.x, b.x); val high = maxOf(a.x, b.x)
+            val cuts = (listOf(a.x, b.x) + corners.filter { abs(it.y - a.y) < .001f && it.x > low + .001f && it.x < high - .001f }.map { it.x })
+                .distinct().sorted().let { if (b.x >= a.x) it else it.reversed() }
+            return cuts.zipWithNext { x1, x2 -> PlanPoint(x1, a.y) to PlanPoint(x2, a.y) }
+        }
+
+        val low = minOf(a.y, b.y); val high = maxOf(a.y, b.y)
+        val cuts = (listOf(a.y, b.y) + corners.filter { abs(it.x - a.x) < .001f && it.y > low + .001f && it.y < high - .001f }.map { it.y })
+            .distinct().sorted().let { if (b.y >= a.y) it else it.reversed() }
+        return cuts.zipWithNext { y1, y2 -> PlanPoint(a.x, y1) to PlanPoint(a.x, y2) }
+    }
+
+    private fun segmentKey(a: PlanPoint, b: PlanPoint): String {
+        fun pointKey(p: PlanPoint) = "${(p.x * 100).roundToInt()},${(p.y * 100).roundToInt()}"
+        val ka = pointKey(a); val kb = pointKey(b)
+        return if (ka <= kb) "$ka|$kb" else "$kb|$ka"
     }
 
     private fun unitsPerFloor(notes: String): Int = Regex("وحدات/دور=(\\d+)").find(notes)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 2
