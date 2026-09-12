@@ -48,7 +48,6 @@ private fun ProductionApp() {
     var source by remember { mutableStateOf<Uri?>(null) }
     var convertTo3D by remember { mutableStateOf(false) }
     var selectedProjectType by remember { mutableStateOf<SaudiProjectTypeEngine.Type?>(null) }
-    var afterTypeRoute by remember { mutableStateOf("editor") }
 
     fun createProject(next: FloorPlan) {
         val verified = SaudiResidentialEngine.normalize(PlanVerificationEngine.inspect(next).plan)
@@ -79,24 +78,50 @@ private fun ProductionApp() {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
             NavHost(nav, startDestination = "home") {
                 composable("home") { ProductionHome(nav, plan, store.listProjects().size) }
-                composable("build") { BuildChoice(nav) }
+                composable("build") { ProductionBuildChoiceScreen(nav) }
+
+                composable("import-type") {
+                    SaudiProjectTypeScreen(
+                        nav = nav,
+                        title = "وش نوع المشروع؟",
+                        subtitle = "حدد النوع قبل رفع المخطط حتى يكمل HAI بنفس منطق المبنى."
+                    ) { type ->
+                        selectedProjectType = type
+                        convertTo3D = false
+                        nav.navigate("import")
+                    }
+                }
+                composable("import3d-type") {
+                    SaudiProjectTypeScreen(
+                        nav = nav,
+                        title = "وش نوع المخطط؟",
+                        subtitle = "النوع سيحكم قراءة المشروع وهوية التحويل إلى 3D."
+                    ) { type ->
+                        selectedProjectType = type
+                        convertTo3D = true
+                        nav.navigate("import3d")
+                    }
+                }
                 composable("import") {
                     LaunchedEffect(Unit) { convertTo3D = false }
-                    VerifiedImportScreenV3(nav, source, { source = it }, { pending = it })
+                    VerifiedImportScreenV3(nav, source, { source = it }, { pending = it }, selectedProjectType)
                 }
                 composable("import3d") {
                     LaunchedEffect(Unit) { convertTo3D = true }
-                    VerifiedImportScreenV3(nav, source, { source = it }, { pending = it })
+                    VerifiedImportScreenV3(nav, source, { source = it }, { pending = it }, selectedProjectType)
                 }
                 composable("verify") {
                     PlanVerificationScreen(nav, source, pending) { confirmed ->
-                        createProject(confirmed)
+                        val type = selectedProjectType ?: SaudiProjectTypeEngine.infer(confirmed)
+                        val typed = SaudiProjectTypeEngine.apply(confirmed, type)
+                        createProject(typed)
                         pending = null
-                        afterTypeRoute = if (convertTo3D) "3d" else "editor"
+                        val target = if (convertTo3D) "3d" else "editor"
                         convertTo3D = false
-                        nav.navigate("edit-type") { popUpTo("home") }
+                        nav.navigate(target) { popUpTo("home") }
                     }
                 }
+
                 composable("new") {
                     SaudiProjectTypeScreen(
                         nav = nav,
@@ -114,19 +139,20 @@ private fun ProductionApp() {
                         nav.navigate("editor") { popUpTo("home") }
                     }
                 }
-                composable("edit-type") {
+                composable("change-type") {
                     val current = plan
                     SaudiProjectTypeScreen(
                         nav = nav,
-                        title = "حدد نوع المخطط",
-                        subtitle = "حتى عند تعديل مخطط سابق، HAI لازم يعرف هل هو فيلا أو عمارة أو تاون هاوس قبل ما يقترح أي تعديل.",
+                        title = "غيّر تصنيف المشروع",
+                        subtitle = "استخدمها فقط إذا كان التصنيف الحالي غير صحيح.",
                         current = current?.let(SaudiProjectTypeEngine::infer)
                     ) { type ->
                         selectedProjectType = type
                         current?.let { updateProject(SaudiProjectTypeEngine.apply(it, type)) }
-                        nav.navigate(afterTypeRoute) { popUpTo("home") }
+                        nav.popBackStack()
                     }
                 }
+
                 composable("editor") { EnhancedEditor(nav, plan) { updateProject(it) } }
                 composable("polygon") { PolygonVertexEditorScreen(nav, plan) { updateProject(it) } }
                 composable("floors") { ProjectFloorsScreen(nav, plan) { updateProject(it) } }
@@ -185,17 +211,17 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
                     OutlinedButton(onClick = { nav.navigate("export") }, modifier = Modifier.weight(1f)) { Text("تصدير") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    TextButton(onClick = { nav.navigate("change-type") }, modifier = Modifier.weight(1f)) { Text("نوع المشروع") }
                     TextButton(onClick = { nav.navigate("memory") }, modifier = Modifier.weight(1f)) { Text("قواعد HAI") }
                     TextButton(onClick = { nav.navigate("projects") }, modifier = Modifier.weight(1f)) { Text("مشاريعي") }
-                    TextButton(onClick = { nav.navigate("tools") }, modifier = Modifier.weight(1f)) { Text("النسخ") }
                 }
                 Spacer(Modifier.height(8.dp))
             }
             Button(onClick = { nav.navigate("build") }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-                Icon(Icons.Rounded.AddHomeWork, null); Spacer(Modifier.width(7.dp)); Text("ابدأ مشروع سعودي جديد")
+                Icon(Icons.Rounded.AddHomeWork, null); Spacer(Modifier.width(7.dp)); Text("ابدأ مشروع سعودي")
             }
             Spacer(Modifier.height(7.dp))
-            OutlinedButton(onClick = { nav.navigate("import3d") }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+            OutlinedButton(onClick = { nav.navigate("import3d-type") }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                 Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(7.dp)); Text("حوّل مخطط سابق إلى 3D")
             }
             TextButton(onClick = { nav.navigate("settings") }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Tune, null); Spacer(Modifier.width(5.dp)); Text("إعدادات HAI / Backend") }
