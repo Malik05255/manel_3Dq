@@ -7,6 +7,7 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.util.Base64
 import com.manzili.hai.data.HaiSettings
+import com.manzili.hai.model.Opening
 import com.manzili.hai.model.PlanPoint
 import com.manzili.hai.model.Wall
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +23,7 @@ import java.util.concurrent.TimeUnit
 class RemoteFloorplanEvidenceClient(private val context: Context) {
     data class Result(
         val walls: List<Wall>,
+        val openings: List<Opening>,
         val ocrLines: List<PlanTextOcrEngine.SpatialLine>,
         val modelUsed: String,
         val confidence: Int,
@@ -65,6 +67,23 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
                 ))
             }
         }
+        val openingsJson = root.optJSONArray("openings")
+        val openings = buildList {
+            if (openingsJson != null) for (i in 0 until openingsJson.length()) {
+                val o = openingsJson.optJSONObject(i) ?: continue
+                val type = o.optString("type").lowercase()
+                if (type != "door" && type != "window") continue
+                add(Opening(
+                    id = o.optString("id", "remote-opening-$i"),
+                    type = type,
+                    x = o.optDouble("x").toFloat().coerceIn(0f, 100f),
+                    y = o.optDouble("y").toFloat().coerceIn(0f, 100f),
+                    width = o.optDouble("width", 1.0).toFloat().coerceIn(.2f, 20f),
+                    rotationDeg = o.optDouble("rotation_deg", 0.0).toFloat(),
+                    confidence = o.optInt("confidence", 75).coerceIn(0, 100)
+                ))
+            }
+        }
         val ocrJson = root.optJSONArray("ocr_lines")
         val ocr = buildList {
             if (ocrJson != null) for (i in 0 until ocrJson.length()) {
@@ -85,7 +104,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         val warnings = buildList {
             if (warningsJson != null) for (i in 0 until warningsJson.length()) warningsJson.optString(i).takeIf { it.isNotBlank() }?.let(::add)
         }
-        return Result(walls, ocr, root.optString("model_used", "unknown"), root.optInt("confidence", 0), warnings)
+        return Result(walls, openings, ocr, root.optString("model_used", "unknown"), root.optInt("confidence", 0), warnings)
     }
 
     private fun render(uri: Uri): String {
