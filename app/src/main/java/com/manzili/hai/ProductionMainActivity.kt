@@ -92,6 +92,7 @@ private fun ProductionApp() {
                 composable("editor") { EnhancedEditor(nav, plan) { updateProject(it) } }
                 composable("polygon") { PolygonVertexEditorScreen(nav, plan) { updateProject(it) } }
                 composable("floors") { ProjectFloorsScreen(nav, plan) { updateProject(it) } }
+                composable("3d") { Semantic3DScreen(nav, plan) }
                 composable("saudi-rules") { SaudiRulesScreen(nav, plan) { updateProject(it, allowSaudiRulesSettingChange = true) } }
                 composable("projects") {
                     ProjectLibraryScreen(nav, store) { opened ->
@@ -116,13 +117,17 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
     Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F4EE)) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(20.dp)) {
             Text("منزلي HAI", fontSize = 22.sp, fontWeight = FontWeight.Black)
-            Text("$count مشروع • Geometry V3 • Global Search • Deep Parser", color = Color.Gray, fontSize = 10.sp)
+            Text("$count مشروع • Geometry V3 • Semantic 3D • Deep Parser", color = Color.Gray, fontSize = 10.sp)
             Spacer(Modifier.height(20.dp))
-            Text("مخطط تقرأه،\nتراجعه، ثم تعدله.", fontSize = 34.sp, lineHeight = 39.sp, fontWeight = FontWeight.Black)
+            Text("مخطط تقرأه،\nتراجعه، ثم تبنيه.", fontSize = 34.sp, lineHeight = 39.sp, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(18.dp))
             if (plan != null) {
                 Button(onClick = { nav.navigate("editor") }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
                     Icon(Icons.Rounded.Architecture, null); Spacer(Modifier.width(7.dp)); Text("أكمل ${plan.title}")
+                }
+                Spacer(Modifier.height(7.dp))
+                OutlinedButton(onClick = { nav.navigate("3d") }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                    Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(7.dp)); Text("3D هندسي مرتبط بالمخطط")
                 }
                 Spacer(Modifier.height(7.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -151,7 +156,7 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
             }
             TextButton(onClick = { nav.navigate("settings") }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Tune, null); Spacer(Modifier.width(5.dp)); Text("إعدادات HAI / Backend") }
             Spacer(Modifier.weight(1f))
-            Text("محرك الاشتراطات السعودية اختياري. Deep Parser والخدمات السحابية لا تعمل إلا إذا فُعّل Backend مخصص.", color = Color.Gray, fontSize = 10.sp)
+            Text("Semantic 3D يُبنى من نفس الجدران والفتحات. IFC المتري لا يتاح حتى يكون المقياس مؤكدًا.", color = Color.Gray, fontSize = 10.sp)
         }
     }
 }
