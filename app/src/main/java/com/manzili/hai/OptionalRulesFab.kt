@@ -1,17 +1,19 @@
 package com.manzili.hai
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.FactCheck
+import androidx.compose.material.icons.rounded.ChevronLeft
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import com.manzili.hai.model.FloorPlan
 
-/** Official rules stay opt-in, but the control must never cover or intercept stage actions. */
 @Composable
 fun OptionalRulesStage(
     nav: NavHostController,
@@ -32,28 +34,44 @@ fun OptionalRulesStage(
         }
 
         Surface(
-            tonalElevation = 3.dp,
-            shadowElevation = 6.dp,
-            color = MaterialTheme.colorScheme.surface
+            color = Color(0xFFF8F6F2),
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                    .padding(horizontal = 18.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                FilterChip(
-                    selected = enabled,
-                    onClick = { onToggle(!enabled) },
-                    leadingIcon = { Icon(Icons.Rounded.FactCheck, contentDescription = null) },
-                    label = { Text(if (enabled) "الاشتراطات: مفعلة" else "الاشتراطات: اختيارية") }
-                )
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = Color.White,
+                    modifier = Modifier.height(48.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("الاشتراطات", fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.width(10.dp))
+                        Switch(
+                            checked = enabled,
+                            onCheckedChange = onToggle,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = Color(0xFF6353D9)
+                            )
+                        )
+                    }
+                }
+
+                Spacer(Modifier.weight(1f))
 
                 if (plan != null) {
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = { nav.navigate("saudi-rules") }) {
-                        Text("التفاصيل")
+                    IconButton(onClick = { nav.navigate("saudi-rules") }) {
+                        Icon(Icons.Rounded.ChevronLeft, "التفاصيل")
                     }
                 }
             }
