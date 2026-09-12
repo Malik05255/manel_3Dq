@@ -49,6 +49,6 @@ object ObjPlanExporter {
 
     private fun sanitize(value: String): String = value
         .trim()
-        .replace(Regex("[^A-Za-z0-9_\-ء-ي]+"), "_")
+        .replace(Regex("[^A-Za-z0-9_ء-ي-]+"), "_")
         .take(80)
 }
