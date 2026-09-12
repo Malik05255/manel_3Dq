@@ -8,6 +8,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -26,6 +27,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
@@ -41,12 +43,13 @@ import androidx.navigation.compose.rememberNavController
 import com.manzili.hai.ai.HaiArchitectClient
 import com.manzili.hai.data.HaiSettings
 import com.manzili.hai.engine.ArchitecturalEngine
-import com.manzili.hai.model.ArchitectMessage
-import com.manzili.hai.model.FloorPlan
-import com.manzili.hai.model.PlanProposal
-import com.manzili.hai.model.PlanScore
-import com.manzili.hai.model.ValidationReport
+import com.manzili.hai.engine.StructuralGeometryEngine
+import com.manzili.hai.model.*
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
 
 private val Sand = Color(0xFFF7F4EE)
 private val Paper = Color(0xFFFFFEFA)
@@ -55,6 +58,9 @@ private val Bronze = Color(0xFF9A7447)
 private val Mist = Color(0xFFE9E5DC)
 private val Deep = Color(0xFF27312C)
 private val Sage = Color(0xFF64756B)
+private val SoftBlue = Color(0xFF70808A)
+
+private data class PlanSelection(val kind: String, val id: String)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -95,10 +101,7 @@ fun ManziliApp() {
 }
 
 @Composable
-private fun Page(content: @Composable ColumnScope.() -> Unit) = Surface(
-    color = Sand,
-    modifier = Modifier.fillMaxSize()
-) {
+private fun Page(content: @Composable ColumnScope.() -> Unit) = Surface(color = Sand, modifier = Modifier.fillMaxSize()) {
     Column(
         Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp),
         content = content
@@ -111,13 +114,8 @@ private fun BrandTop(nav: NavHostController? = null, settings: Boolean = true) {
         Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (nav != null) {
-            IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
-        }
-        Box(
-            Modifier.size(44.dp).background(Deep, RoundedCornerShape(14.dp)),
-            contentAlignment = Alignment.Center
-        ) {
+        if (nav != null) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
+        Box(Modifier.size(44.dp).background(Deep, RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
             Text("H", color = Color.White, fontWeight = FontWeight.Black, fontSize = 22.sp)
         }
         Spacer(Modifier.width(10.dp))
@@ -126,9 +124,7 @@ private fun BrandTop(nav: NavHostController? = null, settings: Boolean = true) {
             Text("HAI Architectural Intelligence", color = Color.Gray, fontSize = 10.sp)
         }
         Spacer(Modifier.weight(1f))
-        if (settings && nav != null) {
-            IconButton(onClick = { nav.navigate("settings") }) { Icon(Icons.Rounded.Tune, "إعدادات HAI") }
-        }
+        if (settings && nav != null) IconButton(onClick = { nav.navigate("settings") }) { Icon(Icons.Rounded.Tune, "إعدادات HAI") }
     }
 }
 
@@ -144,7 +140,7 @@ fun Home(nav: NavHostController) = Page {
         }
     }
     Spacer(Modifier.height(16.dp))
-    Text("بيتك يبدأ\nبقرار محسوب.", fontSize = 38.sp, lineHeight = 43.sp, fontWeight = FontWeight.Black, color = Ink)
+    Text("بيتك يبدأ\nبقرار محسوب.", fontSize = 38.sp, lineHeight = 43.sp, fontWeight = FontWeight.Black)
     Spacer(Modifier.height(10.dp))
     Text(
         "ابنِ مخططًا من الصفر أو ارفع مخططًا من أي مكتب. HAI يقرأه، يناقشك، ويعرض أثر كل تعديل قبل اعتماده.",
@@ -157,7 +153,7 @@ fun Home(nav: NavHostController) = Page {
     Spacer(Modifier.height(14.dp))
     ActionCard(Icons.Rounded.ViewInAr, "حوّل مشروعك إلى 3D", "محفوظ للمرحلة التالية بدون تشتيت محرك 2D", false) { }
     Spacer(Modifier.weight(1f))
-    InfoStrip("مبدأ HAI", "لا تعديل بصمت • لا تخمين عند الشك • الغرفة المقفلة لا تُمس • الاعتماد بيدك")
+    InfoStrip("مبدأ HAI", "لا تعديل بصمت • لا تخمين عند الشك • العناصر المقفلة لا تُمس • الاعتماد بيدك")
     Spacer(Modifier.height(14.dp))
 }
 
@@ -171,10 +167,9 @@ private fun ActionCard(icon: ImageVector, title: String, subtitle: String, enabl
         colors = CardDefaults.cardColors(containerColor = if (enabled) Paper else Color(0xFFF0EDE6))
     ) {
         Row(Modifier.fillMaxSize().padding(22.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(58.dp).background(if (enabled) Deep else Mist, RoundedCornerShape(19.dp)),
-                contentAlignment = Alignment.Center
-            ) { Icon(icon, null, tint = if (enabled) Color.White else Color.Gray) }
+            Box(Modifier.size(58.dp).background(if (enabled) Deep else Mist, RoundedCornerShape(19.dp)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = if (enabled) Color.White else Color.Gray)
+            }
             Spacer(Modifier.width(18.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, fontSize = 21.sp, fontWeight = FontWeight.Bold)
@@ -203,12 +198,7 @@ fun BuildChoice(nav: NavHostController) = Page {
 }
 
 @Composable
-fun ImportPlan(
-    nav: NavHostController,
-    source: Uri?,
-    setSource: (Uri) -> Unit,
-    setPlan: (FloorPlan) -> Unit
-) {
+fun ImportPlan(nav: NavHostController, source: Uri?, setSource: (Uri) -> Unit, setPlan: (FloorPlan) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val client = remember { HaiArchitectClient(context) }
@@ -226,7 +216,7 @@ fun ImportPlan(
         BrandTop(nav)
         Text("أعطني المخطط", fontSize = 31.sp, fontWeight = FontWeight.Black)
         Text(
-            "HAI يحاول تحويل الملف إلى نموذج غرف ومساحات قابل للتحرير، ويُظهر درجة الثقة بدل ادعاء فهم ما لا يراه.",
+            "HAI يحاول تحويل الملف إلى نموذج هندسي قابل للتحرير: غرف، جدران، أبواب ونوافذ، مع درجة ثقة لكل عنصر.",
             color = Color.Gray,
             lineHeight = 21.sp,
             modifier = Modifier.padding(top = 8.dp, bottom = 18.dp)
@@ -237,11 +227,7 @@ fun ImportPlan(
             shape = RoundedCornerShape(26.dp),
             colors = CardDefaults.cardColors(containerColor = Paper)
         ) {
-            Column(
-                Modifier.fillMaxSize(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
+            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Icon(if (source == null) Icons.Rounded.CloudUpload else Icons.Rounded.TaskAlt, null, tint = Bronze, modifier = Modifier.size(42.dp))
                 Spacer(Modifier.height(11.dp))
                 Text(if (source == null) "اختر المخطط من الجوال" else "الملف جاهز", fontWeight = FontWeight.Bold)
@@ -249,9 +235,9 @@ fun ImportPlan(
             }
         }
         Spacer(Modifier.height(14.dp))
-        PipelineStep("01", "قراءة المخطط", "الغرف، النصوص، الأبعاد والعناصر غير المؤكدة")
-        PipelineStep("02", "تحويله لبيانات", "كل غرفة تصبح عنصرًا له مساحة، موضع، ثقة وقفل")
-        PipelineStep("03", "فحص هندسي", "HAI لا يسمح باعتماد اقتراح يكسر غرفة مقفلة أو يخلق تداخلًا جديدًا")
+        PipelineStep("01", "قراءة المخطط", "الغرف والجدران والأبواب والنوافذ والأبعاد")
+        PipelineStep("02", "تحويله لهندسة", "كل عنصر له ID وموضع وثقة وقفل مستقل")
+        PipelineStep("03", "فحص معماري", "لا اعتماد لتعديل يكسر عنصرًا مقفلًا أو يخلق تداخلًا جديدًا")
         Spacer(Modifier.height(16.dp))
         Button(
             enabled = source != null && !busy,
@@ -268,8 +254,7 @@ fun ImportPlan(
             modifier = Modifier.fillMaxWidth().height(58.dp),
             shape = RoundedCornerShape(18.dp)
         ) {
-            if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
-            else Icon(Icons.Rounded.AutoAwesome, null)
+            if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White) else Icon(Icons.Rounded.AutoAwesome, null)
             Spacer(Modifier.width(8.dp))
             Text(if (busy) "HAI يفهم المخطط…" else "ابدأ التحليل", fontWeight = FontWeight.Bold)
         }
@@ -330,13 +315,13 @@ fun NewProject(nav: NavHostController, setPlan: (FloorPlan) -> Unit) {
                     InfoStrip("سياسة الدقة", "إذا احتاج HAI اتجاه الشارع أو الارتدادات لاتخاذ قرار، سيطلبها بدل اختراعها.")
                 }
                 1 -> {
-                    FormHeading("برنامج البيت", "قل لنا ماذا يجب أن يوجد، ثم دع HAI يرتب العلاقات بينها.")
+                    FormHeading("برنامج البيت", "حدد المطلوب، ثم دع HAI يرتب العلاقات بينها.")
                     OutlinedTextField(bedrooms, { bedrooms = it }, Modifier.fillMaxWidth(), label = { Text("عدد غرف النوم") }, singleLine = true)
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(needs, { needs = it }, Modifier.fillMaxWidth().height(180.dp), label = { Text("المجلس، الصالات، المطبخ والخدمات") })
                 }
                 else -> {
-                    FormHeading("ما الذي لا تريد التضحية به؟", "الأولوية هنا تتحول إلى قيود يستخدمها HAI عند المقارنة بين البدائل.")
+                    FormHeading("ما الذي لا تريد التضحية به؟", "هذه الأولويات تتحول إلى قيود عند مقارنة البدائل.")
                     PrioritySwitch("خصوصية عالية بين الضيوف والعائلة", privacy) { privacy = it }
                     PrioritySwitch("أقل ممرات ومساحات مهدرة", shortCorridors) { shortCorridors = it }
                     PrioritySwitch("إضاءة طبيعية جيدة", daylight) { daylight = it }
@@ -378,8 +363,7 @@ fun NewProject(nav: NavHostController, setPlan: (FloorPlan) -> Unit) {
                 modifier = Modifier.weight(1.4f).height(55.dp),
                 shape = RoundedCornerShape(17.dp)
             ) {
-                if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                else Icon(if (step == 2) Icons.Rounded.AutoAwesome else Icons.Rounded.ArrowBack, null)
+                if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Icon(if (step == 2) Icons.Rounded.AutoAwesome else Icons.Rounded.ArrowBack, null)
                 Spacer(Modifier.width(7.dp))
                 Text(if (step == 2) "صمّم الاقتراح الأول" else "التالي", fontWeight = FontWeight.Bold)
             }
@@ -425,16 +409,9 @@ fun Editor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan) -> Uni
     var busy by remember { mutableStateOf(false) }
     var pending by remember { mutableStateOf<PlanProposal?>(null) }
     var history by remember { mutableStateOf<List<FloorPlan>>(emptyList()) }
+    var selection by remember { mutableStateOf<PlanSelection?>(null) }
     var messages by remember {
-        mutableStateOf(
-            listOf(
-                ArchitectMessage(
-                    false,
-                    plan?.sourceSummary?.takeIf { it.isNotBlank() }
-                        ?: "راجعت المخطط. اقفل أي غرفة لا تريد لمسها، ثم قل لي التعديل المطلوب. لن أعتمد تغييرًا قبل التحقق وموافقتك."
-                )
-            )
-        )
+        mutableStateOf(listOf(ArchitectMessage(false, plan?.sourceSummary?.takeIf { it.isNotBlank() } ?: "راجعت المخطط. اضغط على أي غرفة أو جدار أو باب لقفله، ثم قل لي التعديل المطلوب.")))
     }
     if (plan == null) {
         Page { BrandTop(nav); Text("لا يوجد مخطط مفتوح"); Button({ nav.popBackStack() }) { Text("رجوع") } }
@@ -442,6 +419,7 @@ fun Editor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan) -> Uni
     }
 
     val score = ArchitecturalEngine.score(plan)
+    val structure = StructuralGeometryEngine.inspect(plan)
     val validation = pending?.let { ArchitecturalEngine.validate(plan, it) }
     val preview = pending?.updatedPlan ?: plan
 
@@ -450,46 +428,52 @@ fun Editor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan) -> Uni
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(plan.title, fontSize = 22.sp, fontWeight = FontWeight.Black)
-                Text("نسخة ${plan.revision} • ${plan.rooms.size} مساحة • ${plan.rooms.count { it.locked }} مقفلة", color = Color.Gray, fontSize = 11.sp)
+                Text("نسخة ${plan.revision} • ${plan.rooms.size} غرفة • ${plan.walls.size} جدار • ${plan.openings.size} فتحة", color = Color.Gray, fontSize = 11.sp)
             }
             if (history.isNotEmpty()) {
                 TextButton(onClick = {
                     val previous = history.last()
                     history = history.dropLast(1)
                     pending = null
+                    selection = null
                     setPlan(previous.copy(revision = plan.revision + 1))
-                    messages = messages + ArchitectMessage(false, "رجعت للنسخة السابقة. لم أغيّر القيود المقفلة.")
+                    messages = messages + ArchitectMessage(false, "رجعت للنسخة السابقة.")
                 }) { Icon(Icons.Rounded.Undo, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("تراجع") }
             }
         }
         ScoreBar(score)
+        Spacer(Modifier.height(7.dp))
+        StructuralBar(structure)
         Spacer(Modifier.height(8.dp))
-        PlanCanvas(preview, Modifier.fillMaxWidth().height(260.dp), previewMode = pending != null)
+        PlanCanvas(
+            plan = preview,
+            modifier = Modifier.fillMaxWidth().height(285.dp),
+            previewMode = pending != null,
+            selected = selection,
+            onSelect = { selection = it }
+        )
         if (pending != null) Text("معاينة اقتراح HAI — لم يُعتمد بعد", color = Bronze, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 5.dp))
-        Spacer(Modifier.height(8.dp))
-        Text("اقفل ما لا تريد تغييره", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        RoomLockBar(plan) { roomId ->
-            history = history + plan
-            pending = null
-            setPlan(ArchitecturalEngine.toggleLock(plan, roomId).copy(revision = plan.revision + 1))
+        selection?.let { selected ->
+            Spacer(Modifier.height(7.dp))
+            ElementInspector(plan, selected) { updated ->
+                history = history + plan
+                pending = null
+                setPlan(updated.copy(revision = plan.revision + 1))
+            }
         }
-        if (plan.uncertainties.isNotEmpty()) {
-            Text("⚠ ${plan.uncertainties.first()}", fontSize = 11.sp, color = Bronze, modifier = Modifier.padding(vertical = 5.dp))
-        }
+        if (plan.uncertainties.isNotEmpty()) Text("⚠ ${plan.uncertainties.first()}", fontSize = 11.sp, color = Bronze, modifier = Modifier.padding(vertical = 5.dp))
         pending?.let { proposal ->
             ProposalCard(
                 proposal = proposal,
                 validation = validation!!,
-                onReject = {
-                    pending = null
-                    messages = messages + ArchitectMessage(false, "ألغيت الاقتراح. المخطط الحالي لم يتغير.")
-                },
+                onReject = { pending = null; messages = messages + ArchitectMessage(false, "ألغيت الاقتراح. المخطط الحالي لم يتغير.") },
                 onApply = {
                     val next = proposal.updatedPlan ?: return@ProposalCard
                     history = history + plan
                     setPlan(next.copy(revision = plan.revision + 1))
                     pending = null
-                    messages = messages + ArchitectMessage(false, "تم اعتماد التعديل فعليًا كنسخة ${plan.revision + 1}. يمكنك التراجع عنه.")
+                    selection = null
+                    messages = messages + ArchitectMessage(false, "تم اعتماد التعديل كنسخة ${plan.revision + 1}. يمكنك التراجع عنه.")
                 }
             )
         }
@@ -501,9 +485,7 @@ fun Editor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan) -> Uni
             Spacer(Modifier.weight(1f))
             Text("يفهم • يقترح • المحرك يتحقق", color = Color.Gray, fontSize = 10.sp)
         }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            messages.takeLast(6).forEach { Bubble(it) }
-        }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) { messages.takeLast(6).forEach { Bubble(it) } }
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.Bottom) {
             OutlinedTextField(
                 value = input,
@@ -533,10 +515,26 @@ fun Editor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan) -> Uni
                 },
                 modifier = Modifier.size(52.dp)
             ) {
-                if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                else Icon(Icons.Rounded.ArrowUpward, null)
+                if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Icon(Icons.Rounded.ArrowUpward, null)
             }
         }
+    }
+}
+
+@Composable
+private fun StructuralBar(report: StructuralGeometryEngine.Report) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        item { StructurePill("جدران", report.wallCount) }
+        item { StructurePill("أبواب", report.doorCount) }
+        item { StructurePill("نوافذ", report.windowCount) }
+        item { StructurePill("ثقة البنية", report.confidence, "%") }
+    }
+}
+
+@Composable
+private fun StructurePill(label: String, value: Int, suffix: String = "") {
+    Surface(color = Mist, shape = RoundedCornerShape(50.dp)) {
+        Text("$label  $value$suffix", modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -563,33 +561,80 @@ private fun ScorePill(label: String, value: Int) {
 }
 
 @Composable
-private fun RoomLockBar(plan: FloorPlan, onToggle: (String) -> Unit) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp), contentPadding = PaddingValues(vertical = 5.dp)) {
-        items(plan.rooms, key = { it.id }) { room ->
-            FilterChip(
-                selected = room.locked,
-                onClick = { onToggle(room.id) },
-                label = { Text(room.name, fontSize = 11.sp) },
-                leadingIcon = {
-                    Icon(if (room.locked) Icons.Rounded.Lock else Icons.Rounded.LockOpen, null, modifier = Modifier.size(15.dp))
-                }
-            )
+private fun ElementInspector(plan: FloorPlan, selection: PlanSelection, onUpdate: (FloorPlan) -> Unit) {
+    val room = plan.rooms.firstOrNull { selection.kind == "room" && it.id == selection.id }
+    val wall = plan.walls.firstOrNull { selection.kind == "wall" && it.id == selection.id }
+    val opening = plan.openings.firstOrNull { selection.kind == "opening" && it.id == selection.id }
+    val title: String
+    val subtitle: String
+    val confidence: Int
+    val locked: Boolean
+    when {
+        room != null -> {
+            title = room.name
+            subtitle = buildString {
+                append("غرفة")
+                if (room.areaM2 > 0) append(" • ${"%.1f".format(room.areaM2)}م²")
+                append(" • ${room.type}")
+            }
+            confidence = room.confidence
+            locked = room.locked
+        }
+        wall != null -> {
+            title = "جدار ${wall.id}"
+            subtitle = buildString {
+                append(wall.kind)
+                wall.thicknessCm?.let { append(" • ${"%.0f".format(it)}سم") }
+            }
+            confidence = wall.confidence
+            locked = wall.locked
+        }
+        opening != null -> {
+            val isWindow = opening.type.lowercase().contains("window") || opening.type.contains("ناف")
+            title = if (isWindow) "نافذة ${opening.id}" else "باب ${opening.id}"
+            subtitle = buildString {
+                append("عرض نسبي ${"%.1f".format(opening.width)}")
+                if (opening.connectsRoomIds.isNotEmpty()) append(" • يربط ${opening.connectsRoomIds.size} مساحة")
+            }
+            confidence = opening.confidence
+            locked = opening.locked
+        }
+        else -> return
+    }
+
+    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = Paper), modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(38.dp).background(if (locked) Bronze.copy(alpha = .14f) else Mist, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                Icon(if (locked) Icons.Rounded.Lock else Icons.Rounded.TouchApp, null, tint = if (locked) Bronze else Deep, modifier = Modifier.size(19.dp))
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Black, fontSize = 13.sp)
+                Text("$subtitle • ثقة $confidence%", color = Color.Gray, fontSize = 10.5.sp)
+            }
+            FilledTonalButton(
+                onClick = {
+                    val next = when {
+                        room != null -> plan.copy(rooms = plan.rooms.map { if (it.id == room.id) it.copy(locked = !it.locked) else it })
+                        wall != null -> plan.copy(walls = plan.walls.map { if (it.id == wall.id) it.copy(locked = !it.locked) else it })
+                        opening != null -> plan.copy(openings = plan.openings.map { if (it.id == opening.id) it.copy(locked = !it.locked) else it })
+                        else -> plan
+                    }
+                    onUpdate(next)
+                },
+                shape = RoundedCornerShape(13.dp)
+            ) {
+                Icon(if (locked) Icons.Rounded.LockOpen else Icons.Rounded.Lock, null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(5.dp))
+                Text(if (locked) "فتح" else "قفل", fontSize = 11.sp)
+            }
         }
     }
 }
 
 @Composable
-private fun ProposalCard(
-    proposal: PlanProposal,
-    validation: ValidationReport,
-    onReject: () -> Unit,
-    onApply: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Paper)
-    ) {
+private fun ProposalCard(proposal: PlanProposal, validation: ValidationReport, onReject: () -> Unit, onApply: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Paper)) {
         Column(Modifier.padding(13.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(if (validation.valid) Icons.Rounded.FactCheck else Icons.Rounded.ReportProblem, null, tint = if (validation.valid) Sage else Bronze, modifier = Modifier.size(20.dp))
@@ -606,9 +651,7 @@ private fun ProposalCard(
             }
             validation.errors.take(2).forEach { Text("✕ $it", color = MaterialTheme.colorScheme.error, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp)) }
             validation.warnings.take(2).forEach { Text("⚠ $it", color = Bronze, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp)) }
-            validation.after?.let { after ->
-                Text("تقييم المخطط: ${validation.before.overall} ← ${after.overall}", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
-            }
+            validation.after?.let { after -> Text("تقييم المخطط: ${validation.before.overall} ← ${after.overall}", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp)) }
             Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onReject, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) { Text("ارفض") }
                 Button(onClick = onApply, enabled = validation.valid && proposal.updatedPlan != null, modifier = Modifier.weight(1.4f), shape = RoundedCornerShape(14.dp)) {
@@ -621,61 +664,132 @@ private fun ProposalCard(
 
 @Composable
 private fun Bubble(m: ArchitectMessage) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        horizontalArrangement = if (m.fromUser) Arrangement.Start else Arrangement.End
-    ) {
-        Surface(
-            color = if (m.fromUser) Deep else Paper,
-            shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.widthIn(max = 325.dp)
-        ) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = if (m.fromUser) Arrangement.Start else Arrangement.End) {
+        Surface(color = if (m.fromUser) Deep else Paper, shape = RoundedCornerShape(18.dp), modifier = Modifier.widthIn(max = 325.dp)) {
             Text(m.text, color = if (m.fromUser) Color.White else Ink, fontSize = 13.sp, lineHeight = 20.sp, modifier = Modifier.padding(13.dp))
         }
     }
 }
 
 @Composable
-fun PlanCanvas(plan: FloorPlan, modifier: Modifier = Modifier, previewMode: Boolean = false) {
+fun PlanCanvas(
+    plan: FloorPlan,
+    modifier: Modifier = Modifier,
+    previewMode: Boolean = false,
+    selected: PlanSelection? = null,
+    onSelect: (PlanSelection?) -> Unit = {}
+) {
     Surface(modifier, color = Paper, shape = RoundedCornerShape(24.dp), tonalElevation = 1.dp) {
         BoxWithConstraints(Modifier.fillMaxSize().padding(12.dp)) {
-            Canvas(Modifier.fillMaxSize()) {
+            Canvas(
+                Modifier.fillMaxSize().pointerInput(plan, selected) {
+                    detectTapGestures { tap ->
+                        val pad = 8.dp.toPx()
+                        val w = size.width - pad * 2
+                        val h = size.height - pad * 2
+                        if (w <= 0f || h <= 0f) return@detectTapGestures
+                        val px = ((tap.x - pad) / w * 100f).coerceIn(0f, 100f)
+                        val py = ((tap.y - pad) / h * 100f).coerceIn(0f, 100f)
+                        val nearestOpening = plan.openings.minByOrNull { hypot((it.x - px).toDouble(), (it.y - py).toDouble()) }
+                        if (nearestOpening != null && hypot((nearestOpening.x - px).toDouble(), (nearestOpening.y - py).toDouble()) <= 4.5) {
+                            onSelect(PlanSelection("opening", nearestOpening.id)); return@detectTapGestures
+                        }
+                        val nearestWall = plan.walls.minByOrNull { pointToSegment(px, py, it.start.x, it.start.y, it.end.x, it.end.y) }
+                        if (nearestWall != null && pointToSegment(px, py, nearestWall.start.x, nearestWall.start.y, nearestWall.end.x, nearestWall.end.y) <= 2.3) {
+                            onSelect(PlanSelection("wall", nearestWall.id)); return@detectTapGestures
+                        }
+                        val room = plan.rooms.lastOrNull { px >= it.x && px <= it.x + it.width && py >= it.y && py <= it.y + it.height }
+                        onSelect(room?.let { PlanSelection("room", it.id) })
+                    }
+                }
+            ) {
                 val pad = 8.dp.toPx()
                 val w = size.width - pad * 2
                 val h = size.height - pad * 2
+                fun p(x: Float, y: Float) = Offset(pad + w * x / 100f, pad + h * y / 100f)
                 drawRect(Mist, Offset(pad, pad), Size(w, h), style = Stroke(2.dp.toPx()))
+
                 plan.rooms.forEach { r ->
-                    val left = pad + w * (r.x / 100f)
-                    val top = pad + h * (r.y / 100f)
-                    val rw = (w * (r.width / 100f)).coerceAtLeast(1f).coerceAtMost((size.width - left - pad).coerceAtLeast(1f))
-                    val rh = (h * (r.height / 100f)).coerceAtLeast(1f).coerceAtMost((size.height - top - pad).coerceAtLeast(1f))
+                    val left = pad + w * r.x / 100f
+                    val top = pad + h * r.y / 100f
+                    val rw = (w * r.width / 100f).coerceAtLeast(1f).coerceAtMost((size.width - left - pad).coerceAtLeast(1f))
+                    val rh = (h * r.height / 100f).coerceAtLeast(1f).coerceAtMost((size.height - top - pad).coerceAtLeast(1f))
+                    val active = selected?.kind == "room" && selected.id == r.id
                     val roomColor = when {
-                        r.locked -> Bronze
+                        active || r.locked -> Bronze
                         r.confidence < 75 -> Color(0xFFB78858)
                         else -> Deep
                     }
-                    drawRect(roomColor.copy(alpha = if (previewMode) 0.07f else 0.04f), Offset(left, top), Size(rw, rh))
-                    drawRect(roomColor, Offset(left, top), Size(rw, rh), style = Stroke(if (r.locked) 3.dp.toPx() else 1.8.dp.toPx()))
+                    drawRect(roomColor.copy(alpha = if (active) .13f else if (previewMode) .06f else .035f), Offset(left, top), Size(rw, rh))
+                    if (plan.walls.isEmpty()) drawRect(roomColor.copy(alpha = .72f), Offset(left, top), Size(rw, rh), style = Stroke(if (active || r.locked) 3.dp.toPx() else 1.5.dp.toPx()))
+                }
+
+                plan.walls.forEach { wall ->
+                    val active = selected?.kind == "wall" && selected.id == wall.id
+                    val c = when {
+                        active || wall.locked -> Bronze
+                        wall.confidence < 60 -> Color(0xFFB78858)
+                        else -> Ink
+                    }
+                    val thickness = wall.thicknessCm?.let { (it / 7.0).coerceIn(2.0, 6.0).toFloat() } ?: 3f
+                    drawLine(c, p(wall.start.x, wall.start.y), p(wall.end.x, wall.end.y), strokeWidth = (if (active) thickness + 3f else thickness).dp.toPx())
+                }
+
+                plan.openings.forEach { opening ->
+                    val active = selected?.kind == "opening" && selected.id == opening.id
+                    val isWindow = opening.type.lowercase().contains("window") || opening.type.contains("ناف")
+                    val c = when {
+                        active || opening.locked -> Bronze
+                        opening.confidence < 60 -> Color(0xFFB78858)
+                        isWindow -> SoftBlue
+                        else -> Sage
+                    }
+                    val center = p(opening.x, opening.y)
+                    val radius = (if (active) 6.5f else 4.5f).dp.toPx()
+                    if (isWindow) {
+                        drawLine(c, Offset(center.x - radius, center.y), Offset(center.x + radius, center.y), strokeWidth = 2.5.dp.toPx())
+                        drawLine(Paper, Offset(center.x - radius * .55f, center.y), Offset(center.x + radius * .55f, center.y), strokeWidth = .8.dp.toPx())
+                    } else {
+                        drawCircle(Paper, radius, center)
+                        drawCircle(c, radius, center, style = Stroke(2.dp.toPx()))
+                        val rad = Math.toRadians(opening.rotationDeg.toDouble())
+                        val dx = kotlin.math.cos(rad).toFloat() * radius
+                        val dy = kotlin.math.sin(rad).toFloat() * radius
+                        drawLine(c, center, Offset(center.x + dx, center.y + dy), strokeWidth = 2.dp.toPx())
+                    }
                 }
             }
+
             val availableW = maxWidth.value - 16f
             val availableH = maxHeight.value - 16f
-            plan.rooms.take(18).forEach { r ->
+            plan.rooms.take(20).forEach { r ->
                 val centerX = ((r.x + r.width / 2f).coerceIn(4f, 96f) / 100f)
                 val centerY = ((r.y + r.height / 2f).coerceIn(4f, 96f) / 100f)
                 Text(
                     r.name + if (r.areaM2 > 0) "\n${"%.1f".format(r.areaM2)}م²" else "",
-                    fontSize = 8.5.sp,
-                    lineHeight = 10.sp,
+                    fontSize = 8.2.sp,
+                    lineHeight = 9.5.sp,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.offset(
-                        x = (availableW * centerX - 34f).dp,
-                        y = (availableH * centerY - 12f).dp
-                    ).width(68.dp)
+                    modifier = Modifier.offset(x = (availableW * centerX - 34f).dp, y = (availableH * centerY - 12f).dp).width(68.dp)
                 )
+            }
+            if (plan.walls.isNotEmpty() || plan.openings.isNotEmpty()) {
+                Surface(color = Paper.copy(alpha = .92f), shape = RoundedCornerShape(50.dp), modifier = Modifier.align(Alignment.BottomStart)) {
+                    Text("اضغط غرفة / جدار / باب", modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp), fontSize = 9.5.sp, color = Color.Gray)
+                }
             }
         }
     }
+}
+
+private fun pointToSegment(px: Float, py: Float, ax: Float, ay: Float, bx: Float, by: Float): Double {
+    val dx = bx - ax
+    val dy = by - ay
+    if (abs(dx) < .0001f && abs(dy) < .0001f) return hypot((px - ax).toDouble(), (py - ay).toDouble())
+    val t = (((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)).coerceIn(0f, 1f)
+    val x = ax + t * dx
+    val y = ay + t * dy
+    return hypot((px - x).toDouble(), (py - y).toDouble())
 }
 
 @Composable
@@ -689,11 +803,7 @@ fun AiSettings(nav: NavHostController) {
     Page {
         BrandTop(nav, settings = false)
         Text("اتصال HAI", fontSize = 31.sp, fontWeight = FontWeight.Black)
-        Text(
-            "اختر مزود OpenAI-compatible. لا يوجد مفتاح API مخزن في GitHub.",
-            color = Color.Gray,
-            modifier = Modifier.padding(top = 8.dp, bottom = 18.dp)
-        )
+        Text("اختر مزود OpenAI-compatible. لا يوجد مفتاح API مخزن في GitHub.", color = Color.Gray, modifier = Modifier.padding(top = 8.dp, bottom = 18.dp))
         OutlinedTextField(endpoint, { endpoint = it }, Modifier.fillMaxWidth(), label = { Text("API endpoint") }, singleLine = true)
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(model, { model = it }, Modifier.fillMaxWidth(), label = { Text("Model ID") }, singleLine = true)
