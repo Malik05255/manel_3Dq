@@ -23,7 +23,8 @@ class PbrProductionRegressionTest {
     @Test fun gltfCarriesNormalsPbrAndSiteMetadata() {
         val json=GltfPlanExporter.renderGltf(plan())
         assertTrue(json.contains("\"NORMAL\""));assertTrue(json.contains("pbrMetallicRoughness"));assertTrue(json.contains("\"pbrReady\": true")||json.contains("\"pbrReady\":true"))
-        assertTrue(json.contains("Manzili HAI 0.60"));assertTrue(json.contains("siteContext"));assertTrue(json.contains("Warm Site Ground"))
+        assertTrue(json.contains("Manzili HAI 0.62"));assertTrue(json.contains("siteContext"));assertTrue(json.contains("Warm Site Ground"))
+        assertTrue(json.contains("\"doubleSided\": true")||json.contains("\"doubleSided\":true"))
     }
 
     @Test fun glbHasValidV2ContainerHeader() {
