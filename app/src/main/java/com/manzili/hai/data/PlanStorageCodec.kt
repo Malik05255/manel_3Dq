@@ -7,13 +7,14 @@ import org.json.JSONObject
 /** Canonical JSON codec for local project persistence. Missing fields remain backward compatible. */
 object PlanStorageCodec {
     fun encode(plan: FloorPlan): JSONObject = JSONObject().apply {
-        put("schemaVersion", 3)
+        put("schemaVersion", 4)
         put("title", plan.title)
         plan.widthM?.let { put("widthM", it) }
         plan.heightM?.let { put("heightM", it) }
         put("revision", plan.revision)
         put("sourceSummary", plan.sourceSummary)
         put("scaleConfidence", plan.scaleConfidence)
+        put("saudiRulesEnabled", plan.saudiRulesEnabled)
         plan.northDeg?.let { put("northDeg", it) }
         put("observations", JSONArray(plan.observations))
         put("uncertainties", JSONArray(plan.uncertainties))
@@ -57,7 +58,8 @@ object PlanStorageCodec {
             northDeg = north,
             site = decodeSite(root.optJSONObject("site"), north),
             floors = floors(root.optJSONArray("floors")),
-            activeFloorId = root.optString("activeFloorId").takeIf { it.isNotBlank() }
+            activeFloorId = root.optString("activeFloorId").takeIf { it.isNotBlank() },
+            saudiRulesEnabled = root.optBoolean("saudiRulesEnabled", false)
         )
     }
 
@@ -139,7 +141,7 @@ object PlanStorageCodec {
         val roads = o.optJSONArray("roads").objects().mapIndexed { i, r -> RoadEdge(
             id = r.optString("id", "road-$i"), name = r.optString("name", "شارع"), start = readPoint(r.optJSONObject("start")) ?: PlanPoint(0f, 0f),
             end = readPoint(r.optJSONObject("end")) ?: PlanPoint(100f, 0f), widthM = positive(r, "widthM"), classification = r.optString("classification", "unknown")
-        ) }
+        )
         return SiteContext(
             countryCode = o.optString("countryCode", "SA"), city = o.optString("city", ""), plotBoundary = readPoints(o.optJSONArray("plotBoundary")), roads = roads,
             northDeg = o.optDouble("northDeg", Double.NaN).takeIf { !it.isNaN() }?.toFloat() ?: legacyNorth,
