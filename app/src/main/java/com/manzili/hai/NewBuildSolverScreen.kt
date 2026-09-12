@@ -16,7 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
-import com.manzili.hai.engine.NewBuildOptimizer
+import com.manzili.hai.engine.GlobalLayoutOptimizer
 import com.manzili.hai.engine.NewBuildSolver
 import com.manzili.hai.model.FloorPlan
 
@@ -41,7 +41,7 @@ fun NewBuildSolverScreen(nav: NavHostController, onChoose: (FloorPlan) -> Unit) 
                 IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
                 Column {
                     Text("بناء من جديد", fontSize = 23.sp, fontWeight = FontWeight.Black)
-                    Text("بحث هندسي متعدد الحالات → أفضل 3 حلول مختلفة", color = Color.Gray, fontSize = 10.sp)
+                    Text("Beam global search • مئات الحالات المفلترة • أفضل 3 حلول مختلفة", color = Color.Gray, fontSize = 10.sp)
                 }
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
@@ -73,13 +73,13 @@ fun NewBuildSolverScreen(nav: NavHostController, onChoose: (FloorPlan) -> Unit) 
                         val w = width.toDoubleOrNull(); val d = depth.toDoubleOrNull()
                         if (w == null || d == null) { error = "أدخل أبعاد أرض صحيحة."; return@Button }
                         runCatching {
-                            NewBuildOptimizer.generate(NewBuildSolver.Program(
+                            GlobalLayoutOptimizer.generate(NewBuildSolver.Program(
                                 city = city.trim(), plotWidthM = w, plotDepthM = d, floorCount = floors, bedrooms = bedrooms,
                                 guestEntranceIndependent = guestIndependent, privacyPriority = privacy.toInt(), circulationPriority = circulation.toInt(), daylightPriority = daylight.toInt(), notes = notes
                             ))
                         }.onSuccess { candidates = it; error = null }.onFailure { error = it.message ?: "تعذر توليد البدائل" }
                     }, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(17.dp)) {
-                        Icon(Icons.Rounded.AutoAwesome, null); Spacer(Modifier.width(6.dp)); Text("ابحث واختر أفضل 3 حلول", fontWeight = FontWeight.Bold)
+                        Icon(Icons.Rounded.AutoAwesome, null); Spacer(Modifier.width(6.dp)); Text("ابحث عالميًا واختر أفضل 3", fontWeight = FontWeight.Bold)
                     }
                 } else {
                     Text("أفضل ثلاثة حلول بعد البحث", fontSize = 19.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(vertical = 10.dp))
