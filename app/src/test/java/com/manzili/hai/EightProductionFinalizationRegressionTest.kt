@@ -17,7 +17,7 @@ class EightProductionFinalizationRegressionTest {
     @Test fun productionSceneAddsContextWithoutMutatingPlan(){
         val input=plan();val before=input.copy();val scene=ProductionSceneEngine.build(input)
         assertEquals(before,input);assertTrue(scene.meshes.any{it.kind=="site-ground"})
-        val gltf=GltfPlanExporter.renderGltf(input);assertTrue(gltf.contains("Manzili HAI 0.60"));assertTrue(gltf.contains("siteContext"))
+        val gltf=GltfPlanExporter.renderGltf(input);assertTrue(gltf.contains("Manzili HAI 0.62"));assertTrue(gltf.contains("siteContext"))
     }
 
     @Test fun freeWalkthroughBlocksWallsAndUsesVerifiedDoor(){
