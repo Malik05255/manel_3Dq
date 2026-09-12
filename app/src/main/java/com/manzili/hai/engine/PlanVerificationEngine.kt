@@ -10,8 +10,8 @@ object PlanVerificationEngine {
     }
 
     fun inspect(input: FloorPlan): Report {
-        val derived = deriveDimensionEvidence(listOf(input.sourceSummary) + input.observations + input.uncertainties)
-        val enriched = input.copy(dimensions = (input.dimensions + derived).distinctBy { it.id + it.valueM })
+        val derived = deriveDimensionEvidence(listOf(input.sourceSummary) + input.observations + input.uncertainties + input.dimensions.map { it.sourceText })
+        val enriched = input.copy(dimensions = (input.dimensions + derived).distinctBy { "${it.id}:${"%.3f".format(it.valueM)}" })
         val polygonReport = PolygonGeometryEngine.inspect(enriched)
         val normalized = polygonReport.plan
         val issues = mutableListOf<Issue>()
@@ -42,30 +42,14 @@ object PlanVerificationEngine {
         return PolygonGeometryEngine.normalize(plan.copy(widthM = widthM, heightM = heightM, dimensions = evidence.distinctBy { it.id }, scaleConfidence = 100))
     }
 
-    fun deriveDimensionEvidence(texts: List<String>): List<PlanDimension> {
-        val result = mutableListOf<PlanDimension>()
-        val regex = Regex("(?<!\\d)(\\d{1,3}(?:[.,]\\d{1,2})?)\\s*(?:م|متر|m)(?![\\p{L}])", RegexOption.IGNORE_CASE)
-        texts.forEachIndexed { index, raw ->
-            val normalized = normalizeDigits(raw)
-            regex.findAll(normalized).forEachIndexed { matchIndex, match ->
-                val value = match.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return@forEachIndexed
-                if (value in 0.3..200.0) result += PlanDimension("text-$index-$matchIndex", "بعد OCR/نصي", value, confidence = 55, sourceText = raw.take(120))
-            }
-        }
-        return result
-    }
+    fun deriveDimensionEvidence(texts: List<String>): List<PlanDimension> = DimensionEvidenceEngine.extract(texts)
 
     private fun calculateScaleConfidence(plan: FloorPlan): Int {
         if (plan.widthM == null || plan.heightM == null) return 0
         val strong = plan.dimensions.count { it.confidence >= 80 }
-        val medium = plan.dimensions.count { it.confidence in 55..79 }
-        return (55 + strong * 12 + medium * 4).coerceIn(0, 100)
+        val medium = plan.dimensions.count { it.confidence in 60..79 }
+        return (55 + strong * 12 + medium * 5).coerceIn(0, 100)
     }
 
     private fun openingLabel(type: String) = if (type.contains("window", true) || type.contains("ناف")) "النافذة" else "الباب"
-    private fun normalizeDigits(value: String): String = buildString {
-        value.forEach { ch -> append(when (ch) {
-            '٠','۰' -> '0'; '١','۱' -> '1'; '٢','۲' -> '2'; '٣','۳' -> '3'; '٤','۴' -> '4'; '٥','۵' -> '5'; '٦','۶' -> '6'; '٧','۷' -> '7'; '٨','۸' -> '8'; '٩','۹' -> '9'; '٫' -> '.'; else -> ch
-        }) }
-    }
 }
