@@ -17,11 +17,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-/** Multi-page vision path. The chosen Saudi project type is treated as context, never as visual evidence. */
+/** Vision path for images and multi-page PDFs. Project type is context, never visual evidence. */
 class MultiPageHaiPlanAnalyzer(private val context:Context) {
     private val settings=HaiSettings(context)
     private val renderer=PdfPageRendererEngine(context)
-    private val single=HaiArchitectClient(context)
     private val http=OkHttpClient.Builder().connectTimeout(30,TimeUnit.SECONDS).readTimeout(180,TimeUnit.SECONDS).build()
     val available:Boolean get()=settings.configured
 
@@ -31,18 +30,19 @@ class MultiPageHaiPlanAnalyzer(private val context:Context) {
         projectType:SaudiProjectTypeEngine.Type?=null
     ):FloorPlan=withContext(Dispatchers.IO) {
         check(settings.configured){"أدخل إعدادات الذكاء الاصطناعي أولًا"}
-        if(!renderer.isPdf(uri)) {
-            val read=single.analyzePlan(uri)
-            return@withContext projectType?.let { SaudiProjectTypeEngine.apply(read,it) } ?: read
-        }
-        val total=renderer.pageCount(uri)
+        val isPdf=renderer.isPdf(uri)
+        val total=if(isPdf) renderer.pageCount(uri) else 1
         val images=renderer.render(uri,maxPdfPages=maxPdfPages,targetMaxPx=1800,jpegQuality=88)
         val typeContext=projectType?.let { type ->
             "\n\nاختيار المستخدم المسبق: نوع المشروع هو «${type.label}». استخدمه فقط لفهم وظيفة المساحات والتسميات؛ لا تجبر الصورة على عناصر غير ظاهرة، ولا تحول اختيار المستخدم إلى دليل بصري."
         }.orEmpty()
         val plans=images.map { page ->
-            val prompt=ANALYZE_PROMPT+typeContext+"\n\nهذه الصفحة رقم ${page.pageIndex+1} من PDF. حلّل هذه الصفحة وحدها ولا تنقل عناصر من صفحات أخرى."
-            ArchitectJson.parsePlan(chatVision(prompt,page.base64Jpeg))
+            val pageContext=if(isPdf) {
+                "\n\nهذه الصفحة رقم ${page.pageIndex+1} من PDF. حلّل هذه الصفحة وحدها ولا تنقل عناصر من صفحات أخرى."
+            } else {
+                "\n\nهذه صورة واحدة للمخطط. اقرأ ما يظهر فقط ولا تفترض صفحات أو أدوارًا إضافية."
+            }
+            ArchitectJson.parsePlan(chatVision(ANALYZE_PROMPT+typeContext+pageContext,page.base64Jpeg))
         }
         val merged=MultiPagePlanFusionEngine.merge(plans,totalPdfPages=total)
         projectType?.let { SaudiProjectTypeEngine.apply(merged,it) } ?: merged
@@ -62,7 +62,7 @@ class MultiPageHaiPlanAnalyzer(private val context:Context) {
             .post(payload.toString().toRequestBody("application/json".toMediaType())).build()
         http.newCall(req).execute().use { res ->
             val body=res.body?.string().orEmpty()
-            if(!res.isSuccessful) error("فشل تحليل صفحة PDF (${res.code}): ${body.take(320)}")
+            if(!res.isSuccessful) error("فشل تحليل المخطط (${res.code}): ${body.take(320)}")
             return JSONObject(body).getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
         }
     }
