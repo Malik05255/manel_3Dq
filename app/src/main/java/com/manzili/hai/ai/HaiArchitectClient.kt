@@ -8,6 +8,7 @@ import android.net.Uri
 import android.util.Base64
 import com.manzili.hai.data.HaiSettings
 import com.manzili.hai.engine.ArchitecturalEngine
+import com.manzili.hai.engine.ArchitecturalRequestAnalyzer
 import com.manzili.hai.model.FloorPlan
 import com.manzili.hai.model.PlanProposal
 import kotlinx.coroutines.Dispatchers
@@ -44,8 +45,10 @@ class HaiArchitectClient(private val context: Context) {
         check(settings.configured) { "أدخل إعدادات الذكاء الاصطناعي أولًا" }
         val compact = planToJson(plan)
         val deterministicBrief = ArchitecturalEngine.compactBrief(plan)
+        val requestPreflight = ArchitecturalRequestAnalyzer.preflight(plan, userText)
         val prompt = CHANGE_PROMPT +
             "\n\nتقييم المحرك الهندسي المحلي:\n$deterministicBrief" +
+            "\n\nفحص الطلب الحسابي قبل استدعاء الذكاء:\n$requestPreflight" +
             "\n\nالمخطط الحالي (هو المرجع الوحيد للأبعاد الموجودة):\n$compact" +
             "\n\nطلب العميل:\n$userText"
         ArchitectJson.parseProposal(chatText(prompt))
@@ -205,6 +208,8 @@ class HaiArchitectClient(private val context: Context) {
 8) لا تغيّر غرفًا لا تحتاجها فقط لتحسين شكل الرسم.
 9) إذا خفضت مساحة غرفة تحت min_area_m2 فاعتبر ذلك تنازلًا مهمًا واشرحه.
 10) إذا كان المخطط الأصلي منخفض الثقة في المنطقة المطلوبة، اطلب تأكيدًا بدل إعادة رسمها بثقة زائفة.
+11) عامل نتائج «فحص الطلب الحسابي» كحقائق حسابية محلية: لا تتجاهل مساحة 3×3 أو ما شابه، ولا تدّع توفر مساحة إذا أظهر الفحص أن المساحة المرنة غير كافية إلا مع شرح إعادة التوزيع المطلوبة.
+12) إذا ذكر الفحص غرفًا طلب المستخدم حمايتها، لا تغيرها في الاقتراح حتى لو لم تكن مقفلة سابقًا في المشروع.
 """.trimIndent()
     }
 }
