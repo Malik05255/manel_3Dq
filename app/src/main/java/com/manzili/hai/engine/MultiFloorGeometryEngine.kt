@@ -5,7 +5,7 @@ import com.manzili.hai.model.*
 /** Keeps the legacy editor surface synchronized with one canonical active floor. */
 object MultiFloorGeometryEngine {
     fun normalize(input: FloorPlan): FloorPlan {
-        val base = PolygonGeometryEngine.normalize(input)
+        val base = GeometryV3Engine.normalize(PolygonGeometryEngine.normalize(input))
         if (base.floors.isEmpty()) {
             val first = FloorLevel(
                 id = "floor-0",
@@ -15,7 +15,8 @@ object MultiFloorGeometryEngine {
                 footprint = base.footprint,
                 rooms = base.rooms,
                 walls = base.walls,
-                openings = base.openings
+                openings = base.openings,
+                elements = base.elements
             )
             val site = if (base.site.plotBoundary.isEmpty()) base.site.copy(plotBoundary = base.footprint, northDeg = base.site.northDeg ?: base.northDeg) else base.site
             return base.copy(floors = listOf(first), activeFloorId = first.id, site = site)
@@ -26,6 +27,7 @@ object MultiFloorGeometryEngine {
             rooms = active.rooms,
             walls = active.walls,
             openings = active.openings,
+            elements = active.elements,
             footprint = active.footprint.ifEmpty { base.footprint },
             activeFloorId = activeId,
             northDeg = base.site.northDeg ?: base.northDeg
@@ -40,10 +42,11 @@ object MultiFloorGeometryEngine {
                 footprint = normalized.footprint,
                 rooms = normalized.rooms,
                 walls = normalized.walls,
-                openings = normalized.openings
+                openings = normalized.openings,
+                elements = normalized.elements
             )
         }
-        return normalized.copy(floors = updated)
+        return GeometryV3Engine.normalize(normalized.copy(floors = updated))
     }
 
     fun selectFloor(plan: FloorPlan, floorId: String): FloorPlan {
@@ -53,6 +56,7 @@ object MultiFloorGeometryEngine {
             rooms = target.rooms,
             walls = target.walls,
             openings = target.openings,
+            elements = target.elements,
             footprint = target.footprint,
             activeFloorId = target.id
         )
