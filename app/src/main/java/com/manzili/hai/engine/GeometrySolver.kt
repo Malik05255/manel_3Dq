@@ -8,6 +8,7 @@ import com.manzili.hai.model.PlanProposal
 import com.manzili.hai.model.Room
 import com.manzili.hai.model.Wall
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -16,7 +17,7 @@ import kotlin.math.round
 /**
  * Deterministic geometry layer.
  * HAI suggests intent; this engine owns snapping, bounds, overlap checks,
- * candidate generation and direct-manipulation feasibility.
+ * topology-aware manipulation and candidate generation.
  */
 object GeometrySolver {
     data class Check(
@@ -38,6 +39,8 @@ object GeometrySolver {
         val changes: List<PlanChange> = emptyList(),
         val geometryWarnings: List<String> = emptyList()
     )
+
+    private enum class Edge { LEFT, RIGHT, TOP, BOTTOM }
 
     fun brief(plan: FloorPlan, userText: String): String {
         val target = parseTargetSize(userText)
@@ -100,35 +103,35 @@ object GeometrySolver {
             }
         }
 
+        val structural = StructuralGeometryEngine.inspect(next)
+        errors += structural.errors
+        warnings += structural.warnings
+
         return Check(errors.isEmpty(), errors.distinct(), warnings.distinct())
     }
 
-    /** Generate several deterministic choices instead of one arbitrary edit. */
     fun actionCandidates(plan: FloorPlan, kind: String, id: String, action: String): List<Candidate> {
         val raw = when (kind) {
-            "room" -> roomCandidates(plan, id, action)
-            "opening" -> openingCandidates(plan, id, action)
-            "wall" -> wallCandidates(plan, id, action)
+            "room" -> roomCandidates(plan, id, action.uppercase())
+            "opening" -> openingCandidates(plan, id, action.uppercase())
+            "wall" -> wallCandidates(plan, id, action.uppercase())
             else -> emptyList()
         }
-        return raw.distinctBy { fingerprint(it.plan) }
+        return raw.distinctBy { signature(it.plan) }
             .sortedByDescending { it.score }
             .take(4)
     }
 
-    /** Candidate used while the user's finger is moving. Nothing is committed here. */
+    /** Live finger-drag preview. No state is committed here. */
     fun drag(plan: FloorPlan, kind: String, id: String, deltaXPct: Float, deltaYPct: Float): Candidate? {
-        return when (kind) {
-            "room" -> moveRoomCandidate(plan, id, deltaXPct, deltaYPct, "معاينة السحب")
-            "opening" -> {
-                val opening = plan.openings.firstOrNull { it.id == id } ?: return null
-                moveOpeningCandidate(plan, id, opening.x + deltaXPct, opening.y + deltaYPct, "معاينة نقل الفتحة")
-            }
-            // A wall changes room topology; until room polygons are linked to wall faces,
-            // refusing direct wall drag is safer than visually moving a line only.
-            "wall" -> null
+        if (abs(deltaXPct) + abs(deltaYPct) < .12f) return null
+        val next = when (kind) {
+            "room" -> translateRoom(plan, id, deltaXPct, deltaYPct)
+            "opening" -> moveOpeningToward(plan, id, deltaXPct, deltaYPct)
+            "wall" -> moveWallByDrag(plan, id, deltaXPct, deltaYPct)
             else -> null
-        }
+        } ?: return null
+        return buildCandidate(plan, next, "معاينة السحب", "المحرك حرّك العناصر المرتبطة مع الحفاظ على القيود المقروءة.")
     }
 
     fun toProposal(current: FloorPlan, candidate: Candidate): PlanProposal {
@@ -137,173 +140,380 @@ object GeometrySolver {
         val objections = candidate.review.objections
         val message = when {
             objections.isNotEmpty() -> objections.joinToString(" ")
+            candidate.review.notes.isNotEmpty() -> candidate.review.notes.first()
             geometry.warnings.isNotEmpty() -> "التعديل ممكن، لكن توجد ملاحظة قراءة: ${geometry.warnings.first()}"
-            else -> "التعديل سليم هندسيًا ولم أجد اعتراضًا معماريًا جوهريًا."
+            else -> ""
         }
         return PlanProposal(
             message = message,
             updatedPlan = candidate.plan,
             changes = candidate.changes,
             requiresConfirmation = true,
-            confidence = if (objections.isNotEmpty()) 82 else 94
+            confidence = (96 - objections.size * 8 - candidate.review.notes.size * 2).coerceIn(58, 96)
         )
     }
 
     fun moveRoom(plan: FloorPlan, roomId: String, deltaXPct: Float, deltaYPct: Float): PlanProposal {
-        val c = moveRoomCandidate(plan, roomId, deltaXPct, deltaYPct, "نقل مباشر مع محاذاة هندسية")
+        val next = translateRoom(plan, roomId, deltaXPct, deltaYPct)
             ?: return rejected("لا يمكن نقل الغرفة إلى هذا الموقع دون كسر القيود")
-        return toProposal(plan, c)
+        return toProposal(plan, buildCandidate(plan, next, "نقل الغرفة", "نقل مباشر مع تحديث الحدود المشتركة"))
     }
 
     fun resizeRoom(plan: FloorPlan, roomId: String, deltaWidthPct: Float, deltaHeightPct: Float): PlanProposal {
-        val c = resizeRoomCandidate(plan, roomId, deltaWidthPct, deltaHeightPct, "تغيير حجم مباشر مع فحص الأثر")
-            ?: return rejected("لا يمكن تغيير حجم الغرفة بهذه القيمة دون كسر القيود")
-        return toProposal(plan, c)
+        val room = plan.rooms.firstOrNull { it.id == roomId } ?: return rejected("لم أجد الغرفة المطلوبة")
+        if (room.locked) return rejected("الغرفة «${room.name}» مقفلة")
+        if (plan.walls.isNotEmpty()) return rejected("غيّر حجم الغرفة من أحد حدودها حتى تتحدث الجدران والغرف المجاورة بشكل صحيح")
+        val fresh = room.copy(
+            width = snap((room.width + deltaWidthPct).coerceIn(2f, 100f - room.x)),
+            height = snap((room.height + deltaHeightPct).coerceIn(2f, 100f - room.y))
+        ).let { it.copy(areaM2 = scaledArea(room, it.width, it.height)) }
+        val next = plan.copy(rooms = plan.rooms.map { if (it.id == roomId) fresh else it })
+        val check = verify(plan, next)
+        if (!check.feasible) return rejected(check.errors.joinToString(". "))
+        return toProposal(plan, buildCandidate(plan, next, "تغيير الحجم", "تغيير مباشر مع فحص الأثر"))
     }
 
     fun moveOpening(plan: FloorPlan, openingId: String, targetX: Float, targetY: Float): PlanProposal {
-        val c = moveOpeningCandidate(plan, openingId, targetX, targetY, "نقل الفتحة إلى أقرب موضع صالح")
-            ?: return rejected("لا يمكن نقل الباب أو النافذة إلى هذا الموضع بأمان")
-        return toProposal(plan, c)
+        val opening = plan.openings.firstOrNull { it.id == openingId } ?: return rejected("لم أجد الباب أو النافذة المطلوبة")
+        if (opening.locked) return rejected("العنصر ${opening.id} مقفل")
+        val wall = opening.wallId?.let { id -> plan.walls.firstOrNull { it.id == id } }
+            ?: return rejected("الفتحة غير مرتبطة بجدار موثوق")
+        val t = parameter(targetX, targetY, wall)
+        val next = moveOpeningToParameter(plan, openingId, t) ?: return rejected("الموضع الجديد غير صالح")
+        return toProposal(plan, buildCandidate(plan, next, "نقل الفتحة", "نقل مع Snap وفحص الاتصال"))
     }
 
-    private fun roomCandidates(plan: FloorPlan, roomId: String, action: String): List<Candidate> = when (action.uppercase()) {
-        "MOVE" -> listOf(
-            Triple(2f, 0f, "يمين"), Triple(-2f, 0f, "يسار"),
-            Triple(0f, 2f, "أسفل"), Triple(0f, -2f, "أعلى"),
-            Triple(3.5f, 0f, "يمين أبعد"), Triple(-3.5f, 0f, "يسار أبعد")
-        ).mapNotNull { (dx, dy, label) -> moveRoomCandidate(plan, roomId, dx, dy, "نقل $label") }
+    private fun roomCandidates(plan: FloorPlan, roomId: String, action: String): List<Candidate> {
+        val room = plan.rooms.firstOrNull { it.id == roomId } ?: return emptyList()
+        if (room.locked) return emptyList()
+        val plans: List<Triple<String, FloorPlan, String>> = when (action) {
+            "MOVE" -> listOfNotNull(
+                translateRoom(plan, roomId, 4f, 0f)?.let { Triple("يمين", it, "نقل الغرفة إلى اليمين مع تحديث حدودها المشتركة") },
+                translateRoom(plan, roomId, -4f, 0f)?.let { Triple("يسار", it, "نقل الغرفة إلى اليسار مع تحديث حدودها المشتركة") },
+                translateRoom(plan, roomId, 0f, 4f)?.let { Triple("أسفل", it, "نقل الغرفة إلى الأسفل مع تحديث حدودها المشتركة") },
+                translateRoom(plan, roomId, 0f, -4f)?.let { Triple("أعلى", it, "نقل الغرفة إلى الأعلى مع تحديث حدودها المشتركة") }
+            )
+            "EXPAND" -> resizeCandidates(plan, room, true)
+            "SHRINK" -> resizeCandidates(plan, room, false)
+            else -> emptyList()
+        }
+        return plans.mapNotNull { (title, next, reason) ->
+            val check = verify(plan, next)
+            if (!check.feasible) null else buildCandidate(plan, next, title, reason)
+        }
+    }
 
-        "EXPAND" -> listOf(
-            Triple(1.5f, 1.5f, "متوازن"), Triple(2.5f, 1f, "عرضي"), Triple(1f, 2.5f, "طولي")
-        ).mapNotNull { (dw, dh, label) -> resizeRoomCandidate(plan, roomId, dw, dh, "تكبير $label") }
-
-        "SHRINK" -> listOf(
-            Triple(-1.5f, -1.5f, "متوازن"), Triple(-2.5f, -1f, "عرضي"), Triple(-1f, -2.5f, "طولي")
-        ).mapNotNull { (dw, dh, label) -> resizeRoomCandidate(plan, roomId, dw, dh, "تصغير $label") }
-
-        else -> emptyList()
+    private fun resizeCandidates(plan: FloorPlan, room: Room, expand: Boolean): List<Triple<String, FloorPlan, String>> {
+        val step = 3.2f
+        return Edge.entries.mapNotNull { edge ->
+            val delta = when (edge) {
+                Edge.LEFT -> if (expand) -step else step
+                Edge.RIGHT -> if (expand) step else -step
+                Edge.TOP -> if (expand) -step else step
+                Edge.BOTTOM -> if (expand) step else -step
+            }
+            val wall = boundaryWall(plan, room, edge)
+            val next = if (wall != null) {
+                when (edge) {
+                    Edge.LEFT, Edge.RIGHT -> shiftWall(plan, wall.id, delta, 0f)
+                    Edge.TOP, Edge.BOTTOM -> shiftWall(plan, wall.id, 0f, delta)
+                }
+            } else if (plan.walls.isEmpty()) {
+                resizeRoomRect(plan, room.id, edge, delta)
+            } else null
+            next?.let {
+                val check = verify(plan, it)
+                if (!check.feasible) return@mapNotNull null
+                val label = when (edge) {
+                    Edge.LEFT -> "من اليسار"
+                    Edge.RIGHT -> "من اليمين"
+                    Edge.TOP -> "من الأعلى"
+                    Edge.BOTTOM -> "من الأسفل"
+                }
+                Triple(label, it, if (expand) "تكبير ${room.name} $label مع تعديل الحد المشترك" else "تصغير ${room.name} $label واستثمار المساحة المحررة")
+            }
+        }
     }
 
     private fun openingCandidates(plan: FloorPlan, openingId: String, action: String): List<Candidate> {
-        if (action.uppercase() != "MOVE") return emptyList()
         val opening = plan.openings.firstOrNull { it.id == openingId } ?: return emptyList()
-        if (opening.locked) return emptyList()
+        if (opening.locked || action != "MOVE") return emptyList()
         val wall = opening.wallId?.let { id -> plan.walls.firstOrNull { it.id == id } } ?: return emptyList()
-        if (wall.locked) return emptyList()
-        val currentT = segmentT(opening.x, opening.y, wall)
-        return listOf(-0.18f, -0.10f, 0.10f, 0.18f).mapNotNull { dt ->
-            val t = (currentT + dt).coerceIn(0.08f, 0.92f)
-            val point = PlanPoint(
-                wall.start.x + (wall.end.x - wall.start.x) * t,
-                wall.start.y + (wall.end.y - wall.start.y) * t
-            )
-            moveOpeningCandidate(plan, openingId, point.x, point.y, "تحريك على نفس الجدار")
+        val t = parameter(opening.x, opening.y, wall)
+        return listOf(-.22f, -.12f, .12f, .22f).mapNotNull { dt ->
+            val next = moveOpeningToParameter(plan, openingId, (t + dt).coerceIn(.08f, .92f)) ?: return@mapNotNull null
+            val direction = if (dt < 0) "جهة بداية الجدار" else "جهة نهاية الجدار"
+            val check = verify(plan, next)
+            if (!check.feasible) null else buildCandidate(plan, next, direction, "نقل الفتحة على نفس الجدار مع Snap وإعادة قراءة اتصالها بالفراغات")
         }
     }
 
     private fun wallCandidates(plan: FloorPlan, wallId: String, action: String): List<Candidate> {
-        if (action.uppercase() != "MOVE") return emptyList()
         val wall = plan.walls.firstOrNull { it.id == wallId } ?: return emptyList()
-        if (wall.locked || wall.kind == "external") return emptyList()
-        // The current room model stores rectangular room bounds independently of wall faces.
-        // Moving a wall line alone would create a false plan, so no candidate is emitted yet.
-        return emptyList()
+        if (wall.locked || action != "MOVE" || wall.kind == "external" || wall.confidence < 65) return emptyList()
+        val vertical = abs(wall.start.x - wall.end.x) <= 1.1f
+        val horizontal = abs(wall.start.y - wall.end.y) <= 1.1f
+        if (!vertical && !horizontal) return emptyList()
+        val step = 2.8f
+        val variants = listOfNotNull(
+            (if (vertical) shiftWall(plan, wallId, -step, 0f) else shiftWall(plan, wallId, 0f, -step))?.let { Triple("بديل A", it, "تحريك الجدار في الاتجاه الأول مع تحديث الغرف والفتحات المرتبطة") },
+            (if (vertical) shiftWall(plan, wallId, step, 0f) else shiftWall(plan, wallId, 0f, step))?.let { Triple("بديل B", it, "تحريك الجدار في الاتجاه المقابل مع تحديث الغرف والفتحات المرتبطة") }
+        )
+        return variants.mapNotNull { (title, next, reason) ->
+            val check = verify(plan, next)
+            if (!check.feasible) null else buildCandidate(plan, next, title, reason)
+        }
     }
 
-    private fun moveRoomCandidate(
-        plan: FloorPlan,
-        roomId: String,
-        deltaXPct: Float,
-        deltaYPct: Float,
-        label: String
-    ): Candidate? {
+    private fun translateRoom(plan: FloorPlan, roomId: String, dx: Float, dy: Float): FloorPlan? {
         val room = plan.rooms.firstOrNull { it.id == roomId } ?: return null
         if (room.locked) return null
-        val moved = room.copy(
-            x = snap((room.x + deltaXPct).coerceIn(0f, 100f - room.width)),
-            y = snap((room.y + deltaYPct).coerceIn(0f, 100f - room.height))
-        )
-        if (!roomChanged(room, moved)) return null
-        val next = plan.copy(rooms = plan.rooms.map { if (it.id == roomId) moved else it })
-        return buildCandidate(
-            plan,
-            next,
-            title = label,
-            reason = "نقل ${room.name} مع Snap وفحص التداخل والخصوصية",
-            changes = listOf(PlanChange(room.id, room.name, "MOVE", room.areaM2.takeIf { it > 0 }, moved.areaM2.takeIf { it > 0 }, label))
-        )
+        if (plan.walls.isEmpty()) {
+            val nx = snap((room.x + dx).coerceIn(0f, 100f - room.width))
+            val ny = snap((room.y + dy).coerceIn(0f, 100f - room.height))
+            return plan.copy(rooms = plan.rooms.map { if (it.id == roomId) it.copy(x = nx, y = ny) else it })
+        }
+
+        val left = boundaryWall(plan, room, Edge.LEFT) ?: return null
+        val right = boundaryWall(plan, room, Edge.RIGHT) ?: return null
+        val top = boundaryWall(plan, room, Edge.TOP) ?: return null
+        val bottom = boundaryWall(plan, room, Edge.BOTTOM) ?: return null
+        if (listOf(left, right, top, bottom).any { it.kind == "external" || it.locked || it.confidence < 65 }) return null
+
+        var next = plan
+        if (abs(dx) > .05f) {
+            next = shiftWall(next, left.id, dx, 0f) ?: return null
+            next = shiftWall(next, right.id, dx, 0f) ?: return null
+        }
+        if (abs(dy) > .05f) {
+            next = shiftWall(next, top.id, 0f, dy) ?: return null
+            next = shiftWall(next, bottom.id, 0f, dy) ?: return null
+        }
+        return next.takeIf { verify(plan, it).feasible }
     }
 
-    private fun resizeRoomCandidate(
-        plan: FloorPlan,
-        roomId: String,
-        deltaWidthPct: Float,
-        deltaHeightPct: Float,
-        label: String
-    ): Candidate? {
-        val room = plan.rooms.firstOrNull { it.id == roomId } ?: return null
-        if (room.locked) return null
-        val resized = room.copy(
-            width = snap((room.width + deltaWidthPct).coerceIn(2f, 100f - room.x)),
-            height = snap((room.height + deltaHeightPct).coerceIn(2f, 100f - room.y))
-        )
-        if (!roomChanged(room, resized)) return null
-        val nextArea = scaledArea(plan, resized)
-        val updated = resized.copy(areaM2 = nextArea ?: room.areaM2)
-        val next = plan.copy(rooms = plan.rooms.map { if (it.id == roomId) updated else it })
-        return buildCandidate(
-            plan,
-            next,
-            title = label,
-            reason = "تعديل مساحة ${room.name} مع فحص الحدود والتداخل والأثر الوظيفي",
-            changes = listOf(PlanChange(room.id, room.name, "RESIZE", room.areaM2.takeIf { it > 0 }, updated.areaM2.takeIf { it > 0 }, label))
-        )
-    }
-
-    private fun moveOpeningCandidate(
-        plan: FloorPlan,
-        openingId: String,
-        targetX: Float,
-        targetY: Float,
-        label: String
-    ): Candidate? {
+    private fun moveOpeningToward(plan: FloorPlan, openingId: String, dx: Float, dy: Float): FloorPlan? {
         val opening = plan.openings.firstOrNull { it.id == openingId } ?: return null
-        if (opening.locked || plan.walls.isEmpty()) return null
-        val wall = plan.walls
-            .filterNot { it.locked }
-            .minByOrNull { pointToSegment(targetX, targetY, it.start.x, it.start.y, it.end.x, it.end.y) }
-            ?: return null
-        val snapped = projectToSegment(targetX, targetY, wall)
-        val moved = opening.copy(x = snap(snapped.x), y = snap(snapped.y), wallId = wall.id)
-        if (!openingChanged(opening, moved)) return null
-        val next = plan.copy(openings = plan.openings.map { if (it.id == openingId) moved else it })
-        return buildCandidate(
-            plan,
-            next,
-            title = label,
-            reason = "الموضع مسقّط على الجدار ${wall.id} ثم مراجع معماريًا قبل الاعتماد",
-            changes = listOf(PlanChange(roomName = opening.id, action = "MOVE_OPENING", note = label))
-        )
+        if (opening.locked) return null
+        val wall = opening.wallId?.let { id -> plan.walls.firstOrNull { it.id == id } } ?: return null
+        val desiredX = opening.x + dx
+        val desiredY = opening.y + dy
+        return moveOpeningToParameter(plan, openingId, parameter(desiredX, desiredY, wall))
     }
 
-    private fun buildCandidate(
-        current: FloorPlan,
-        next: FloorPlan,
-        title: String,
-        reason: String,
-        changes: List<PlanChange>
-    ): Candidate? {
-        val geometry = verify(current, next)
-        if (!geometry.feasible) return null
+    private fun moveOpeningToParameter(plan: FloorPlan, openingId: String, tWanted: Float): FloorPlan? {
+        val opening = plan.openings.firstOrNull { it.id == openingId } ?: return null
+        if (opening.locked) return null
+        val wall = opening.wallId?.let { id -> plan.walls.firstOrNull { it.id == id } } ?: return null
+        if (wall.locked) return null
+        val trials = listOf(0f, -.04f, .04f, -.08f, .08f, -.12f, .12f)
+        val chosen = trials.map { (tWanted + it).coerceIn(.08f, .92f) }.firstOrNull { t ->
+            val p = pointOn(wall, t)
+            plan.openings.filter { it.id != opening.id && it.wallId == wall.id }.none { other ->
+                hypot((other.x - p.x).toDouble(), (other.y - p.y).toDouble()) < max(2.4, ((opening.width + other.width) * .48).toDouble())
+            }
+        } ?: return null
+        val p = pointOn(wall, chosen)
+        val rotation = Math.toDegrees(atan2((wall.end.y - wall.start.y).toDouble(), (wall.end.x - wall.start.x).toDouble())).toFloat()
+        val linked = nearRoomIds(plan, p.x, p.y)
+        val next = plan.copy(openings = plan.openings.map {
+            if (it.id == opening.id) it.copy(x = snap(p.x), y = snap(p.y), rotationDeg = rotation, connectsRoomIds = linked) else it
+        })
+        return next.takeIf { verify(plan, it).feasible }
+    }
+
+    private fun moveWallByDrag(plan: FloorPlan, wallId: String, dx: Float, dy: Float): FloorPlan? {
+        val wall = plan.walls.firstOrNull { it.id == wallId } ?: return null
+        if (wall.locked || wall.kind == "external" || wall.confidence < 65) return null
+        val vertical = abs(wall.start.x - wall.end.x) <= 1.1f
+        val horizontal = abs(wall.start.y - wall.end.y) <= 1.1f
+        return when {
+            vertical -> shiftWall(plan, wallId, dx, 0f)
+            horizontal -> shiftWall(plan, wallId, 0f, dy)
+            else -> null
+        }
+    }
+
+    /**
+     * Move an internal orthogonal wall and update the room faces and openings attached to it.
+     * If no room face can be associated confidently, the move is refused.
+     */
+    private fun shiftWall(plan: FloorPlan, wallId: String, dxRaw: Float, dyRaw: Float): FloorPlan? {
+        val wall = plan.walls.firstOrNull { it.id == wallId } ?: return null
+        if (wall.locked || wall.kind == "external" || wall.confidence < 65) return null
+        val vertical = abs(wall.start.x - wall.end.x) <= 1.1f
+        val horizontal = abs(wall.start.y - wall.end.y) <= 1.1f
+        if (!vertical && !horizontal) return null
+
+        val dx = if (vertical) snapDelta(dxRaw) else 0f
+        val dy = if (horizontal) snapDelta(dyRaw) else 0f
+        if (abs(dx) + abs(dy) < .1f) return null
+
+        val moved = wall.copy(
+            start = PlanPoint(wall.start.x + dx, wall.start.y + dy),
+            end = PlanPoint(wall.end.x + dx, wall.end.y + dy)
+        )
+        if (listOf(moved.start.x, moved.start.y, moved.end.x, moved.end.y).any { it !in 0f..100f }) return null
+
+        val changedRooms = mutableMapOf<String, Room>()
+        plan.rooms.forEach { room ->
+            var fresh = room
+            if (vertical && spansOverlap(room.y, room.y + room.height, wall.start.y, wall.end.y) >= min(3f, room.height * .35f)) {
+                val x = wall.start.x
+                when {
+                    abs(room.x + room.width - x) <= 1.8f -> fresh = resizeRight(room, dx)
+                    abs(room.x - x) <= 1.8f -> fresh = resizeLeft(room, dx)
+                }
+            } else if (horizontal && spansOverlap(room.x, room.x + room.width, wall.start.x, wall.end.x) >= min(3f, room.width * .35f)) {
+                val y = wall.start.y
+                when {
+                    abs(room.y + room.height - y) <= 1.8f -> fresh = resizeBottom(room, dy)
+                    abs(room.y - y) <= 1.8f -> fresh = resizeTop(room, dy)
+                }
+            }
+            if (fresh != room) {
+                if (room.locked || fresh.width < 1f || fresh.height < 1f || fresh.x < 0f || fresh.y < 0f || fresh.x + fresh.width > 100f || fresh.y + fresh.height > 100f) return null
+                changedRooms[room.id] = fresh
+            }
+        }
+        if (changedRooms.isEmpty()) return null
+
+        var next = plan.copy(
+            rooms = plan.rooms.map { changedRooms[it.id] ?: it },
+            walls = plan.walls.map { if (it.id == wall.id) moved else it },
+            openings = plan.openings.map { o -> if (o.wallId == wall.id) o.copy(x = o.x + dx, y = o.y + dy) else o }
+        )
+        next = next.copy(openings = next.openings.map { o ->
+            if (o.wallId == wall.id) o.copy(connectsRoomIds = nearRoomIds(next, o.x, o.y)) else o
+        })
+        return next.takeIf { verify(plan, it).feasible }
+    }
+
+    private fun resizeRoomRect(plan: FloorPlan, roomId: String, edge: Edge, delta: Float): FloorPlan? {
+        val room = plan.rooms.firstOrNull { it.id == roomId } ?: return null
+        if (room.locked) return null
+        val fresh = when (edge) {
+            Edge.LEFT -> resizeLeft(room, delta)
+            Edge.RIGHT -> resizeRight(room, delta)
+            Edge.TOP -> resizeTop(room, delta)
+            Edge.BOTTOM -> resizeBottom(room, delta)
+        }
+        if (fresh.width < 1f || fresh.height < 1f || fresh.x < 0f || fresh.y < 0f || fresh.x + fresh.width > 100f || fresh.y + fresh.height > 100f) return null
+        return plan.copy(rooms = plan.rooms.map { if (it.id == roomId) fresh else it })
+    }
+
+    private fun resizeLeft(room: Room, delta: Float): Room {
+        val newWidth = room.width - delta
+        return room.copy(x = room.x + delta, width = newWidth, areaM2 = scaledArea(room, newWidth, room.height))
+    }
+
+    private fun resizeRight(room: Room, delta: Float): Room {
+        val newWidth = room.width + delta
+        return room.copy(width = newWidth, areaM2 = scaledArea(room, newWidth, room.height))
+    }
+
+    private fun resizeTop(room: Room, delta: Float): Room {
+        val newHeight = room.height - delta
+        return room.copy(y = room.y + delta, height = newHeight, areaM2 = scaledArea(room, room.width, newHeight))
+    }
+
+    private fun resizeBottom(room: Room, delta: Float): Room {
+        val newHeight = room.height + delta
+        return room.copy(height = newHeight, areaM2 = scaledArea(room, room.width, newHeight))
+    }
+
+    private fun scaledArea(room: Room, width: Float, height: Float): Double {
+        if (room.areaM2 <= 0 || room.width <= .01f || room.height <= .01f) return room.areaM2
+        val ratio = (width * height / (room.width * room.height)).toDouble()
+        return (room.areaM2 * ratio).coerceAtLeast(0.0)
+    }
+
+    private fun boundaryWall(plan: FloorPlan, room: Room, edge: Edge): Wall? {
+        val target = when (edge) {
+            Edge.LEFT -> room.x
+            Edge.RIGHT -> room.x + room.width
+            Edge.TOP -> room.y
+            Edge.BOTTOM -> room.y + room.height
+        }
+        val verticalEdge = edge == Edge.LEFT || edge == Edge.RIGHT
+        return plan.walls.mapNotNull { wall ->
+            val vertical = abs(wall.start.x - wall.end.x) <= 1.1f
+            val horizontal = abs(wall.start.y - wall.end.y) <= 1.1f
+            if ((verticalEdge && !vertical) || (!verticalEdge && !horizontal)) return@mapNotNull null
+            val distance = if (verticalEdge) abs(wall.start.x - target) else abs(wall.start.y - target)
+            if (distance > 2.0f) return@mapNotNull null
+            val overlap = if (verticalEdge) spansOverlap(room.y, room.y + room.height, wall.start.y, wall.end.y)
+            else spansOverlap(room.x, room.x + room.width, wall.start.x, wall.end.x)
+            val needed = if (verticalEdge) min(3f, room.height * .35f) else min(3f, room.width * .35f)
+            if (overlap < needed) null else wall to (distance - overlap * .02f)
+        }.minByOrNull { it.second }?.first
+    }
+
+    private fun nearRoomIds(plan: FloorPlan, x: Float, y: Float): List<String> = plan.rooms
+        .map { it to pointRectDistance(x, y, it) }
+        .filter { it.second <= 1.8f }
+        .sortedBy { it.second }
+        .take(2)
+        .map { it.first.id }
+
+    private fun pointRectDistance(px: Float, py: Float, r: Room): Float {
+        val dx = max(max(r.x - px, 0f), px - (r.x + r.width))
+        val dy = max(max(r.y - py, 0f), py - (r.y + r.height))
+        return hypot(dx.toDouble(), dy.toDouble()).toFloat()
+    }
+
+    private fun parameter(x: Float, y: Float, wall: Wall): Float {
+        val dx = wall.end.x - wall.start.x
+        val dy = wall.end.y - wall.start.y
+        val den = dx * dx + dy * dy
+        if (den < .0001f) return .5f
+        return (((x - wall.start.x) * dx + (y - wall.start.y) * dy) / den).coerceIn(0f, 1f)
+    }
+
+    private fun pointOn(wall: Wall, t: Float) = PlanPoint(
+        wall.start.x + (wall.end.x - wall.start.x) * t,
+        wall.start.y + (wall.end.y - wall.start.y) * t
+    )
+
+    private fun spansOverlap(a0: Float, a1: Float, b0: Float, b1: Float): Float {
+        val lowA = min(a0, a1); val highA = max(a0, a1)
+        val lowB = min(b0, b1); val highB = max(b0, b1)
+        return (min(highA, highB) - max(lowA, lowB)).coerceAtLeast(0f)
+    }
+
+    private fun buildCandidate(current: FloorPlan, next: FloorPlan, title: String, reason: String): Candidate {
         val review = ArchitecturalEngine.architecturalReview(current, next)
+        val check = verify(current, next)
         val before = ArchitecturalEngine.score(current)
         val after = ArchitecturalEngine.score(next)
         val delta = (after.overall - before.overall).coerceIn(-20, 20)
-        val objectionPenalty = review.objections.size * 16
-        val warningPenalty = geometry.warnings.size.coerceAtMost(3) * 3
-        val score = (86 + delta - objectionPenalty - warningPenalty).coerceIn(20, 99)
-        return Candidate(title, reason, next, score, review, changes, geometry.warnings)
+        val score = (88 + delta - review.objections.size * 14 - review.notes.size * 2 - check.warnings.size.coerceAtMost(3) * 2).coerceIn(15, 99)
+        return Candidate(title, reason, next, score, review, diff(current, next), check.warnings)
+    }
+
+    private fun diff(current: FloorPlan, next: FloorPlan): List<PlanChange> {
+        val changes = mutableListOf<PlanChange>()
+        val nextRooms = next.rooms.associateBy { it.id }
+        current.rooms.forEach { old ->
+            val fresh = nextRooms[old.id] ?: return@forEach
+            if (roomChanged(old, fresh)) {
+                changes += PlanChange(old.id, old.name, "MOVE_RESIZE", old.areaM2.takeIf { it > 0 }, fresh.areaM2.takeIf { it > 0 }, "تحدثت حدود الغرفة والعناصر المشتركة هندسيًا")
+            }
+        }
+        val nextOpenings = next.openings.associateBy { it.id }
+        current.openings.forEach { old ->
+            val fresh = nextOpenings[old.id] ?: return@forEach
+            if (openingChanged(old, fresh)) {
+                val label = if (old.type.lowercase().contains("window") || old.type.contains("ناف")) "نافذة ${old.id}" else "باب ${old.id}"
+                changes += PlanChange(null, label, "MOVE_OPENING", null, null, "تم نقل الفتحة مع Snap وإعادة فحص اتصالها")
+            }
+        }
+        val nextWalls = next.walls.associateBy { it.id }
+        current.walls.forEach { old ->
+            val fresh = nextWalls[old.id] ?: return@forEach
+            if (wallChanged(old, fresh)) changes += PlanChange(null, "جدار ${old.id}", "MOVE_WALL", null, null, "تحرك الجدار وتحدثت الغرف والفتحات المرتبطة به")
+        }
+        return changes.distinctBy { "${it.action}:${it.roomId}:${it.roomName}" }
     }
 
     private fun parseTargetSize(text: String): TargetSize? {
@@ -325,12 +535,6 @@ object GeometrySolver {
                 }
             )
         }
-    }
-
-    private fun scaledArea(plan: FloorPlan, room: Room): Double? {
-        val w = plan.widthM ?: return null
-        val h = plan.heightM ?: return null
-        return (room.width / 100.0 * w) * (room.height / 100.0 * h)
     }
 
     private fun overlapPairs(plan: FloorPlan): Map<Pair<String, String>, Double> {
@@ -369,34 +573,20 @@ object GeometrySolver {
         abs(a.x - b.x) > 0.1f || abs(a.y - b.y) > 0.1f || a.wallId != b.wallId || abs(a.width - b.width) > 0.1f
 
     private fun snap(v: Float): Float = (round(v * 2f) / 2f).coerceIn(0f, 100f)
-
-    private fun projectToSegment(px: Float, py: Float, wall: Wall): PlanPoint {
-        val ax = wall.start.x; val ay = wall.start.y
-        val bx = wall.end.x; val by = wall.end.y
-        val dx = bx - ax; val dy = by - ay
-        if (abs(dx) < 0.0001f && abs(dy) < 0.0001f) return wall.start
-        val t = (((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)).coerceIn(0f, 1f)
-        return PlanPoint(ax + t * dx, ay + t * dy)
-    }
-
-    private fun segmentT(px: Float, py: Float, wall: Wall): Float {
-        val dx = wall.end.x - wall.start.x
-        val dy = wall.end.y - wall.start.y
-        if (abs(dx) < 0.0001f && abs(dy) < 0.0001f) return 0f
-        return (((px - wall.start.x) * dx + (py - wall.start.y) * dy) / (dx * dx + dy * dy)).coerceIn(0f, 1f)
-    }
+    private fun snapDelta(v: Float): Float = round(v * 2f) / 2f
 
     private fun pointToSegment(px: Float, py: Float, ax: Float, ay: Float, bx: Float, by: Float): Double {
         val dx = bx - ax; val dy = by - ay
-        if (abs(dx) < 0.0001f && abs(dy) < 0.0001f) return hypot((px - ax).toDouble(), (py - ay).toDouble())
+        if (abs(dx) < .0001f && abs(dy) < .0001f) return hypot((px - ax).toDouble(), (py - ay).toDouble())
         val t = (((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)).coerceIn(0f, 1f)
         val x = ax + t * dx; val y = ay + t * dy
         return hypot((px - x).toDouble(), (py - y).toDouble())
     }
 
-    private fun fingerprint(plan: FloorPlan): String = buildString {
-        plan.rooms.forEach { append("r${it.id}:${it.x},${it.y},${it.width},${it.height};") }
-        plan.openings.forEach { append("o${it.id}:${it.x},${it.y},${it.wallId};") }
+    private fun signature(plan: FloorPlan): String = buildString {
+        plan.rooms.forEach { append(it.id).append(':').append("%.1f".format(it.x)).append(',').append("%.1f".format(it.y)).append(',').append("%.1f".format(it.width)).append(',').append("%.1f".format(it.height)).append(';') }
+        plan.openings.forEach { append(it.id).append('@').append("%.1f".format(it.x)).append(',').append("%.1f".format(it.y)).append(';') }
+        plan.walls.forEach { append(it.id).append('#').append("%.1f".format(it.start.x)).append(',').append("%.1f".format(it.start.y)).append(';') }
     }
 
     private fun rejected(message: String) = PlanProposal(
