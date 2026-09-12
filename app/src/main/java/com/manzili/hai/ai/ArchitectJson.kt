@@ -1,6 +1,9 @@
 package com.manzili.hai.ai
 
 import com.manzili.hai.model.FloorPlan
+import com.manzili.hai.model.PlanChange
+import com.manzili.hai.model.PlanPreferences
+import com.manzili.hai.model.PlanProposal
 import com.manzili.hai.model.Room
 import org.json.JSONObject
 
@@ -13,37 +16,90 @@ object ArchitectJson {
         return clean.substring(first, last + 1)
     }
 
-    fun parsePlan(raw: String): FloorPlan {
+    fun parsePlan(raw: String): FloorPlan = parsePlanObject(JSONObject(extractJson(raw)))
+
+    fun parseProposal(raw: String): PlanProposal {
         val root = JSONObject(extractJson(raw))
+        val updated = root.optJSONObject("updated_plan")?.let { parsePlanObject(it) }
+        val changesJson = root.optJSONArray("changes")
+        val changes = buildList {
+            if (changesJson != null) for (i in 0 until changesJson.length()) {
+                val c = changesJson.optJSONObject(i) ?: continue
+                add(
+                    PlanChange(
+                        roomId = c.optString("room_id").takeIf { it.isNotBlank() },
+                        roomName = c.optString("room_name", ""),
+                        action = c.optString("action", "MODIFY"),
+                        beforeAreaM2 = optPositiveDouble(c, "before_area_m2"),
+                        afterAreaM2 = optPositiveDouble(c, "after_area_m2"),
+                        note = c.optString("note", "")
+                    )
+                )
+            }
+        }
+        return PlanProposal(
+            message = root.optString("message", "راجعت الطلب هندسيًا."),
+            updatedPlan = updated,
+            changes = changes,
+            requiresConfirmation = root.optBoolean("requires_confirmation", true),
+            confidence = root.optInt("confidence", if (updated == null) 0 else 70).coerceIn(0, 100)
+        )
+    }
+
+    private fun parsePlanObject(root: JSONObject): FloorPlan {
         val roomsJson = root.optJSONArray("rooms")
         val rooms = buildList {
             if (roomsJson != null) for (i in 0 until roomsJson.length()) {
-                val r = roomsJson.getJSONObject(i)
-                add(Room(
-                    id = r.optString("id", "r$i"),
-                    name = r.optString("name", "غرفة"),
-                    type = r.optString("type", "room"),
-                    x = r.optDouble("x", 0.0).toFloat().coerceIn(0f, 100f),
-                    y = r.optDouble("y", 0.0).toFloat().coerceIn(0f, 100f),
-                    width = r.optDouble("width", 20.0).toFloat().coerceIn(2f, 100f),
-                    height = r.optDouble("height", 20.0).toFloat().coerceIn(2f, 100f),
-                    areaM2 = r.optDouble("area_m2", 0.0),
-                    confidence = r.optInt("confidence", 80).coerceIn(0, 100)
-                ))
+                val r = roomsJson.optJSONObject(i) ?: continue
+                add(
+                    Room(
+                        id = r.optString("id", "r$i"),
+                        name = r.optString("name", "غرفة"),
+                        type = r.optString("type", "room"),
+                        x = r.optDouble("x", 0.0).toFloat().coerceIn(0f, 100f),
+                        y = r.optDouble("y", 0.0).toFloat().coerceIn(0f, 100f),
+                        width = r.optDouble("width", 20.0).toFloat().coerceIn(1f, 100f),
+                        height = r.optDouble("height", 20.0).toFloat().coerceIn(1f, 100f),
+                        areaM2 = r.optDouble("area_m2", 0.0).coerceAtLeast(0.0),
+                        confidence = r.optInt("confidence", 80).coerceIn(0, 100),
+                        locked = r.optBoolean("locked", false),
+                        minAreaM2 = optPositiveDouble(r, "min_area_m2"),
+                        preferredAreaM2 = optPositiveDouble(r, "preferred_area_m2")
+                    )
+                )
             }
         }
-        fun strings(key: String): List<String> {
-            val a = root.optJSONArray(key) ?: return emptyList()
-            return (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() }
-        }
+
+        val prefsJson = root.optJSONObject("preferences")
+        val preferences = PlanPreferences(
+            privacyPriority = prefsJson?.optInt("privacy", 80)?.coerceIn(0, 100) ?: 80,
+            circulationPriority = prefsJson?.optInt("circulation", 80)?.coerceIn(0, 100) ?: 80,
+            daylightPriority = prefsJson?.optInt("daylight", 70)?.coerceIn(0, 100) ?: 70,
+            futureFlexibilityPriority = prefsJson?.optInt("future_flexibility", 60)?.coerceIn(0, 100) ?: 60,
+            notes = strings(prefsJson, "notes")
+        )
+
         return FloorPlan(
             title = root.optString("title", "المخطط"),
-            widthM = root.optDouble("building_width_m").takeIf { !it.isNaN() && it > 0 },
-            heightM = root.optDouble("building_height_m").takeIf { !it.isNaN() && it > 0 },
+            widthM = optPositiveDouble(root, "building_width_m"),
+            heightM = optPositiveDouble(root, "building_height_m"),
             rooms = rooms,
-            observations = strings("observations"),
-            uncertainties = strings("uncertainties"),
-            sourceSummary = root.optString("summary", "")
+            observations = strings(root, "observations"),
+            uncertainties = strings(root, "uncertainties"),
+            sourceSummary = root.optString("summary", ""),
+            preferences = preferences,
+            revision = root.optInt("revision", 1).coerceAtLeast(1)
         )
+    }
+
+    private fun strings(root: JSONObject?, key: String): List<String> {
+        if (root == null) return emptyList()
+        val a = root.optJSONArray(key) ?: return emptyList()
+        return (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() }
+    }
+
+    private fun optPositiveDouble(root: JSONObject, key: String): Double? {
+        val value = root.optDouble(key, Double.NaN)
+        return value.takeIf { !it.isNaN() && it > 0.0 }
     }
 }
