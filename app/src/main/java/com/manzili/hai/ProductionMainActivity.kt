@@ -52,10 +52,20 @@ private fun ProductionApp() {
         plan = MultiFloorGeometryEngine.normalize(ready)
     }
 
-    fun updateProject(next: FloorPlan) {
-        val normalized = PlanVerificationEngine.inspect(next).plan
-        val carried = plan?.let { ProjectMemoryEngine.carryForward(it, normalized) } ?: ProjectMemoryEngine.reconcile(normalized)
-        val ready = MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(carried))
+    fun updateProject(next: FloorPlan, allowSaudiRulesSettingChange: Boolean = false) {
+        val verified = PlanVerificationEngine.inspect(next).plan
+        val current = plan
+        val hydrated = if (current != null && verified.floors.isEmpty() && current.floors.isNotEmpty()) {
+            verified.copy(
+                floors = current.floors,
+                activeFloorId = current.activeFloorId,
+                site = current.site,
+                saudiRulesEnabled = current.saudiRulesEnabled
+            )
+        } else verified
+        val carried = current?.let { ProjectMemoryEngine.carryForward(it, hydrated) } ?: ProjectMemoryEngine.reconcile(hydrated)
+        val settingsSafe = if (current != null && !allowSaudiRulesSettingChange) carried.copy(saudiRulesEnabled = current.saudiRulesEnabled) else carried
+        val ready = MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(settingsSafe))
         store.save(ready)
         plan = MultiFloorGeometryEngine.normalize(ready)
     }
@@ -82,7 +92,7 @@ private fun ProductionApp() {
                 composable("editor") { EnhancedEditor(nav, plan) { updateProject(it) } }
                 composable("polygon") { PolygonVertexEditorScreen(nav, plan) { updateProject(it) } }
                 composable("floors") { ProjectFloorsScreen(nav, plan) { updateProject(it) } }
-                composable("saudi-rules") { SaudiRulesScreen(nav, plan) { updateProject(it) } }
+                composable("saudi-rules") { SaudiRulesScreen(nav, plan) { updateProject(it, allowSaudiRulesSettingChange = true) } }
                 composable("projects") {
                     ProjectLibraryScreen(nav, store) { opened ->
                         plan = opened?.let { MultiFloorGeometryEngine.normalize(PlanVerificationEngine.inspect(it).plan) }
