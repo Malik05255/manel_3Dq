@@ -56,7 +56,7 @@ object GltfPlanExporter {
         }
         val rootNodes=JSONArray((0 until nodes.length()).toList())
         val json=JSONObject()
-            .put("asset",JSONObject().put("version","2.0").put("generator","Manzili HAI 0.60"))
+            .put("asset",JSONObject().put("version","2.0").put("generator","Manzili HAI 0.62"))
             .put("scene",0).put("scenes",JSONArray().put(JSONObject().put("nodes",rootNodes).put("name",scene.title)))
             .put("nodes",nodes).put("meshes",meshesJson).put("materials",materials).put("bufferViews",bufferViews).put("accessors",accessors)
             .put("buffers",JSONArray().put(JSONObject().put("byteLength",bin.size())))
@@ -91,8 +91,10 @@ object GltfPlanExporter {
         .put(material("Planting Soil",0.22,0.20,0.12,1.0,1.0))
 
     private fun material(name:String,r:Double,g:Double,b:Double,a:Double,roughness:Double,blend:Boolean=false,metallic:Double=0.0):JSONObject=JSONObject()
-        .put("name",name).put("pbrMetallicRoughness",JSONObject().put("baseColorFactor",JSONArray(listOf(r,g,b,a))).put("metallicFactor",metallic).put("roughnessFactor",roughness))
-        .apply{if(blend){put("alphaMode","BLEND");put("doubleSided",true)}}
+        .put("name",name)
+        .put("doubleSided",true)
+        .put("pbrMetallicRoughness",JSONObject().put("baseColorFactor",JSONArray(listOf(r,g,b,a))).put("metallicFactor",metallic).put("roughnessFactor",roughness))
+        .apply{if(blend)put("alphaMode","BLEND")}
 
     private fun materialIndex(kind:String):Int=when(kind){
         "wall"->0;"slab"->1;"structural"->2;"door"->3;"window"->4;"roof","saudi-parapet"->5
