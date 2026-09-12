@@ -25,6 +25,45 @@ object OpeningVerticalProfileEngine {
         return Profile(opening.id, height?.value, if (window) sill?.value else 0.0, confidence, verified)
     }
 
+    fun confirm(plan: FloorPlan, openingId: String, heightM: Double, sillHeightM: Double? = null): FloorPlan {
+        val opening = allOpenings(plan).firstOrNull { it.id == openingId } ?: return plan
+        if (heightM !in 0.4..6.0) return plan
+        val window = isWindow(opening.type)
+        if (window && (sillHeightM == null || sillHeightM !in 0.0..3.5)) return plan
+        val next = plan.constraints.filterNot {
+            openingId in it.targetIds && it.kind in setOf(HEIGHT_KIND, SILL_KIND)
+        }.toMutableList()
+        next += ProjectConstraint(
+            id = "opening-height-$openingId",
+            kind = HEIGHT_KIND,
+            text = "ارتفاع فتحة مؤكد من المستخدم",
+            targetIds = listOf(openingId),
+            value = heightM,
+            hard = true,
+            priority = 100,
+            active = true
+        )
+        if (window) {
+            next += ProjectConstraint(
+                id = "opening-sill-$openingId",
+                kind = SILL_KIND,
+                text = "جلسة نافذة مؤكدة من المستخدم",
+                targetIds = listOf(openingId),
+                value = sillHeightM,
+                hard = true,
+                priority = 100,
+                active = true
+            )
+        }
+        return plan.copy(constraints = next)
+    }
+
+    fun clear(plan: FloorPlan, openingId: String): FloorPlan = plan.copy(
+        constraints = plan.constraints.filterNot {
+            openingId in it.targetIds && it.kind in setOf(HEIGHT_KIND, SILL_KIND)
+        }
+    )
+
     fun unverifiedLinkedOpenings(plan: FloorPlan): List<Opening> = allOpenings(plan)
         .filter { !it.wallId.isNullOrBlank() }
         .filterNot { profile(plan, it).verified }
