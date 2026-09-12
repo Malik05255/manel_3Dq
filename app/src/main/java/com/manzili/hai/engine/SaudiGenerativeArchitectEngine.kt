@@ -15,8 +15,12 @@ object SaudiGenerativeArchitectEngine {
         aiSeed:FloorPlan?=null
     ):Result {
         val pool=mutableListOf<NewBuildSolver.Candidate>()
-        val base=GlobalLayoutOptimizer.generate(program)
-        pool += base.map { enrich(it,projectType,brief,"محرك البحث الهندسي") }
+        val typeSeeds=SaudiProjectTypeSeedEngine.generate(program,projectType)
+        val base=if(projectType==SaudiProjectTypeEngine.Type.VILLA_ONE||projectType==SaudiProjectTypeEngine.Type.VILLA_TWO) {
+            GlobalLayoutOptimizer.generate(program)
+        } else typeSeeds
+        pool += typeSeeds.map { enrich(it,projectType,brief,"Seed محلي خاص بالنوع") }
+        if(base!==typeSeeds) pool += base.map { enrich(it,projectType,brief,"محرك البحث الهندسي") }
 
         base.forEachIndexed { index,candidate ->
             validCandidate(mirror(candidate.plan,true),projectType,brief,"انعكاس أفقي مستقل","hybrid-h-$index")?.let(pool::add)
@@ -50,7 +54,7 @@ object SaudiGenerativeArchitectEngine {
             selected.take(3).mapIndexed { index,c->c.copy(
                 id="saudi-gen-${index+1}",
                 title=when(index){0->"HAI • الحل الأقوى";1->"HAI • بديل مختلف";else->"HAI • بديل ثالث"},
-                metrics=(c.metrics+listOf(projectType.label,if(aiAccepted)"AI seed + Geometry" else "Local hybrid search","Saudi audit ${SaudiResidentialEngine.inspect(c.plan).score}/100")).distinct()
+                metrics=(c.metrics+listOf(projectType.label,if(aiAccepted)"AI seed + Geometry" else "Type-aware local fallback","Saudi audit ${SaudiResidentialEngine.inspect(c.plan).score}/100")).distinct()
             )},
             SearchStats(aiAccepted,pool.size,valid.size,distinct.size)
         )
