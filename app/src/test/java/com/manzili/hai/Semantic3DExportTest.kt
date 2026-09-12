@@ -1,6 +1,8 @@
 package com.manzili.hai
 
+import com.manzili.hai.engine.Architectural3DEnhancementEngine
 import com.manzili.hai.engine.Semantic3DEngine
+import com.manzili.hai.export.GltfPlanExporter
 import com.manzili.hai.export.IfcPlanExporter
 import com.manzili.hai.export.ObjPlanExporter
 import com.manzili.hai.model.FloorPlan
@@ -9,6 +11,7 @@ import com.manzili.hai.model.PlanPoint
 import com.manzili.hai.model.ProjectConstraint
 import com.manzili.hai.model.Room
 import com.manzili.hai.model.Wall
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -59,6 +62,23 @@ class Semantic3DExportTest {
     }
 
     @Test
+    fun enhancedSceneAddsRoofDoorAndWindowMeshes() {
+        val scene = Architectural3DEnhancementEngine.build(plan())
+        assertTrue(scene.meshes.any { it.kind == "roof" })
+        assertTrue(scene.meshes.any { it.kind == "door" && it.sourceId == "d1" })
+        assertTrue(scene.meshes.any { it.kind == "window" && it.sourceId == "win1" })
+    }
+
+    @Test
+    fun gltfIsSelfContainedVersionTwo() {
+        val gltf = JSONObject(GltfPlanExporter.renderGltf(plan()))
+        assertEquals("2.0", gltf.getJSONObject("asset").getString("version"))
+        assertTrue(gltf.getJSONArray("meshes").length() > 0)
+        assertTrue(gltf.getJSONArray("buffers").getJSONObject(0).getString("uri").startsWith("data:application/octet-stream;base64,"))
+        assertTrue(GltfPlanExporter.renderGlb(plan()).size > 100)
+    }
+
+    @Test
     fun objContainsActualMeshAndSemanticOpeningEvidence() {
         val obj = ObjPlanExporter.render(plan())
         assertTrue(obj.contains("# units=m"))
@@ -66,6 +86,7 @@ class Semantic3DExportTest {
         assertTrue(obj.contains("\nf "))
         assertTrue(obj.contains("# semantic openings"))
         assertTrue(obj.contains("id=d1"))
+        assertTrue(obj.contains("_roof_"))
     }
 
     @Test
