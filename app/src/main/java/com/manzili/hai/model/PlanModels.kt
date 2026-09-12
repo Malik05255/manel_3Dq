@@ -125,7 +125,8 @@ data class FloorPlan(
     val northDeg: Float? = null,
     val site: SiteContext = SiteContext(),
     val floors: List<FloorLevel> = emptyList(),
-    val activeFloorId: String? = null
+    val activeFloorId: String? = null,
+    val saudiRulesEnabled: Boolean = false
 )
 
 data class PlanChange(
