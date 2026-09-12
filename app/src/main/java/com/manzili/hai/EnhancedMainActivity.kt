@@ -89,6 +89,9 @@ private fun EnhancedManziliApp() {
                 composable("memory") {
                     ProjectMemoryManagerScreen(nav, plan) { updated -> updateProject(updated) }
                 }
+                composable("tools") {
+                    ProjectToolsScreen(nav, store, plan) { opened -> plan = opened }
+                }
                 composable("settings") { AiSettings(nav) }
             }
         }
@@ -111,22 +114,22 @@ private fun PersistentHome(nav: NavHostController, plan: FloorPlan?, projectCoun
                 IconButton(onClick = { nav.navigate("projects") }) { Icon(Icons.Rounded.FolderCopy, "مشاريعي") }
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(20.dp))
             Surface(color = EnhancedMist, shape = RoundedCornerShape(50.dp)) {
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.AutoAwesome, null, tint = EnhancedBronze, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("$projectCount مشروع • ذاكرة قواعد • سجل نسخ", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text("$projectCount مشروع • ذاكرة قواعد • نسخ قابلة للنقل", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
-            Spacer(Modifier.height(15.dp))
+            Spacer(Modifier.height(14.dp))
             Text("بيتك يبدأ\nبقرار محسوب.", fontSize = 38.sp, lineHeight = 43.sp, fontWeight = FontWeight.Black)
             Text(
-                "HAI يحفظ كل مشروع مستقلًا، ويتذكر قواعده ونسخه السابقة بدون خلط بين المشاريع.",
+                "HAI يحفظ كل مشروع مستقلًا، يقارن نسخه، ويستطيع نقل المشروع كاملًا بين الأجهزة بدون فقد القواعد.",
                 color = Color.Gray,
                 fontSize = 14.sp,
                 lineHeight = 21.sp,
-                modifier = Modifier.padding(top = 9.dp, bottom = 20.dp)
+                modifier = Modifier.padding(top = 9.dp, bottom = 17.dp)
             )
 
             if (plan != null) {
@@ -134,7 +137,7 @@ private fun PersistentHome(nav: NavHostController, plan: FloorPlan?, projectCoun
                     onClick = { nav.navigate("editor") },
                     colors = CardDefaults.cardColors(containerColor = EnhancedDeep),
                     shape = RoundedCornerShape(25.dp),
-                    modifier = Modifier.fillMaxWidth().height(132.dp)
+                    modifier = Modifier.fillMaxWidth().height(126.dp)
                 ) {
                     Row(Modifier.fillMaxSize().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(52.dp).background(Color.White.copy(alpha = .11f), RoundedCornerShape(17.dp)), contentAlignment = Alignment.Center) {
@@ -149,29 +152,32 @@ private fun PersistentHome(nav: NavHostController, plan: FloorPlan?, projectCoun
                         Icon(Icons.Rounded.ArrowBackIosNew, null, tint = Color.White.copy(alpha = .75f), modifier = Modifier.size(17.dp))
                     }
                 }
-                Spacer(Modifier.height(9.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { nav.navigate("memory") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
-                        Icon(Icons.Rounded.Bookmarks, null, Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("قواعد المشروع", fontSize = 10.sp)
+                        Icon(Icons.Rounded.Bookmarks, null, Modifier.size(15.dp)); Spacer(Modifier.width(4.dp)); Text("القواعد", fontSize = 9.5.sp)
                     }
                     OutlinedButton(onClick = { nav.navigate("projects") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
-                        Icon(Icons.Rounded.History, null, Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("المشاريع والنسخ", fontSize = 10.sp)
+                        Icon(Icons.Rounded.History, null, Modifier.size(15.dp)); Spacer(Modifier.width(4.dp)); Text("المشاريع", fontSize = 9.5.sp)
                     }
                 }
-                Spacer(Modifier.height(11.dp))
+                OutlinedButton(onClick = { nav.navigate("tools") }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp), shape = RoundedCornerShape(14.dp)) {
+                    Icon(Icons.Rounded.CompareArrows, null, Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("مقارنة النسخ • تصدير / استيراد HAI", fontSize = 10.sp)
+                }
+                Spacer(Modifier.height(9.dp))
             }
 
             Card(
                 onClick = { nav.navigate("build") },
                 colors = CardDefaults.cardColors(containerColor = EnhancedPaper),
                 shape = RoundedCornerShape(23.dp),
-                modifier = Modifier.fillMaxWidth().height(104.dp)
+                modifier = Modifier.fillMaxWidth().height(98.dp)
             ) {
-                Row(Modifier.fillMaxSize().padding(17.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(46.dp).background(EnhancedMist, RoundedCornerShape(15.dp)), contentAlignment = Alignment.Center) {
+                Row(Modifier.fillMaxSize().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(44.dp).background(EnhancedMist, RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
                         Icon(Icons.Rounded.NoteAdd, null, tint = EnhancedDeep)
                     }
-                    Spacer(Modifier.width(13.dp))
+                    Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(if (projectCount == 0) "ابدأ مشروعك" else "ابدأ مشروعًا جديدًا", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         Text("يُحفظ كمشروع مستقل عن الموجود", color = Color.Gray, fontSize = 11.sp)
@@ -181,7 +187,7 @@ private fun PersistentHome(nav: NavHostController, plan: FloorPlan?, projectCoun
             }
 
             Spacer(Modifier.weight(1f))
-            Text("الحفظ والنسخ الحالية محلية على هذا الجهاز. الاستعادة تحفظ النسخة الحالية وتفتح نسخة أحدث.", color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(bottom = 16.dp))
+            Text("أرشيف HAI يتضمن المخطط والقواعد وسجل النسخ، ويخضع لفحص سلامة قبل الاستيراد.", color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(bottom = 14.dp))
         }
     }
 }
