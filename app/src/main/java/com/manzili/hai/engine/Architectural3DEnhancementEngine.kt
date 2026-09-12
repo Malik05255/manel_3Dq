@@ -59,11 +59,14 @@ object Architectural3DEnhancementEngine {
             } else warnings += "${floor.name}: لم أضف سقف 3D لأن حدود الدور غير كافية."
         }
 
+        val preFacade = base.copy(meshes = base.meshes + extra)
+        val facade = SaudiFacadeGeometryEngine.build(plan, preFacade)
+        warnings += facade.warnings
         if (plan.site.countryCode.equals("SA", true)) {
             warnings += "هوية 3D السعودية: ${SaudiResidentialEngine.styleLabel(plan)} • ${SaudiResidentialEngine.climateLabel(plan)}."
-            warnings += "دروة السطح عنصر عرض معماري افتراضي وليست قياسًا تنفيذيًا أو اشتراطًا رسميًا."
+            warnings += "دروة السطح وعناصر الواجهة طبقة تصميم هندسية مشتقة من المخطط وليست قياسات تنفيذية أو اشتراطات رسمية."
         }
-        return base.copy(meshes = base.meshes + extra, warnings = warnings.distinct())
+        return base.copy(meshes = base.meshes + extra + facade.meshes, warnings = warnings.distinct())
     }
 
     private data class FloorSource(

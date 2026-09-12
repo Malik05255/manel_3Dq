@@ -6,3 +6,4 @@ torch==2.8.0+cpu
 torchvision==0.23.0+cpu
 segmentation-models-pytorch>=0.3.3,<0.6
 safetensors>=0.4,<1
+huggingface-hub>=0.24,<2

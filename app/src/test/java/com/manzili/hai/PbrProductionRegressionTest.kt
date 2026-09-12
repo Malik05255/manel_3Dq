@@ -31,7 +31,7 @@ class PbrProductionRegressionTest {
         assertTrue(json.contains("\"NORMAL\""))
         assertTrue(json.contains("pbrMetallicRoughness"))
         assertTrue(json.contains("\"pbrReady\": true") || json.contains("\"pbrReady\":true"))
-        assertTrue(json.contains("Manzili HAI 0.44"))
+        assertTrue(json.contains("Manzili HAI 0.50"))
     }
 
     @Test fun glbHasValidV2ContainerHeader() {

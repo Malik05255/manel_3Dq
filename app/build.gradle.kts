@@ -17,8 +17,8 @@ android {
         applicationId = "com.manzili.hai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 44
-        versionName = "0.44.0"
+        versionCode = 50
+        versionName = "0.50.0"
     }
 
     if (releaseSigningReady) {
@@ -68,8 +68,6 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.mlkit:text-recognition:16.0.1")
-
-    // Filament-backed real-time PBR renderer. 2.2.1 matches this app's Kotlin 1.9.24 / Compose 1.6 toolchain.
     implementation("io.github.sceneview:sceneview:2.2.1")
 
     testImplementation("junit:junit:4.13.2")

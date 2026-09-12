@@ -1,0 +1,3 @@
+# Licensed/de-identified Saudi benchmark cases go here as JSONL rows.
+# Intentionally empty: no real plan is fabricated or redistributed without rights.
+# Required fields: id, city, region, source, asset, reference, floors, license, deidentified, split, project_type

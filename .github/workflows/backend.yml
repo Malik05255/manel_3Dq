@@ -2,7 +2,7 @@ name: Backend Build
 
 on:
   push:
-    branches: [ main, codex/seven-stage-production, codex/three-priority-production ]
+    branches: [ main, codex/seven-stage-production, codex/three-priority-production, codex/seven-production-upgrade ]
     paths:
       - 'backend/**'
       - 'render.yaml'
@@ -25,7 +25,7 @@ jobs:
       - name: Import FastAPI application
         working-directory: backend
         run: |
-          python -c "from app.main import app; assert app.title == 'Manzili HAI Backend'; assert app.version == '0.44.0'"
+          python -c "from app.main import app; assert app.title == 'Manzili HAI Backend'; assert app.version == '0.50.0'"
       - name: Validate deployment blueprint
         run: |
           grep -q 'healthCheckPath: /readyz' render.yaml

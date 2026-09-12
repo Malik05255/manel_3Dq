@@ -2,7 +2,7 @@ name: Backend ML Validation
 
 on:
   push:
-    branches: [ main, codex/seven-stage-production, codex/three-priority-production ]
+    branches: [ main, codex/seven-stage-production, codex/three-priority-production, codex/seven-production-upgrade ]
     paths:
       - 'backend/app/cubicasa_model.py'
       - 'backend/app/parser.py'
