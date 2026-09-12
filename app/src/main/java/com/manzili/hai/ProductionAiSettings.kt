@@ -5,6 +5,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -16,19 +17,32 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import com.manzili.hai.data.HaiSettings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
+import java.util.concurrent.TimeUnit
+
+private data class BackendProbe(val ok: Boolean, val message: String)
 
 @Composable
 fun ProductionAiSettings(nav: NavHostController) {
     val context = LocalContext.current
     val settings = remember(context) { HaiSettings(context) }
+    val scope = rememberCoroutineScope()
     var backendMode by remember { mutableStateOf(settings.backendMode) }
     var backendUrl by remember { mutableStateOf(settings.backendBaseUrl) }
+    var backendToken by remember { mutableStateOf(settings.backendAccessToken) }
     var supabaseUrl by remember { mutableStateOf(settings.supabaseUrl) }
     var publishable by remember { mutableStateOf(settings.supabasePublishableKey) }
     var directEndpoint by remember { mutableStateOf(settings.directEndpoint) }
     var directKey by remember { mutableStateOf(settings.directApiKey) }
     var model by remember { mutableStateOf(settings.model) }
     var saved by remember { mutableStateOf(false) }
+    var probing by remember { mutableStateOf(false) }
+    var probe by remember { mutableStateOf<BackendProbe?>(null) }
 
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(18.dp)) {
@@ -45,19 +59,56 @@ fun ProductionAiSettings(nav: NavHostController) {
                         Text("استخدم Backend الآمن", fontWeight = FontWeight.Bold)
                         Text("عند تفعيله لا يحتاج التطبيق مفتاح مزود AI.", fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary)
                     }
-                    Switch(backendMode, { backendMode = it })
+                    Switch(backendMode, { backendMode = it; probe = null })
                 }
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(model, { model = it }, label = { Text("Model ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(10.dp))
                 if (backendMode) {
-                    OutlinedTextField(backendUrl, { backendUrl = it }, label = { Text("Backend URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(backendUrl, { backendUrl = it; probe = null }, label = { Text("Backend URL") }, supportingText = { Text("مثال: https://manzili-hai-deep-parser.onrender.com") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(supabaseUrl, { supabaseUrl = it }, label = { Text("Supabase URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(
+                        backendToken,
+                        { backendToken = it; probe = null },
+                        label = { Text("Backend access token") },
+                        supportingText = { Text("يُخزن AES-256 مشفرًا على الجهاز ولا يُضمّن داخل APK.") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(publishable, { publishable = it }, label = { Text("Supabase publishable key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedButton(
+                        enabled = !probing && backendUrl.isNotBlank() && backendToken.isNotBlank(),
+                        onClick = {
+                            probing = true; probe = null
+                            scope.launch {
+                                val result = probeBackend(backendUrl, backendToken)
+                                probe = result
+                                probing = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                    ) {
+                        if (probing) CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Rounded.CloudDone, null)
+                        Spacer(Modifier.width(7.dp))
+                        Text(if (probing) "يفحص Deep Parser…" else "اختبار Backend وDeep Parser")
+                    }
+                    probe?.let { result ->
+                        Text(
+                            result.message,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (result.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 7.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(supabaseUrl, { supabaseUrl = it }, label = { Text("Supabase URL (اختياري)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(publishable, { publishable = it }, label = { Text("Supabase publishable key (اختياري)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
-                    Text("رمز الجلسة يُخزن مشفرًا على الجهاز عند ربط الحساب.", fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary)
+                    Text("يمكن استخدام جلسة Supabase بدل الرمز الثابت لاحقًا؛ كلاهما يبقى خارج ملفات التطبيق المصدرية.", fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary)
                 } else {
                     OutlinedTextField(directEndpoint, { directEndpoint = it }, label = { Text("Provider endpoint") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(10.dp))
@@ -69,6 +120,7 @@ fun ProductionAiSettings(nav: NavHostController) {
             Button(onClick = {
                 settings.backendMode = backendMode
                 settings.backendBaseUrl = backendUrl
+                settings.backendAccessToken = backendToken
                 settings.supabaseUrl = supabaseUrl
                 settings.supabasePublishableKey = publishable
                 settings.directEndpoint = directEndpoint
@@ -82,4 +134,26 @@ fun ProductionAiSettings(nav: NavHostController) {
             Spacer(Modifier.height(10.dp))
         }
     }
+}
+
+private suspend fun probeBackend(rawBaseUrl: String, token: String): BackendProbe = withContext(Dispatchers.IO) {
+    val base = rawBaseUrl.trim().trimEnd('/')
+    if (!base.startsWith("https://") && !base.startsWith("http://")) return@withContext BackendProbe(false, "رابط Backend غير صحيح")
+    val client = OkHttpClient.Builder().connectTimeout(12, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
+    runCatching {
+        val request = Request.Builder()
+            .url("$base/v1/parser/status")
+            .header("Authorization", "Bearer ${token.trim()}")
+            .get()
+            .build()
+        client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) return@use BackendProbe(false, "Backend رد ${response.code}: ${body.take(120)}")
+            val json = JSONObject(body)
+            val ready = json.optBoolean("ready", false)
+            val path = json.optString("preferred_path", "")
+            if (ready) BackendProbe(true, "متصل ✓ Deep Parser جاهز فعليًا${if (path.isNotBlank()) " • $path" else ""}")
+            else BackendProbe(false, "Backend متصل لكن نموذج Deep Parser غير جاهز")
+        }
+    }.getOrElse { BackendProbe(false, "فشل الاتصال: ${it.message.orEmpty().take(140)}") }
 }
