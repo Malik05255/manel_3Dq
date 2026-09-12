@@ -15,6 +15,34 @@ data class Room(
     val preferredAreaM2: Double? = null
 )
 
+data class PlanPoint(
+    val x: Float,
+    val y: Float
+)
+
+data class Wall(
+    val id: String,
+    val start: PlanPoint,
+    val end: PlanPoint,
+    val thicknessCm: Double? = null,
+    val kind: String = "unknown",
+    val confidence: Int = 80,
+    val locked: Boolean = false
+)
+
+data class Opening(
+    val id: String,
+    val type: String,
+    val x: Float,
+    val y: Float,
+    val width: Float,
+    val rotationDeg: Float = 0f,
+    val wallId: String? = null,
+    val connectsRoomIds: List<String> = emptyList(),
+    val confidence: Int = 80,
+    val locked: Boolean = false
+)
+
 data class PlanPreferences(
     val privacyPriority: Int = 80,
     val circulationPriority: Int = 80,
@@ -28,6 +56,8 @@ data class FloorPlan(
     val widthM: Double? = null,
     val heightM: Double? = null,
     val rooms: List<Room> = emptyList(),
+    val walls: List<Wall> = emptyList(),
+    val openings: List<Opening> = emptyList(),
     val observations: List<String> = emptyList(),
     val uncertainties: List<String> = emptyList(),
     val sourceSummary: String = "",
