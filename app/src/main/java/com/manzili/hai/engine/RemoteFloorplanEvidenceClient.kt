@@ -16,6 +16,14 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 class RemoteFloorplanEvidenceClient(private val context: Context) {
+    data class Readiness(
+        val ready:Boolean,
+        val preferredPath:String,
+        val configured:Boolean,
+        val modelLabel:String,
+        val detail:String
+    )
+
     data class PageResult(
         val pageIndex: Int,
         val walls: List<Wall>,
@@ -41,9 +49,35 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
 
     val available: Boolean get() = settings.backendConfigured
 
-    suspend fun analyze(uri: Uri, maxPdfPages: Int = 5): Result = withContext(Dispatchers.IO) {
+    suspend fun readiness():Readiness = withContext(Dispatchers.IO) {
+        if(!available) return@withContext Readiness(false,"none",false,"none","Backend غير مفعّل")
+        val request=Request.Builder()
+            .url("${settings.backendBaseUrl}/v1/parser/status")
+            .header("Authorization","Bearer ${settings.backendAccessToken}")
+            .get()
+            .build()
+        runCatching {
+            http.newCall(request).execute().use { response ->
+                val text=response.body?.string().orEmpty()
+                if(!response.isSuccessful) return@use Readiness(false,"status-${response.code}",true,"unknown",text.take(180))
+                val root=JSONObject(text)
+                val model=root.optJSONObject("model")
+                Readiness(
+                    ready=root.optBoolean("ready",false),
+                    preferredPath=root.optString("preferred_path","fallback"),
+                    configured=model?.optBoolean("configured",false)?:false,
+                    modelLabel=model?.optString("backend","unknown")?:"unknown",
+                    detail=root.optString("detail","")
+                )
+            }
+        }.getOrElse { Readiness(false,"network",true,"unknown",it.message.orEmpty()) }
+    }
+
+    suspend fun analyze(uri: Uri, maxPdfPages: Int = 8): Result = withContext(Dispatchers.IO) {
         require(available) { "Backend غير مفعّل" }
-        val images = renderer.render(uri, maxPdfPages = maxPdfPages, targetMaxPx = 1800, jpegQuality = 88)
+        val state=readiness()
+        require(state.ready) { "Deep Parser غير جاهز: ${state.detail.ifBlank { state.preferredPath }}" }
+        val images = renderer.render(uri, maxPdfPages = maxPdfPages.coerceIn(1,12), targetMaxPx = 1800, jpegQuality = 88)
         val pages = images.map { image -> requestPage(image.pageIndex, image.base64Jpeg) }
         Result(pages)
     }
@@ -54,6 +88,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
             .url("${settings.backendBaseUrl}/v1/parse-floorplan")
             .header("Authorization", "Bearer ${settings.backendAccessToken}")
             .header("Content-Type", "application/json")
+            .header("X-Manzili-Parser-Client", "android-0.41")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
         http.newCall(req).execute().use { res ->
