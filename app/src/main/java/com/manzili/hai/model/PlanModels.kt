@@ -16,10 +16,7 @@ data class Room(
     val polygon: List<PlanPoint> = emptyList()
 )
 
-data class PlanPoint(
-    val x: Float,
-    val y: Float
-)
+data class PlanPoint(val x: Float, val y: Float)
 
 data class Wall(
     val id: String,
@@ -28,7 +25,8 @@ data class Wall(
     val thicknessCm: Double? = null,
     val kind: String = "unknown",
     val confidence: Int = 80,
-    val locked: Boolean = false
+    val locked: Boolean = false,
+    val adjacentRoomIds: List<String> = emptyList()
 )
 
 data class Opening(
@@ -52,7 +50,21 @@ data class PlanDimension(
     val start: PlanPoint? = null,
     val end: PlanPoint? = null,
     val confidence: Int = 70,
-    val sourceText: String = ""
+    val sourceText: String = "",
+    val pageIndex: Int = 0
+)
+
+data class StructuralElement(
+    val id: String,
+    val type: String,
+    val footprint: List<PlanPoint>,
+    val rotationDeg: Float = 0f,
+    val widthM: Double? = null,
+    val depthM: Double? = null,
+    val confidence: Int = 80,
+    val locked: Boolean = false,
+    val connectsFloorIds: List<String> = emptyList(),
+    val notes: String = ""
 )
 
 data class RoadEdge(
@@ -84,7 +96,8 @@ data class FloorLevel(
     val footprint: List<PlanPoint> = emptyList(),
     val rooms: List<Room> = emptyList(),
     val walls: List<Wall> = emptyList(),
-    val openings: List<Opening> = emptyList()
+    val openings: List<Opening> = emptyList(),
+    val elements: List<StructuralElement> = emptyList()
 )
 
 data class ProjectConstraint(
@@ -126,7 +139,8 @@ data class FloorPlan(
     val site: SiteContext = SiteContext(),
     val floors: List<FloorLevel> = emptyList(),
     val activeFloorId: String? = null,
-    val saudiRulesEnabled: Boolean = false
+    val saudiRulesEnabled: Boolean = false,
+    val elements: List<StructuralElement> = emptyList()
 )
 
 data class PlanChange(
