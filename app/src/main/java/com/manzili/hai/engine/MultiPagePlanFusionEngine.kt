@@ -7,7 +7,7 @@ object MultiPagePlanFusionEngine {
     fun merge(pages:List<FloorPlan>,totalPdfPages:Int=pages.size):FloorPlan {
         require(pages.isNotEmpty()){"لا توجد صفحات لدمجها"}
         if(pages.size==1) return pages.first()
-        val normalized=pages.mapIndexed { index,prefix -> prefix(prefix,index) }
+        val normalized=pages.mapIndexed { index,plan -> prefix(plan,index) }
         val floors=normalized.mapIndexed { index,p ->
             FloorLevel(
                 id="pdf-floor-$index",
@@ -38,6 +38,7 @@ object MultiPagePlanFusionEngine {
             openings=floors.first().openings,
             elements=floors.first().elements,
             footprint=floors.first().footprint,
+            dimensions=normalized.flatMap { it.dimensions }.distinctBy { "${it.pageIndex}:${it.id}:${it.valueM}" },
             observations=observations,
             uncertainties=uncertainties,
             sourceSummary="HAI حلّل ${pages.size} صفحة PDF كطبقات هندسية مستقلة ثم وحّدها في مشروع واحد."
