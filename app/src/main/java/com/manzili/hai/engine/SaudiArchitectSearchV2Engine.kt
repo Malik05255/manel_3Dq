@@ -4,29 +4,20 @@ import com.manzili.hai.model.FloorPlan
 import com.manzili.hai.model.Room
 import kotlin.math.abs
 
-/** Bounded beam-search repair loop guided by the senior Saudi architect critic. */
 object SaudiArchitectSearchV2Engine {
     data class Refined(val plan:FloorPlan,val score:Int,val depth:Int,val rationale:String)
 
-    fun refine(
-        seed:FloorPlan,
-        type:SaudiProjectTypeEngine.Type,
-        brief:SaudiDeepBriefEngine.Brief,
-        beamWidth:Int=5,
-        depth:Int=2
-    ):List<Refined> {
+    fun refine(seed:FloorPlan,type:SaudiProjectTypeEngine.Type,brief:SaudiDeepBriefEngine.Brief,beamWidth:Int=5,depth:Int=2):List<Refined> {
         var beam=listOf(score(seed,type,brief,0,"الحل الأصلي"))
         repeat(depth.coerceIn(1,3)){level->
-            val expanded=mutableListOf<Refined>()
-            expanded+=beam
+            val expanded=mutableListOf<Refined>();expanded+=beam
             beam.forEach{state->
                 val critic=SaudiArchitectCriticEngine.inspect(state.plan,type,brief)
                 targetRooms(state.plan,critic).take(5).forEach{room->
                     actionsFor(room,critic).forEach{action->
                         GeometrySolver.actionCandidates(state.plan,"room",room.id,action).take(2).forEach{candidate->
                             if(candidate.review.objections.isNotEmpty())return@forEach
-                            val inspected=GeometryV3Engine.inspect(candidate.plan)
-                            if(!inspected.valid)return@forEach
+                            val inspected=GeometryV3Engine.inspect(candidate.plan);if(!inspected.valid)return@forEach
                             val scored=score(inspected.plan,type,brief,level+1,"$action ${room.name.ifBlank{room.type}}")
                             if(SaudiArchitectCriticEngine.inspect(scored.plan,type,brief).hardViolations.isEmpty())expanded+=scored
                         }
@@ -40,10 +31,13 @@ object SaudiArchitectSearchV2Engine {
 
     private fun score(plan:FloorPlan,type:SaudiProjectTypeEngine.Type,brief:SaudiDeepBriefEngine.Brief,depth:Int,rationale:String):Refined {
         val critic=SaudiArchitectCriticEngine.inspect(plan,type,brief)
+        val experience=SaudiArchitectExperienceEngine.inspect(plan,brief)
         val architectural=ArchitecturalEngine.score(plan)
         val saudi=SaudiResidentialEngine.inspect(plan)
-        val score=(critic.score*.48+architectural.overall*.32+saudi.score*.20).toInt().coerceIn(0,100)
-        return Refined(plan,score,depth,rationale)
+        val score=(critic.score*.40+experience.score*.18+architectural.overall*.27+saudi.score*.15).toInt().coerceIn(0,100)
+        val weakest=experience.categories.minByOrNull{it.value}
+        val reason=if(weakest!=null)"$rationale • خبرة ${experience.score}/100 • أضعف ${weakest.key}=${weakest.value}" else rationale
+        return Refined(plan,score,depth,reason)
     }
 
     private fun targetRooms(plan:FloorPlan,critic:SaudiArchitectCriticEngine.Critique):List<Room> {
