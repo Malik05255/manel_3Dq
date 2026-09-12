@@ -19,7 +19,8 @@ import com.manzili.hai.data.HaiSettings
 
 @Composable
 fun ProductionAiSettings(nav: NavHostController) {
-    val settings = remember { HaiSettings(LocalContext.current) }
+    val context = LocalContext.current
+    val settings = remember(context) { HaiSettings(context) }
     var backendMode by remember { mutableStateOf(settings.backendMode) }
     var backendUrl by remember { mutableStateOf(settings.backendBaseUrl) }
     var supabaseUrl by remember { mutableStateOf(settings.supabaseUrl) }
@@ -56,7 +57,7 @@ fun ProductionAiSettings(nav: NavHostController) {
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(publishable, { publishable = it }, label = { Text("Supabase publishable key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
-                    Text("رمز الجلسة يُنشأ من شاشة السحابة بعد تسجيل الدخول ويُخزن مشفرًا على الجهاز.", fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary)
+                    Text("رمز الجلسة يُخزن مشفرًا على الجهاز عند ربط الحساب.", fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary)
                 } else {
                     OutlinedTextField(directEndpoint, { directEndpoint = it }, label = { Text("Provider endpoint") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(10.dp))
