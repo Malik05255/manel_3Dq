@@ -9,19 +9,23 @@ import java.util.Locale
 
 /**
  * Compact IFC4 Reference View export built from Semantic3DEngine.
- *
- * IFC is deliberately disabled until plan scale is sufficiently confirmed. The exporter creates
- * spatial hierarchy, storeys, semantic spaces, wall/slab/structural products, closed BRep geometry,
- * opening elements and IfcRelVoidsElement relations back to their canonical walls.
+ * IFC export requires confirmed metric scale and verified vertical dimensions for linked openings.
  */
 object IfcPlanExporter {
     private const val IFC64 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$"
 
-    fun canExport(plan: FloorPlan): Boolean = Semantic3DEngine.build(plan).metricReady
+    fun canExport(plan: FloorPlan): Boolean {
+        val scene = Semantic3DEngine.build(plan)
+        return scene.metricReady && scene.openings.filter { !it.wallId.isNullOrBlank() }.all { it.verticalVerified }
+    }
 
     fun render(plan: FloorPlan): String {
         val scene = Semantic3DEngine.build(plan)
         require(scene.metricReady) { "IFC يحتاج مقياسًا متريًا مؤكدًا وأبعاد المخطط قبل التصدير." }
+        val missingVertical = scene.openings.filter { !it.wallId.isNullOrBlank() && !it.verticalVerified }
+        require(missingVertical.isEmpty()) {
+            "IFC يحتاج ارتفاعًا رأسيًا مؤكدًا لكل باب ونافذة مرتبطة بجدار. المتبقي: ${missingVertical.joinToString(", ") { it.id }}"
+        }
         return Writer(plan, scene).render()
     }
 
@@ -80,7 +84,7 @@ object IfcPlanExporter {
                 appendLine("ISO-10303-21;")
                 appendLine("HEADER;")
                 appendLine("FILE_DESCRIPTION(('ViewDefinition [ReferenceView_V1.2]'),'2;1');")
-                appendLine("FILE_NAME('$safeName.ifc','$stamp',('Manzili HAI'),('Manzili HAI'),'Manzili HAI 0.22','Manzili HAI','');")
+                appendLine("FILE_NAME('$safeName.ifc','$stamp',('Manzili HAI'),('Manzili HAI'),'Manzili HAI','Manzili HAI','');")
                 appendLine("FILE_SCHEMA(('IFC4'));")
                 appendLine("ENDSEC;")
                 appendLine("DATA;")
@@ -133,7 +137,7 @@ object IfcPlanExporter {
         }
 
         private fun createOpenings() {
-            scene.openings.filter { !it.wallId.isNullOrBlank() }.forEach { opening ->
+            scene.openings.filter { !it.wallId.isNullOrBlank() && it.verticalVerified }.forEach { opening ->
                 val wall = productBySource[opening.floorId to opening.wallId!!] ?: return@forEach
                 val storeyPlace = floorPlacement[opening.floorId] ?: return@forEach
                 val point = entity("IFCCARTESIANPOINT((${f(opening.center.x)},${f(opening.center.y)},${f(opening.center.z)}))")
