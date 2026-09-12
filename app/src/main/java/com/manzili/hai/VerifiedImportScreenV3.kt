@@ -16,10 +16,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
-import com.manzili.hai.ai.HaiArchitectClient
+import com.manzili.hai.ai.MultiPageHaiPlanAnalyzer
 import com.manzili.hai.engine.DimensionEvidenceEngine
 import com.manzili.hai.engine.FloorplanParserEngine
-import com.manzili.hai.engine.OpeningEvidenceFusion
+import com.manzili.hai.engine.MultiFloorGeometryEngine
+import com.manzili.hai.engine.MultiPageEvidenceFusionEngine
 import com.manzili.hai.engine.PlanTextOcrEngine
 import com.manzili.hai.engine.RasterFloorplanParserEngine
 import com.manzili.hai.engine.RemoteFloorplanEvidenceClient
@@ -37,7 +38,7 @@ fun VerifiedImportScreenV3(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val vision = remember { HaiArchitectClient(context) }
+    val vision = remember { MultiPageHaiPlanAnalyzer(context) }
     val localOcr = remember { PlanTextOcrEngine(context) }
     val raster = remember { RasterFloorplanParserEngine(context) }
     val remote = remember { RemoteFloorplanEvidenceClient(context) }
@@ -58,7 +59,7 @@ fun VerifiedImportScreenV3(
                 IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
                 Column {
                     Text("استيراد مخطط", fontSize = 24.sp, fontWeight = FontWeight.Black)
-                    Text(if (remote.available) "Vision + OCR + Raster + Deep segmentation" else "Vision + OCR + Raster")
+                    Text(if (remote.available) "Multi-page Vision + OCR + Raster + Deep Parser" else "Multi-page Vision + OCR + Raster")
                 }
             }
             Spacer(Modifier.height(18.dp))
@@ -66,10 +67,12 @@ fun VerifiedImportScreenV3(
                 Text(if (source == null) "اختر PDF أو صورة" else "الملف جاهز للتحليل")
             }
             Spacer(Modifier.height(14.dp))
-            Text("الجدران والأبواب والنوافذ القادمة من النموذج تعتبر أدلة. الفتحة لا تدخل الهندسة إلا إذا كانت قريبة من جدار موثوق.", fontSize = 11.sp)
+            Text("PDF: يحلل HAI أول 5 صفحات بصريًا، والـOCR والـDeep Parser يحتفظان برقم الصفحة. كل صفحة تدخل طبقة مستقلة للمراجعة بدل تجاهلها.", fontSize = 11.sp)
+            Spacer(Modifier.height(5.dp))
+            Text("الجدران والأبواب والنوافذ القادمة من النماذج تعتبر أدلة؛ لا تتحول إلى هندسة موثوقة إلا بعد الدمج والتحقق.", fontSize = 11.sp)
             Spacer(Modifier.weight(1f))
             Button(
-                enabled = source != null && !busy,
+                enabled = source != null && !busy && vision.available,
                 onClick = {
                     busy = true
                     error = null
@@ -77,33 +80,26 @@ fun VerifiedImportScreenV3(
                         runCatching {
                             val uri = source!!
                             coroutineScope {
-                                val ocrJob = async { runCatching { localOcr.readSpatial(uri) }.getOrNull() }
+                                val ocrJob = async { runCatching { localOcr.readSpatial(uri, maxPdfPages = 5) }.getOrNull() }
                                 val rasterJob = async { runCatching { raster.analyze(uri) }.getOrNull() }
-                                val remoteJob = async { if (remote.available) runCatching { remote.analyze(uri) }.getOrNull() else null }
-                                val base = vision.analyzePlan(uri)
+                                val remoteJob = async { if (remote.available) runCatching { remote.analyze(uri, maxPdfPages = 5) }.getOrNull() else null }
+                                val base = vision.analyze(uri, maxPdfPages = 5)
                                 val ocr = ocrJob.await()
                                 val rasterResult = rasterJob.await()
                                 val remoteResult = remoteJob.await()
                                 val dims = DimensionEvidenceEngine.extractSpatial(ocr?.lines.orEmpty() + remoteResult?.ocrLines.orEmpty())
-                                val evidenceWalls = (rasterResult?.primaryWalls.orEmpty() + remoteResult?.walls.orEmpty()).distinctBy {
-                                    "${(it.start.x * 2).toInt()}:${(it.start.y * 2).toInt()}:${(it.end.x * 2).toInt()}:${(it.end.y * 2).toInt()}"
-                                }
-                                val openingFusion = OpeningEvidenceFusion.merge(
-                                    base.openings,
-                                    remoteResult?.openings.orEmpty(),
-                                    base.walls + evidenceWalls
-                                )
                                 val enriched = base.copy(
-                                    openings = openingFusion.openings,
                                     dimensions = (base.dimensions + dims).distinctBy { "${it.pageIndex}:${it.id}:${"%.3f".format(it.valueM)}" },
                                     observations = (base.observations + listOfNotNull(
-                                        ocr?.let { "OCR محلي: ${it.pagesAnalyzed} صفحة." },
+                                        ocr?.let { "OCR محلي: ${it.pagesAnalyzed} صفحة${if (it.truncated) " (محدود)" else ""}." },
                                         rasterResult?.notes?.joinToString(" "),
-                                        remoteResult?.let { "Deep parser: ${it.modelUsed} • ${it.confidence}% • فتحات مقبولة ${openingFusion.accepted}." },
+                                        remoteResult?.let { "Deep Parser: ${it.pages.size} صفحة • ${it.modelUsed} • متوسط ${it.confidence}%." },
                                         remoteResult?.warnings?.takeIf { it.isNotEmpty() }?.joinToString(" ")
                                     )).distinct()
                                 )
-                                FloorplanParserEngine.refine(enriched, evidenceWalls).plan
+                                val deepApplied = MultiPageEvidenceFusionEngine.apply(enriched, remoteResult?.pages.orEmpty())
+                                val locallyRefined = FloorplanParserEngine.refine(deepApplied, rasterResult?.primaryWalls.orEmpty()).plan
+                                MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(locallyRefined))
                             }
                         }.onSuccess {
                             onAnalyzed(it)
@@ -119,7 +115,7 @@ fun VerifiedImportScreenV3(
                 if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 else Icon(Icons.Rounded.AutoAwesome, null)
                 Spacer(Modifier.width(8.dp))
-                Text(if (busy) "أحلل المخطط…" else "حلّل ثم راجع")
+                Text(if (busy) "أحلل جميع الصفحات…" else if (!vision.available) "فعّل HAI أولًا" else "حلّل كل الصفحات ثم راجع")
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
         }
