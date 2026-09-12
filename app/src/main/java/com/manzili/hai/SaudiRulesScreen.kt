@@ -27,20 +27,49 @@ fun SaudiRulesScreen(nav: NavHostController, plan: FloorPlan?, onUpdate: (FloorP
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
                 Column {
-                    Text("فحص قواعد السعودية", fontSize = 21.sp, fontWeight = FontWeight.Black)
-                    Text("SBC ${SaudiRulesEngine.EDITION} • ${SaudiRulesEngine.RESIDENTIAL_CODE}", color = Color.Gray, fontSize = 9.5.sp)
+                    Text("اشتراطات السعودية", fontSize = 21.sp, fontWeight = FontWeight.Black)
+                    Text("إضافة اختيارية للمشروع وليست جزءًا إجباريًا من محرك التصميم", color = Color.Gray, fontSize = 9.5.sp)
                 }
             }
             if (plan == null) {
                 Text("لا يوجد مشروع مفتوح")
                 return@Column
             }
+
+            Card(colors = CardDefaults.cardColors(containerColor = if (plan.saudiRulesEnabled) Color(0xFF27312C) else Color.White), shape = RoundedCornerShape(18.dp)) {
+                Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(if (plan.saudiRulesEnabled) Icons.Rounded.Verified else Icons.Rounded.AddTask, null, tint = if (plan.saudiRulesEnabled) Color.White else Color(0xFF9A7447))
+                    Spacer(Modifier.width(9.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(if (plan.saudiRulesEnabled) "محرك الاشتراطات مضاف" else "محرك الاشتراطات غير مضاف", color = if (plan.saudiRulesEnabled) Color.White else Color.Black, fontWeight = FontWeight.Black)
+                        Text(if (plan.saudiRulesEnabled) "يدخل فقط في شاشة الفحص والتنبيهات؛ ويمكن إلغاؤه الآن." else "التصميم وHAI يعملان بدونه بالكامل. أضفه فقط إذا رغبت بالفحص السعودي/البلدي.", color = if (plan.saudiRulesEnabled) Color.White.copy(alpha=.7f) else Color.Gray, fontSize = 9.5.sp, lineHeight = 14.sp)
+                    }
+                    Switch(
+                        checked = plan.saudiRulesEnabled,
+                        onCheckedChange = { enabled -> onUpdate(plan.copy(saudiRulesEnabled = enabled, revision = plan.revision + 1)) }
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+            if (!plan.saudiRulesEnabled) {
+                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFEFA)), shape = RoundedCornerShape(16.dp)) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("عند عدم التفعيل", fontWeight = FontWeight.Black, fontSize = 12.sp)
+                        Text("• لا يفحص SBC أو الاشتراطات البلدية.\n• لا يغيّر توليد المخطط.\n• لا يمنع سحب أو تعديل أي عنصر.\n• لا يضيف اعتراضات إلى HAI.", fontSize = 10.5.sp, lineHeight = 17.sp, color = Color.Gray)
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                Text("يمكنك إضافة المحرك أو إلغاؤه في أي وقت، ويُحفظ الاختيار داخل المشروع نفسه.", color = Color.Gray, fontSize = 9.5.sp, modifier = Modifier.padding(bottom = 12.dp))
+                return@Column
+            }
+
             var city by remember(plan.revision) { mutableStateOf(plan.site.city) }
             var roadName by remember(plan.revision) { mutableStateOf(plan.site.roads.firstOrNull()?.name ?: "الشارع الأمامي") }
             var roadWidth by remember(plan.revision) { mutableStateOf(plan.site.roads.firstOrNull()?.widthM?.toString() ?: "") }
             var north by remember(plan.revision) { mutableStateOf((plan.site.northDeg ?: plan.northDeg ?: 0f).toString()) }
             val report = remember(plan) { SaudiRulesEngine.inspect(plan) }
-            Text("يعرض ما تم فحصه وما يحتاج بيانات إضافية بدون افتراض أرقام غير موجودة.", color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(bottom = 8.dp))
+
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFEFA)), shape = RoundedCornerShape(17.dp)) {
                     Column(Modifier.padding(11.dp)) {
@@ -60,14 +89,11 @@ fun SaudiRulesScreen(nav: NavHostController, plan: FloorPlan?, onUpdate: (FloorP
                             val width = roadWidth.toDoubleOrNull()?.takeIf { it > 0 }
                             val roads = if (width != null) listOf(RoadEdge("front-road", roadName.ifBlank { "الشارع الأمامي" }, PlanPoint(0f,0f), PlanPoint(100f,0f), width)) else plan.site.roads
                             val northDeg = north.toFloatOrNull()?.let { ((it % 360f) + 360f) % 360f }
-                            onUpdate(plan.copy(
-                                site = plan.site.copy(city = city.trim(), plotBoundary = boundary, roads = roads, northDeg = northDeg),
-                                northDeg = northDeg ?: plan.northDeg,
-                                revision = plan.revision + 1
-                            ))
-                        }, modifier = Modifier.fillMaxWidth()) { Text("حفظ بيانات الموقع ثم إعادة الفحص") }
+                            onUpdate(plan.copy(site = plan.site.copy(city = city.trim(), plotBoundary = boundary, roads = roads, northDeg = northDeg), northDeg = northDeg ?: plan.northDeg, revision = plan.revision + 1))
+                        }, modifier = Modifier.fillMaxWidth()) { Text("حفظ بيانات الموقع وإعادة الفحص") }
                     }
                 }
+
                 report.checks.forEach { check ->
                     Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(17.dp)) {
                         Column(Modifier.padding(11.dp)) {
@@ -83,7 +109,7 @@ fun SaudiRulesScreen(nav: NavHostController, plan: FloorPlan?, onUpdate: (FloorP
                     }
                 }
             }
-            Text("النتيجة داخل التطبيق ليست تصريح بناء ولا توقيعًا مهنيًا.", color = MaterialTheme.colorScheme.secondary, fontSize = 9.5.sp, modifier = Modifier.padding(vertical = 10.dp))
+            Text("يمكن إلغاء المحرك من المفتاح بالأعلى في أي وقت. الإلغاء يوقف الفحص ولا يحذف بيانات أرضك.", color = MaterialTheme.colorScheme.secondary, fontSize = 9.5.sp, modifier = Modifier.padding(vertical = 10.dp))
         }
     }
 }
