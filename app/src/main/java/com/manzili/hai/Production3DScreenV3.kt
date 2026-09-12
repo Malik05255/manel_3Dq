@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.DirectionsWalk
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.ViewInAr
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,7 +19,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
-import com.manzili.hai.engine.PbrSceneFramingEngine
 import com.manzili.hai.engine.ProductionSceneEngine
 import com.manzili.hai.engine.SaudiResidentialEngine
 import com.manzili.hai.engine.SaudiVisualRenderEngine
@@ -52,9 +52,7 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
             }
         ) { pad ->
             Box(
-                Modifier
-                    .fillMaxSize()
-                    .padding(pad),
+                Modifier.fillMaxSize().padding(pad),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Rounded.ViewInAr, null, tint = Color(0xFFB0AAA2), modifier = Modifier.size(48.dp))
@@ -64,22 +62,29 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
     }
 
     var compatibilityMode by rememberSaveable { mutableStateOf(false) }
+    var viewerRevision by rememberSaveable { mutableIntStateOf(0) }
     if (compatibilityMode) {
         Production3DScreenV2(nav, plan)
         return
     }
 
     val semanticScene = remember(plan) { ProductionSceneEngine.build(plan) }
+    val hasGeometry = remember(semanticScene) { semanticScene.meshes.any { it.vertices.isNotEmpty() && it.faces.isNotEmpty() } }
     val visual = remember(plan) { SaudiVisualRenderEngine.build(plan, SaudiVisualRenderEngine.Quality.HIGH) }
-    val frame = remember(semanticScene) { PbrSceneFramingEngine.frame(semanticScene) }
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
-    val lightIntensity = (115_000f * visual.sun.intensity).coerceIn(80_000f, 145_000f)
+    val lightIntensity = (150_000f * visual.sun.intensity).coerceIn(110_000f, 185_000f)
     val mainLight = rememberMainLightNode(engine) { intensity = lightIntensity }
-    val cameraManipulator = rememberCameraManipulator(
-        orbitHomePosition = Position(frame.cameraX, frame.cameraY, frame.cameraZ),
-        targetPosition = Position(frame.targetX, frame.targetY, frame.targetZ)
-    )
+
+    // The viewer uses a normalized visual scale. Canonical Geometry V3 remains untouched.
+    // This prevents 0..100 relative plans and large metric plans from landing outside the camera frustum.
+    val cameraManipulator = key(viewerRevision) {
+        rememberCameraManipulator(
+            orbitHomePosition = Position(7.2f, 5.6f, 10.5f),
+            targetPosition = Position(0f, 0.5f, 0f)
+        )
+    }
+
     val background = when (SaudiResidentialEngine.context(plan.site.city).climate) {
         SaudiResidentialEngine.Climate.HOT_DRY -> Color(0xFFE9E1D2)
         SaudiResidentialEngine.Climate.HOT_HUMID -> Color(0xFFE0E7E5)
@@ -102,7 +107,12 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
     }
     val modelNode = remember(modelLoad) {
         modelLoad?.getOrNull()?.let { instance ->
-            ModelNode(modelInstance = instance, autoAnimate = false).apply {
+            ModelNode(
+                modelInstance = instance,
+                autoAnimate = false,
+                scaleToUnits = 6.0f,
+                centerOrigin = Position(0f, 0f, 0f)
+            ).apply {
                 isShadowCaster = true
                 isShadowReceiver = true
                 isEditable = false
@@ -123,6 +133,9 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                     }
                 },
                 actions = {
+                    IconButton(onClick = { viewerRevision++ }) {
+                        Icon(Icons.Rounded.Refresh, "إعادة ضبط العرض")
+                    }
                     Surface(
                         shape = CircleShape,
                         color = Color(0xFF6353D9).copy(alpha = 0.10f),
@@ -142,11 +155,12 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                 .padding(pad)
                 .background(background)
         ) {
-            if (renderError == null) {
+            if (hasGeometry && renderError == null) {
                 Scene(
                     modifier = Modifier.fillMaxSize(),
                     engine = engine,
                     modelLoader = modelLoader,
+                    isOpaque = false,
                     mainLightNode = mainLight,
                     cameraManipulator = cameraManipulator,
                     childNodes = childNodes
@@ -154,6 +168,22 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
             }
 
             when {
+                !hasGeometry -> Card(
+                    Modifier.align(Alignment.Center).padding(24.dp),
+                    shape = RoundedCornerShape(28.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                ) {
+                    Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Rounded.ViewInAr, null, tint = Color(0xFFE28B5A), modifier = Modifier.size(36.dp))
+                        Spacer(Modifier.height(12.dp))
+                        Text("المخطط يحتاج مراجعة", fontWeight = FontWeight.Black, fontSize = 18.sp)
+                        Spacer(Modifier.height(14.dp))
+                        Button(onClick = { nav.navigate("editor") }, shape = RoundedCornerShape(18.dp)) {
+                            Text("فتح المخطط")
+                        }
+                    }
+                }
+
                 glb == null -> Surface(
                     modifier = Modifier.align(Alignment.Center),
                     shape = CircleShape,
@@ -170,16 +200,11 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                 }
 
                 renderError != null -> Card(
-                    Modifier
-                        .align(Alignment.Center)
-                        .padding(24.dp),
+                    Modifier.align(Alignment.Center).padding(24.dp),
                     shape = RoundedCornerShape(28.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White)
                 ) {
-                    Column(
-                        Modifier.padding(22.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
+                    Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Rounded.ViewInAr, null, tint = Color(0xFFE28B5A), modifier = Modifier.size(36.dp))
                         Spacer(Modifier.height(12.dp))
                         Text("تعذر العرض", fontWeight = FontWeight.Black, fontSize = 18.sp)
