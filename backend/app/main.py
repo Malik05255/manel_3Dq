@@ -11,11 +11,12 @@ from pydantic import BaseModel, Field
 from .cubicasa_model import model_status
 from .parser import parse_floorplan
 
-app = FastAPI(title="Manzili HAI Backend", version="0.21.0")
+app = FastAPI(title="Manzili HAI Backend", version="0.34.0")
 
 
 class ParseRequest(BaseModel):
     image_base64: str = Field(min_length=32, max_length=18_000_000)
+    page_index: int = Field(default=0, ge=0, le=32)
 
 
 class ProjectPayload(BaseModel):
@@ -62,7 +63,18 @@ async def health() -> dict[str, Any]:
         "ai_configured": bool(os.getenv("AI_API_KEY")),
         "supabase_configured": bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_PUBLISHABLE_KEY")),
         "floorplan_model_configured": bool(floorplan.get("configured")),
+        "deep_parser_ready": bool(floorplan.get("configured")),
         "floorplan_model": floorplan,
+    }
+
+
+@app.get("/v1/parser/status")
+async def parser_status(_: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    status = model_status()
+    return {
+        "ready": bool(status.get("configured")),
+        "model": status,
+        "preferred_path": "cubicasa-unet-resnet34" if status.get("configured") else "fallback",
     }
 
 
@@ -89,7 +101,9 @@ async def ai_chat(payload: dict[str, Any], _: dict[str, Any] = Depends(current_u
 @app.post("/v1/parse-floorplan")
 async def parse_plan(payload: ParseRequest, _: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     try:
-        return parse_floorplan(payload.image_base64)
+        result = parse_floorplan(payload.image_base64)
+        result["page_index"] = payload.page_index
+        return result
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
