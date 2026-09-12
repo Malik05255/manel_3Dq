@@ -26,6 +26,8 @@ import com.manzili.hai.ai.HaiArchitectClient
 import com.manzili.hai.engine.ArchitecturalEngine
 import com.manzili.hai.engine.ArchitecturalRepairEngine
 import com.manzili.hai.engine.GeometrySolver
+import com.manzili.hai.engine.ProjectMemoryEngine
+import com.manzili.hai.engine.ProjectMemoryRepair
 import com.manzili.hai.engine.StructuralGeometryEngine
 import com.manzili.hai.model.*
 import kotlinx.coroutines.launch
@@ -67,7 +69,18 @@ fun EnhancedEditor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan
     val renderPlan = livePreview ?: pending?.updatedPlan ?: plan
     val proactive = ArchitecturalEngine.proactiveSuggestions(plan).take(3)
 
+    fun safeOptions(kind: String, id: String, action: String): List<GeometrySolver.Candidate> =
+        GeometrySolver.actionCandidates(plan, kind, id, action)
+            .filter { !ProjectMemoryEngine.review(plan, it.plan).hasObjection }
+
     fun commitCandidate(candidate: GeometrySolver.Candidate) {
+        val memory = ProjectMemoryEngine.review(plan, candidate.plan)
+        if (memory.hasObjection) {
+            livePreview = null
+            solverOptions = emptyList()
+            messages = messages + ArchitectMessage(false, "اعتراض ذاكرة المشروع: ${memory.objections.joinToString(" ")}")
+            return
+        }
         livePreview = null
         solverOptions = emptyList()
         pending = GeometrySolver.toProposal(plan, candidate)
@@ -76,12 +89,25 @@ fun EnhancedEditor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan
 
     fun openSolver(action: String) {
         val selected = selection ?: return
-        val options = GeometrySolver.actionCandidates(plan, selected.kind, selected.id, action)
+        val options = safeOptions(selected.kind, selected.id, action)
         if (options.isEmpty()) {
-            messages = messages + ArchitectMessage(false, "عندي اعتراض على تنفيذ الحركة بهذه الطريقة: العنصر قد يكون مرتبطًا بحد خارجي، مقفلًا، أو بياناته غير كافية. لن أغيّره بالتخمين.")
+            messages = messages + ArchitectMessage(false, "عندي اعتراض على تنفيذ الحركة بهذه الطريقة: إما أنها تكسر قاعدة محفوظة للمشروع، أو العنصر مقفل/مرتبط بحد حساس، أو بياناته غير كافية. لن أغيّره بالتخمين.")
         } else {
             pending = null
             solverOptions = options
+        }
+    }
+
+    fun askHai(base: FloorPlan, q: String) {
+        busy = true
+        scope.launch {
+            runCatching { ProjectMemoryEngine.enforceProposal(base, client.proposeChange(base, q)) }
+                .onSuccess { proposal ->
+                    if (proposal.message.isNotBlank()) messages = messages + ArchitectMessage(false, proposal.message)
+                    if (proposal.updatedPlan != null) pending = proposal
+                }
+                .onFailure { messages = messages + ArchitectMessage(false, "تعذر التحليل: ${it.message}") }
+            busy = false
         }
     }
 
@@ -106,6 +132,10 @@ fun EnhancedEditor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan
         EditorScoreBar(score)
         Spacer(Modifier.height(6.dp))
         EditorStructureBar(structure)
+        if (plan.constraints.any { it.active }) {
+            Spacer(Modifier.height(6.dp))
+            ProjectMemoryBar(plan)
+        }
 
         if (proactive.isNotEmpty()) {
             Spacer(Modifier.height(6.dp))
@@ -117,15 +147,15 @@ fun EnhancedEditor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan
                             when (suggestion.actionKind) {
                                 "EXPAND_ROOM" -> if (target != null) {
                                     selection = PlanSelection("room", target)
-                                    solverOptions = GeometrySolver.actionCandidates(plan, "room", target, "EXPAND")
+                                    solverOptions = safeOptions("room", target, "EXPAND")
                                 } else input = "نفّذ أفضل حل لهذه الملاحظة: ${suggestion.title} — ${suggestion.reason}"
                                 "SHRINK_ROOM" -> if (target != null) {
                                     selection = PlanSelection("room", target)
-                                    solverOptions = GeometrySolver.actionCandidates(plan, "room", target, "SHRINK")
+                                    solverOptions = safeOptions("room", target, "SHRINK")
                                 } else input = "نفّذ أفضل حل لهذه الملاحظة: ${suggestion.title} — ${suggestion.reason}"
                                 "MOVE_OPENING" -> if (target != null) {
                                     selection = PlanSelection("opening", target)
-                                    solverOptions = GeometrySolver.actionCandidates(plan, "opening", target, "MOVE")
+                                    solverOptions = safeOptions("opening", target, "MOVE")
                                 } else input = "اقترح أفضل إعادة تموضع للمدخل بسبب: ${suggestion.reason}"
                                 else -> input = "راجع هذه الملاحظة ونفّذ أفضل حل إن كان مفيدًا: ${suggestion.title} — ${suggestion.reason}"
                             }
@@ -157,7 +187,7 @@ fun EnhancedEditor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan
                 onCommit = { if (it != null) commitCandidate(it) },
                 onUnavailable = {
                     livePreview = null
-                    messages = messages + ArchitectMessage(false, "اعتراضي هنا أن السحب لا يمكن تنفيذه بأمان من البيانات الحالية، ولم أجد موضعًا بديلًا موثوقًا قريبًا من نيتك. لن أحرّك العنصر بصمت.")
+                    messages = messages + ArchitectMessage(false, "اعتراضي هنا أن السحب لا يمكن تنفيذه بأمان من البيانات الحالية أو أنه يكسر قاعدة مشروع محفوظة، ولم أجد موضعًا بديلًا موثوقًا قريبًا من نيتك.")
                 }
             )
         }
@@ -214,16 +244,16 @@ fun EnhancedEditor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan
             Spacer(Modifier.width(6.dp))
             Text("مهندس HAI", fontWeight = FontWeight.Black, fontSize = 15.sp)
             Spacer(Modifier.weight(1f))
-            Text("يعترض عند الضرر • يصحح المسار عند وجود بديل", color = Color.Gray, fontSize = 9.sp)
+            Text("يعترض عند الضرر • ويتذكر قرارات المشروع", color = Color.Gray, fontSize = 9.sp)
         }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) { messages.takeLast(6).forEach { EditorBubble(it) } }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) { messages.takeLast(7).forEach { EditorBubble(it) } }
 
         Row(Modifier.fillMaxWidth().padding(bottom = 7.dp), verticalAlignment = Alignment.Bottom) {
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("مثال: انقل الباب للمكان الأفضل إذا ما يضر المدخل") },
+                placeholder = { Text("مثال: المجلس ممنوع يصغر، والخصوصية أهم من المساحة") },
                 shape = RoundedCornerShape(20.dp),
                 maxLines = 4
             )
@@ -234,15 +264,20 @@ fun EnhancedEditor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan
                     val q = input.trim()
                     input = ""
                     messages = messages + ArchitectMessage(true, q)
-                    busy = true
-                    scope.launch {
-                        runCatching { client.proposeChange(plan, q) }
-                            .onSuccess { proposal ->
-                                if (proposal.message.isNotBlank()) messages = messages + ArchitectMessage(false, proposal.message)
-                                if (proposal.updatedPlan != null) pending = proposal
-                            }
-                            .onFailure { messages = messages + ArchitectMessage(false, "تعذر التحليل: ${it.message}") }
-                        busy = false
+                    val captured = ProjectMemoryEngine.capture(plan, q, selection?.kind, selection?.id)
+                    val workingPlan = if (captured.added.isNotEmpty()) {
+                        history = history + plan
+                        pending = null
+                        solverOptions = emptyList()
+                        livePreview = null
+                        val remembered = captured.plan.copy(revision = plan.revision + 1)
+                        setPlan(remembered)
+                        messages = messages + ArchitectMessage(false, captured.message)
+                        remembered
+                    } else plan
+
+                    if (!(captured.added.isNotEmpty() && captured.memoryOnly)) {
+                        askHai(workingPlan, q)
                     }
                 },
                 modifier = Modifier.size(50.dp)
@@ -269,6 +304,21 @@ private fun EditorTop(nav: NavHostController) {
         Column { Text("منزلي HAI", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp); Text("المحرر الهندسي", color = Color.Gray, fontSize = 9.5.sp) }
         Spacer(Modifier.weight(1f))
         IconButton(onClick = { nav.navigate("settings") }) { Icon(Icons.Rounded.Tune, "إعدادات") }
+    }
+}
+
+@Composable
+private fun ProjectMemoryBar(plan: FloorPlan) {
+    val active = plan.constraints.filter { it.active }.sortedByDescending { it.priority }
+    Card(colors = CardDefaults.cardColors(containerColor = EDeep), shape = RoundedCornerShape(15.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Bookmarks, null, tint = Color.White, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(7.dp))
+            Column(Modifier.weight(1f)) {
+                Text("ذاكرة المشروع • ${active.size} قاعدة", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.5.sp)
+                Text(active.take(2).joinToString(" • ") { it.text }, color = Color.White.copy(alpha = .72f), fontSize = 8.8.sp, maxLines = 2)
+            }
+        }
     }
 }
 
@@ -313,16 +363,9 @@ private fun DirectManipulationLayer(
                 var correctionNote: String? = null
                 detectDragGestures(
                     onDragStart = {
-                        totalX = 0f
-                        totalY = 0f
-                        last = null
-                        moved = false
-                        correctionNote = null
+                        totalX = 0f; totalY = 0f; last = null; moved = false; correctionNote = null
                     },
-                    onDragCancel = {
-                        correctionNote = null
-                        onPreview(null)
-                    },
+                    onDragCancel = { correctionNote = null; onPreview(null) },
                     onDragEnd = {
                         onPreview(null)
                         if (moved) {
@@ -340,21 +383,30 @@ private fun DirectManipulationLayer(
                         val dy = totalY / size.height.toFloat().coerceAtLeast(1f) * 100f
                         val raw = GeometrySolver.drag(basePlan, selected.kind, selected.id, dx, dy)
                         if (raw == null) {
-                            last = null
-                            correctionNote = null
-                            onPreview(null)
+                            last = null; correctionNote = null; onPreview(null); return@detectDragGestures
+                        }
+
+                        val memoryReview = ProjectMemoryEngine.review(basePlan, raw.plan)
+                        if (memoryReview.hasObjection) {
+                            val safe = ProjectMemoryRepair.nearestSafe(basePlan, raw.plan, selected.kind, selected.id)
+                            if (safe != null) {
+                                last = safe
+                                correctionNote = "قاعدة المشروع منعت الموضع الذي سحبته، فصححت المعاينة إلى أقرب موضع يحافظ على القاعدة."
+                                onPreview(safe.plan)
+                            } else {
+                                last = null; correctionNote = null; onPreview(null)
+                            }
                             return@detectDragGestures
                         }
 
                         if (!raw.review.hasMaterialObjection) {
-                            last = raw
-                            correctionNote = null
-                            onPreview(raw.plan)
-                            return@detectDragGestures
+                            last = raw; correctionNote = null; onPreview(raw.plan); return@detectDragGestures
                         }
 
                         val repair = ArchitecturalRepairEngine.alternatives(basePlan, raw.plan, limit = 3)
-                            .firstOrNull { it.remainingObjections == 0 }
+                            .firstOrNull {
+                                it.remainingObjections == 0 && !ProjectMemoryEngine.review(basePlan, it.candidate.plan).hasObjection
+                            }
                         if (repair != null) {
                             last = repair.candidate
                             correctionNote = buildString {
@@ -364,9 +416,7 @@ private fun DirectManipulationLayer(
                             }
                             onPreview(repair.candidate.plan)
                         } else {
-                            last = null
-                            correctionNote = null
-                            onPreview(null)
+                            last = null; correctionNote = null; onPreview(null)
                         }
                     }
                 )
@@ -383,6 +433,7 @@ private fun EditorInspector(plan: FloorPlan, selection: PlanSelection, onUpdate:
     val subtitle: String
     val confidence: Int
     val locked: Boolean
+    val memoryLocked = plan.constraints.any { it.active && it.kind == ProjectMemoryEngine.LOCK_ELEMENT && selection.id in it.targetIds }
     when {
         room != null -> { title = room.name; subtitle = if (room.areaM2 > 0) "غرفة • ${"%.1f".format(room.areaM2)}م²" else "غرفة"; confidence = room.confidence; locked = room.locked }
         wall != null -> { title = "جدار ${wall.id}"; subtitle = wall.kind; confidence = wall.confidence; locked = wall.locked }
@@ -398,17 +449,20 @@ private fun EditorInspector(plan: FloorPlan, selection: PlanSelection, onUpdate:
                 Column(Modifier.weight(1f)) {
                     Text(title, fontWeight = FontWeight.Black, fontSize = 12.5.sp)
                     Text("$subtitle • ثقة $confidence%", color = Color.Gray, fontSize = 9.8.sp)
-                    Text(if (locked) "مقفل" else "اسحب العنصر مباشرة أو اختر أمرًا", color = if (locked) EBronze else ESage, fontSize = 9.sp)
+                    Text(if (memoryLocked) "مقفل بقاعدة مشروع" else if (locked) "مقفل" else "اسحب العنصر مباشرة أو اختر أمرًا", color = if (locked) EBronze else ESage, fontSize = 9.sp)
                 }
-                TextButton(onClick = {
-                    val next = when {
-                        room != null -> plan.copy(rooms = plan.rooms.map { if (it.id == room.id) it.copy(locked = !it.locked) else it })
-                        wall != null -> plan.copy(walls = plan.walls.map { if (it.id == wall.id) it.copy(locked = !it.locked) else it })
-                        opening != null -> plan.copy(openings = plan.openings.map { if (it.id == opening.id) it.copy(locked = !it.locked) else it })
-                        else -> plan
+                TextButton(
+                    enabled = !memoryLocked,
+                    onClick = {
+                        val next = when {
+                            room != null -> plan.copy(rooms = plan.rooms.map { if (it.id == room.id) it.copy(locked = !it.locked) else it })
+                            wall != null -> plan.copy(walls = plan.walls.map { if (it.id == wall.id) it.copy(locked = !it.locked) else it })
+                            opening != null -> plan.copy(openings = plan.openings.map { if (it.id == opening.id) it.copy(locked = !it.locked) else it })
+                            else -> plan
+                        }
+                        onUpdate(next)
                     }
-                    onUpdate(next)
-                }) { Text(if (locked) "فتح" else "قفل", fontSize = 10.sp) }
+                ) { Text(if (memoryLocked) "قاعدة" else if (locked) "فتح" else "قفل", fontSize = 10.sp) }
             }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (room != null) {
