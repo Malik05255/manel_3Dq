@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
+import com.manzili.hai.engine.Architectural3DEnhancementEngine
 import com.manzili.hai.engine.OpeningVerticalProfileEngine
 import com.manzili.hai.engine.Semantic3DEngine
 import com.manzili.hai.model.FloorPlan
@@ -43,7 +44,7 @@ fun Semantic3DScreen(
     plan: FloorPlan?,
     onPlanChanged: (FloorPlan) -> Unit = {}
 ) {
-    val scene = remember(plan) { plan?.let { Semantic3DEngine.build(it) } }
+    val scene = remember(plan) { plan?.let { Architectural3DEnhancementEngine.build(it) } }
     var yaw by remember { mutableFloatStateOf(-34f) }
     var pitch by remember { mutableFloatStateOf(34f) }
     var zoom by remember { mutableFloatStateOf(1f) }
@@ -71,8 +72,8 @@ fun Semantic3DScreen(
                 ) { Icon(Icons.Rounded.ViewInAr, null, tint = Color.White) }
                 Spacer(Modifier.width(9.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("المجسم الهندسي", fontWeight = FontWeight.Black, fontSize = 19.sp)
-                    Text("Semantic 3D من نفس Geometry V3", color = Color.Gray, fontSize = 9.5.sp)
+                    Text("المجسم المعماري", fontWeight = FontWeight.Black, fontSize = 19.sp)
+                    Text("نفس Geometry V3 • أسقف • أبواب • نوافذ", color = Color.Gray, fontSize = 9.5.sp)
                 }
                 IconButton(onClick = { yaw = -34f; pitch = 34f; zoom = 1f; selectedFloor = null }) {
                     Icon(Icons.Rounded.Cached, "إعادة العرض")
@@ -172,7 +173,7 @@ fun Semantic3DScreen(
                 modifier = Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 8.dp)
             ) {
                 Text(
-                    primaryWarning ?: "المجسم مرتبط بالمخطط نفسه؛ أي تعديل معتمد في 2D ينعكس على إعادة بناء 3D.",
+                    primaryWarning ?: "المجسم مرتبط بالمخطط نفسه؛ السقف والفتحات يعاد بناؤها تلقائيًا من نفس البيانات الهندسية.",
                     fontSize = 9.5.sp,
                     lineHeight = 14.sp,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
@@ -318,15 +319,19 @@ private fun SemanticSceneCanvas(
         val faces = mutableListOf<PreviewFace>()
         meshes.forEach { mesh ->
             val fill = when (mesh.kind) {
-                "wall" -> Color(0xFFE4D9C9)
-                "slab" -> Color(0xFFB9BBB5)
+                "wall" -> Color(0xFFE6DED2)
+                "slab" -> Color(0xFFB8BBB7)
                 "structural" -> Color(0xFF9A7447)
+                "door" -> Color(0xFF6F4E37)
+                "window" -> Color(0xFF7EB5C8)
+                "roof" -> Color(0xFF8B8175)
                 else -> Color(0xFFD7D3CB)
             }
+            val alpha = if (mesh.kind == "window") 0.55f else 0.86f
             val projected = mesh.vertices.map { screen(raw(it)) }
             mesh.faces.forEach { face ->
                 val pts = face.indices.mapNotNull { projected.getOrNull(it) }
-                if (pts.size >= 3) faces += PreviewFace(pts, fill, pts.map { it.depth }.average())
+                if (pts.size >= 3) faces += PreviewFace(pts, fill.copy(alpha = alpha), pts.map { it.depth }.average())
             }
         }
 
@@ -336,8 +341,8 @@ private fun SemanticSceneCanvas(
                 face.points.drop(1).forEach { lineTo(it.x, it.y) }
                 close()
             }
-            drawPath(path, face.fill.copy(alpha = 0.82f))
-            drawPath(path, Color(0xFF3C423E).copy(alpha = 0.55f), style = Stroke(width = 1.05f))
+            drawPath(path, face.fill)
+            drawPath(path, Color(0xFF3C423E).copy(alpha = 0.50f), style = Stroke(width = 1.0f))
         }
     }
 }
