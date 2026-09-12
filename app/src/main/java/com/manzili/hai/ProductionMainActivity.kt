@@ -75,7 +75,7 @@ private fun ProductionApp() {
             NavHost(nav, startDestination = "home") {
                 composable("home") { ProductionHome(nav, plan, store.listProjects().size) }
                 composable("build") { BuildChoice(nav) }
-                composable("import") { VerifiedImportScreen(nav, source, { source = it }, { pending = it }) }
+                composable("import") { VerifiedImportScreenV2(nav, source, { source = it }, { pending = it }) }
                 composable("verify") {
                     PlanVerificationScreen(nav, source, pending) { confirmed ->
                         createProject(confirmed)
@@ -105,7 +105,7 @@ private fun ProductionApp() {
                     }
                 }
                 composable("export") { QuickExportScreen(nav, plan) }
-                composable("settings") { AiSettings(nav) }
+                composable("settings") { ProductionAiSettings(nav) }
             }
         }
     }
@@ -116,7 +116,7 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
     Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F4EE)) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(20.dp)) {
             Text("منزلي HAI", fontSize = 22.sp, fontWeight = FontWeight.Black)
-            Text("$count مشروع • Multi-floor • Solver ×3 • Optional Saudi Rules • Polygon", color = Color.Gray, fontSize = 10.sp)
+            Text("$count مشروع • Geometry V3 • Global Search • Deep Parser ready", color = Color.Gray, fontSize = 10.sp)
             Spacer(Modifier.height(20.dp))
             Text("مخطط تقرأه،\nتراجعه، ثم تعدله.", fontSize = 34.sp, lineHeight = 39.sp, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(18.dp))
@@ -149,9 +149,9 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
             Button(onClick = { nav.navigate("build") }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
                 Icon(Icons.Rounded.AddHomeWork, null); Spacer(Modifier.width(7.dp)); Text("ابدأ مشروعًا جديدًا")
             }
-            TextButton(onClick = { nav.navigate("settings") }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Tune, null); Spacer(Modifier.width(5.dp)); Text("إعدادات HAI") }
+            TextButton(onClick = { nav.navigate("settings") }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Tune, null); Spacer(Modifier.width(5.dp)); Text("إعدادات HAI / Backend") }
             Spacer(Modifier.weight(1f))
-            Text("محرك الاشتراطات السعودية إضافة اختيارية لكل مشروع؛ التصميم الأساسي لا يعتمد عليه عند إيقافه.", color = Color.Gray, fontSize = 10.sp)
+            Text("محرك الاشتراطات السعودية اختياري. Deep Parser والخدمات السحابية لا تعمل إلا إذا فُعّل Backend مخصص.", color = Color.Gray, fontSize = 10.sp)
         }
     }
 }
