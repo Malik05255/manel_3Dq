@@ -42,7 +42,7 @@ internal fun Hai360ImportScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val vision = remember { MultiPageHaiPlanAnalyzer(context) }
-    val localOcr = remember { PlanTextOcrEngine(context) }
+    val localOcr = remember { AdaptivePlanOcrEngine(context) }
     val raster = remember { RasterFloorplanParserEngine(context) }
     val remote = remember { RemoteFloorplanEvidenceClient(context) }
 
