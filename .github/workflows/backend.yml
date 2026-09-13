@@ -36,8 +36,11 @@ jobs:
       - name: Validate deployment blueprint
         run: |
           set -euo pipefail
+          grep -q 'runtime: python' render.yaml
           grep -q 'healthCheckPath: /readyz' render.yaml
-          grep -q 'dockerfilePath: ./backend/Dockerfile.ml' render.yaml
+          grep -q 'pip install -r backend/requirements-ml-cpu.txt' render.yaml
+          grep -q 'python backend/scripts/fetch_floorplan_model.py' render.yaml
+          grep -q 'cd backend && uvicorn app.main:app' render.yaml
           grep -q 'FLOORPLAN_SAFETENSORS_MODEL' render.yaml
           grep -q 'MANZILI_API_TOKEN' render.yaml
           grep -q 'SUPABASE_URL' render.yaml
