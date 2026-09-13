@@ -10,7 +10,10 @@ object PlanVerificationEngine {
     }
 
     fun inspect(input: FloorPlan): Report {
-        val derived = deriveDimensionEvidence(listOf(input.sourceSummary) + input.observations + input.uncertainties + input.dimensions.map { it.sourceText })
+        val dimensionSources = input.dimensions
+            .filterNot { it.axis.startsWith("label-") || it.id.startsWith("num-") }
+            .map { it.sourceText }
+        val derived = deriveDimensionEvidence(listOf(input.sourceSummary) + input.observations + input.uncertainties + dimensionSources)
         val enriched = input.copy(dimensions = (input.dimensions + derived).distinctBy { "${it.id}:${"%.3f".format(it.valueM)}" })
         val polygonReport = PolygonGeometryEngine.inspect(enriched)
         val normalized = polygonReport.plan
@@ -31,6 +34,12 @@ object PlanVerificationEngine {
                 "حدود المخطط غير كافية",
                 "تم العثور على أدلة جزئية فقط. راجع الأصل أو استخدم HAI/التعديل حتى تتكون هندسة إنشائية كافية قبل 3D."
             )
+        } else if (normalized.rooms.isEmpty() && normalized.walls.size >= 4) {
+            issues += Issue(
+                "warning",
+                "الغرف لم تُحسم بعد",
+                "تمت قراءة الجدران، لكن لم تُستخرج مساحات مغلقة موثوقة بعد. لا تعتبر نسبة الثقة قراءة كاملة حتى يظهر عدد الغرف/المساحات."
+            )
         }
 
         normalized.rooms.filter { it.confidence < 70 }.forEach { issues += Issue("warning", "غرفة تحتاج تأكيد", "«${it.name}» ثقة القراءة ${it.confidence}%.", "room", it.id) }
@@ -44,9 +53,22 @@ object PlanVerificationEngine {
 
         val values = normalized.rooms.map { it.confidence } + normalized.walls.map { it.confidence } + normalized.openings.map { it.confidence }
         val elementConfidence = if (values.isEmpty()) 35 else values.average().toInt()
-        val reading = (elementConfidence - normalized.uncertainties.size * 3 - polygonReport.errors.size * 20).coerceIn(0, 100)
+        val numericCount = PlanNumberEvidenceEngine.numericLabels(normalized.dimensions).size
+        val roomCoveragePenalty = if (normalized.rooms.isEmpty() && normalized.walls.size >= 4) 24 else 0
+        val geometryPenalty = polygonReport.errors.size * 20
+        val uncertaintyPenalty = normalized.uncertainties.size * 3
+        val completenessBonus =
+            (if (normalized.rooms.isNotEmpty()) 5 else 0) +
+            (if (normalized.walls.size >= 4) 3 else 0) +
+            (if (normalized.openings.isNotEmpty()) 2 else 0) +
+            (if (numericCount >= 3) 4 else if (numericCount > 0) 2 else 0) +
+            (if (scale >= 80) 4 else if (scale >= 65) 2 else 0)
+        val reading = (elementConfidence + completenessBonus - roomCoveragePenalty - uncertaintyPenalty - geometryPenalty).coerceIn(0, 100)
         val plan = normalized.copy(scaleConfidence = scale)
-        return Report(plan, issues.distinctBy { it.level + it.title + it.detail }, reading, scale, plan.dimensions.count { it.confidence >= 70 })
+        val confirmed = plan.dimensions.count {
+            !it.axis.startsWith("label-") && !it.id.startsWith("num-") && it.confidence >= 70
+        }
+        return Report(plan, issues.distinctBy { it.level + it.title + it.detail }, reading, scale, confirmed)
     }
 
     fun confirmScale(plan: FloorPlan, widthM: Double, heightM: Double): FloorPlan {
@@ -62,8 +84,9 @@ object PlanVerificationEngine {
 
     private fun calculateScaleConfidence(plan: FloorPlan): Int {
         if (plan.widthM == null || plan.heightM == null) return 0
-        val strong = plan.dimensions.count { it.confidence >= 80 }
-        val medium = plan.dimensions.count { it.confidence in 60..79 }
+        val scaleDimensions = plan.dimensions.filterNot { it.axis.startsWith("label-") || it.id.startsWith("num-") }
+        val strong = scaleDimensions.count { it.confidence >= 80 }
+        val medium = scaleDimensions.count { it.confidence in 60..79 }
         return (55 + strong * 12 + medium * 5).coerceIn(0, 100)
     }
 

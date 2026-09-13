@@ -18,8 +18,11 @@ object FloorplanParserEngine {
         val notes = mutableListOf<String>()
         val uncertainties = plan.uncertainties.toMutableList()
 
+        val dimensionSources = plan.dimensions
+            .filterNot { it.axis.startsWith("label-") || it.id.startsWith("num-") }
+            .map { it.sourceText }
         val evidence = PlanVerificationEngine.deriveDimensionEvidence(
-            listOf(plan.sourceSummary) + plan.observations + plan.uncertainties + plan.dimensions.map { it.sourceText }
+            listOf(plan.sourceSummary) + plan.observations + plan.uncertainties + dimensionSources
         )
         plan = plan.copy(dimensions = (plan.dimensions + evidence).distinctBy { "${it.pageIndex}:${it.id}:${it.valueM}" })
 
@@ -31,6 +34,13 @@ object FloorplanParserEngine {
         val adjustedOpenings = plan.openings.map { opening -> refineOpening(opening, plan.walls, notes, uncertainties) }
         plan = plan.copy(openings = adjustedOpenings, uncertainties = uncertainties.distinct())
 
+        val roomRecovery = RoomTopologyEngine.recover(plan)
+        if (roomRecovery.inferredRooms > 0) {
+            plan = roomRecovery.plan
+            notes += "استعيدت ${roomRecovery.inferredRooms} مساحة مغلقة من طوبولوجيا الجدران."
+        }
+        plan = RoomNumericAssignmentEngine.apply(plan)
+
         val verified = PlanVerificationEngine.inspect(plan)
         return Result(verified.plan, notes.distinct())
     }
@@ -38,12 +48,6 @@ object FloorplanParserEngine {
     private fun fuseWalls(plan: FloorPlan, rasterWalls: List<Wall>, notes: MutableList<String>, uncertainties: MutableList<String>): List<Wall> {
         val current = plan.walls.toMutableList()
 
-        // A newly imported plan can legitimately start with no structured rooms/walls yet.
-        // Previously every parser wall was rejected in that state because boundarySupport() is
-        // necessarily zero when plan.rooms is empty. That made successful Deep Parser / Raster
-        // channels collapse back to an empty plan and triggered the "no reviewable geometry" gate.
-        // Bootstrap only from multiple strong, non-degenerate lines and keep the result explicitly
-        // marked as evidence that still needs user review.
         if (current.isEmpty() && plan.rooms.isEmpty()) {
             val seeds = rasterWalls
                 .filter { it.confidence >= 68 && wallLength(it) >= 2.5f }

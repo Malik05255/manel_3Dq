@@ -1,6 +1,7 @@
 package com.manzili.hai.ai
 
 import com.manzili.hai.engine.ArchitecturalEngine
+import com.manzili.hai.engine.PlanNumberEvidenceEngine
 import com.manzili.hai.model.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -107,6 +108,21 @@ object ArchitectJson {
             )
         }.orEmpty()
 
+        val numericLabels = root.optJSONArray("numeric_labels")?.objects()?.mapIndexedNotNull { i, n ->
+            val value = n.optDouble("value", Double.NaN)
+            if (value.isNaN()) return@mapIndexedNotNull null
+            PlanNumberEvidenceEngine.fromVision(
+                id = n.optString("id", "n$i"),
+                rawText = n.optString("raw_text", n.optString("text", value.toString())),
+                value = value,
+                kind = n.optString("kind", "number"),
+                x = pct(n.optDouble("x", 50.0)),
+                y = pct(n.optDouble("y", 50.0)),
+                pageIndex = n.optInt("page_index", 0),
+                confidence = n.optInt("confidence", 80)
+            )
+        }.orEmpty()
+
         val prefsJson = root.optJSONObject("preferences")
         val preferences = PlanPreferences(
             privacyPriority = prefsJson?.optInt("privacy", 80)?.coerceIn(0, 100) ?: 80,
@@ -130,7 +146,7 @@ object ArchitectJson {
             preferences = preferences,
             revision = root.optInt("revision", 1).coerceAtLeast(1),
             footprint = points(root.optJSONArray("footprint")),
-            dimensions = dimensions,
+            dimensions = (dimensions + numericLabels).distinctBy { it.id },
             scaleConfidence = root.optInt("scale_confidence", 0).coerceIn(0, 100),
             northDeg = north
         )
