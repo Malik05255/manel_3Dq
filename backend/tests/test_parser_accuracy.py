@@ -37,6 +37,7 @@ def test_precision_wall_evidence_recovers_blue_and_diagonal_walls():
 
     assert len(walls) >= 5
     assert any(item.get("mask_support", 0) >= 0.58 for item in walls)
+    assert any(item.get("band_support", 0) >= 0.22 for item in walls)
     assert any(
         12 <= abs(np.degrees(np.arctan2(
             item["end"]["y"] - item["start"]["y"],
@@ -59,6 +60,14 @@ def test_dimension_evidence_understands_arabic_and_decimal_values():
     assert 4.20 in values
     assert 3.60 in values
     assert 2026.0 not in values
+
+
+def test_area_labels_are_not_misused_as_linear_scale_evidence():
+    lines = [
+        {"text": "19.88 m²", "confidence": 95, "left_pct": 20, "top_pct": 20, "right_pct": 30, "bottom_pct": 24},
+        {"text": "مساحة ٣٢٫٥ م2", "confidence": 92, "left_pct": 40, "top_pct": 40, "right_pct": 52, "bottom_pct": 45},
+    ]
+    assert dimension_evidence(lines) == []
 
 
 def test_wall_topology_rewards_closed_plan_junctions():
