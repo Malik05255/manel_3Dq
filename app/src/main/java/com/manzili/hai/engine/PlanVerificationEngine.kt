@@ -43,7 +43,7 @@ object PlanVerificationEngine {
 
         val reading = calculateReadingConfidence(normalized, scale, polygonReport.errors.size)
         val plan = normalized.copy(scaleConfidence = scale)
-        val confirmed = plan.dimensions.count { !it.axis.startsWith("label-") && !it.id.startsWith("num-") && it.confidence >= 70 }
+        val confirmed = plan.dimensions.count { isIndependentDimension(it) && it.confidence >= 70 }
         return Report(plan, issues.distinctBy { it.level + it.title + it.detail }, reading, scale, confirmed)
     }
 
@@ -66,15 +66,13 @@ object PlanVerificationEngine {
         val elementScore = if (values.isEmpty()) 0 else values.average().roundToInt().coerceIn(0, 100)
 
         val numericCount = PlanNumberEvidenceEngine.numericLabels(plan.dimensions).size
-        val confirmedDimensions = plan.dimensions.count {
-            !it.axis.startsWith("label-") && !it.id.startsWith("num-") && it.confidence >= 70 && it.sourceText.isNotBlank()
-        }
+        val confirmedDimensions = plan.dimensions.count { isIndependentDimension(it) && it.confidence >= 70 }
         val supportedWalls = plan.walls.count { wall ->
             val kind = wall.kind.lowercase()
             kind.contains("consensus") || kind.contains("raster") || kind.contains("remote") || wall.id.startsWith("rv2-")
         }
         val inferredRooms = plan.rooms.count { it.id.startsWith("topology-room-") || it.type.contains("topology", true) }
-        val manualEvidence = plan.dimensions.count { it.sourceText.contains("تأكيد المستخدم") }
+        val manualEvidence = plan.dimensions.count { isUserConfirmedDimension(it) }
 
         val expectedWalls = maxOf(4, roomCount * 2)
         val wallCoverage = if (wallCount == 0) 0 else (wallCount * 100 / expectedWalls).coerceIn(0, 100)
@@ -111,8 +109,8 @@ object PlanVerificationEngine {
 
     private fun calculateScaleConfidence(plan: FloorPlan): Int {
         if (plan.widthM == null || plan.heightM == null) return 0
-        val scaleDimensions = plan.dimensions.filterNot { it.axis.startsWith("label-") || it.id.startsWith("num-") }
-        val manual = scaleDimensions.count { it.sourceText.contains("تأكيد المستخدم") }
+        val scaleDimensions = plan.dimensions.filter(::isIndependentDimension)
+        val manual = scaleDimensions.count(::isUserConfirmedDimension)
         if (manual >= 2) return 100
 
         val strong = scaleDimensions.count { it.confidence >= 80 && it.sourceText.isNotBlank() }
@@ -130,6 +128,18 @@ object PlanVerificationEngine {
             else -> 24
         }
     }
+
+    private fun isIndependentDimension(dimension: PlanDimension): Boolean {
+        val id = dimension.id.lowercase()
+        return id.startsWith("manual-") ||
+            id.startsWith("unit-") ||
+            id.startsWith("pair-") ||
+            id.startsWith("edge-") ||
+            isUserConfirmedDimension(dimension)
+    }
+
+    private fun isUserConfirmedDimension(dimension: PlanDimension): Boolean =
+        dimension.sourceText.contains("تأكيد المستخدم") || dimension.sourceText.contains("إدخال المستخدم")
 
     private fun openingLabel(type: String) = if (type.contains("window", true) || type.contains("ناف")) "النافذة" else "الباب"
 }

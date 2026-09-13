@@ -90,7 +90,7 @@ object MultiPageEvidenceFusionEngine {
             }
             val type = if (room.type.equals("unknown", true) && !other.type.equals("unknown", true)) other.type else room.type
             out += geometry.copy(
-                id = "consensus-${room.id}",
+                id = room.id,
                 name = name,
                 type = type,
                 confidence = (max(room.confidence, other.confidence) + 6).coerceAtMost(96)
