@@ -26,9 +26,9 @@ class AdaptivePlanOcrEngine(private val context: Context) {
         val recovered = runCatching { highResolutionPass(uri, maxPdfPages) }.getOrNull() ?: return first
         val merged = dedupe(first.lines + recovered.lines)
         return PlanTextOcrEngine.Result(
-            lines = merged.take(2200),
+            lines = merged.take(2600),
             pagesAnalyzed = maxOf(first.pagesAnalyzed, recovered.pagesAnalyzed),
-            truncated = first.truncated || recovered.truncated || merged.size > 2200
+            truncated = first.truncated || recovered.truncated || merged.size > 2600
         )
     }
 
@@ -38,7 +38,7 @@ class AdaptivePlanOcrEngine(private val context: Context) {
             val cx = (it.leftPct + it.rightPct) / 2f
             (cx < 18f || cx > 82f || it.topPct < 15f || it.bottomPct > 85f) && looksNumeric(it.text)
         }
-        return lines.size < 26 || numeric < 10 || edgeNumeric < 4
+        return lines.size < 30 || numeric < 12 || edgeNumeric < 5
     }
 
     private suspend fun highResolutionPass(uri: Uri, maxPdfPages: Int): PlanTextOcrEngine.Result = withContext(Dispatchers.IO) {
@@ -57,7 +57,7 @@ class AdaptivePlanOcrEngine(private val context: Context) {
             ?: return PlanTextOcrEngine.Result(emptyList(), 0, false)
         return try {
             val maxSide = max(original.width, original.height).coerceAtLeast(1)
-            val target = 3600f
+            val target = 3800f
             val ratio = (target / maxSide).coerceAtLeast(1f)
             val hi = if (ratio > 1.03f) Bitmap.createScaledBitmap(
                 original,
@@ -68,7 +68,7 @@ class AdaptivePlanOcrEngine(private val context: Context) {
             try {
                 val all = recognizeFullAndTiles(recognizer, hi, 0)
                 val lines = dedupe(all)
-                PlanTextOcrEngine.Result(lines.take(1200), 1, lines.size > 1200)
+                PlanTextOcrEngine.Result(lines.take(1400), 1, lines.size > 1400)
             } finally {
                 if (hi !== original) hi.recycle()
             }
@@ -85,7 +85,7 @@ class AdaptivePlanOcrEngine(private val context: Context) {
             val all = mutableListOf<PlanTextOcrEngine.SpatialLine>()
             for (pageIndex in 0 until count) {
                 renderer.openPage(pageIndex).use { page ->
-                    val targetWidth = 3400
+                    val targetWidth = 3600
                     val ratio = targetWidth.toFloat() / page.width.coerceAtLeast(1)
                     val targetHeight = (page.height * ratio).toInt().coerceAtLeast(1)
                     val bitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
@@ -98,44 +98,59 @@ class AdaptivePlanOcrEngine(private val context: Context) {
                 }
             }
             val lines = dedupe(all)
-            PlanTextOcrEngine.Result(lines.take(2200), count, renderer.pageCount > count || lines.size > 2200)
+            PlanTextOcrEngine.Result(lines.take(2600), count, renderer.pageCount > count || lines.size > 2600)
         }
     }
 
+    /**
+     * Full-page OCR keeps context. Three overlapping samples on each axis then magnify
+     * tiny dimensions/labels near walls and sheet edges without losing their page coordinates.
+     */
     private suspend fun recognizeFullAndTiles(
         recognizer: TextRecognizer,
         bitmap: Bitmap,
         pageIndex: Int
     ): List<PlanTextOcrEngine.SpatialLine> {
         val out = mutableListOf<PlanTextOcrEngine.SpatialLine>()
-        out += recognize(recognizer, bitmap, pageIndex, 0, 0, bitmap.width, bitmap.height, 74)
+        out += recognize(recognizer, bitmap, pageIndex, 0, 0, bitmap.width, bitmap.height, 76)
 
-        val overlapX = (bitmap.width * .08f).toInt()
-        val overlapY = (bitmap.height * .08f).toInt()
-        val halfW = bitmap.width / 2
-        val halfH = bitmap.height / 2
-        val tiles = listOf(
-            Rect(0, 0, (halfW + overlapX).coerceAtMost(bitmap.width), (halfH + overlapY).coerceAtMost(bitmap.height)),
-            Rect((halfW - overlapX).coerceAtLeast(0), 0, bitmap.width, (halfH + overlapY).coerceAtMost(bitmap.height)),
-            Rect(0, (halfH - overlapY).coerceAtLeast(0), (halfW + overlapX).coerceAtMost(bitmap.width), bitmap.height),
-            Rect((halfW - overlapX).coerceAtLeast(0), (halfH - overlapY).coerceAtLeast(0), bitmap.width, bitmap.height)
-        )
-        for (rect in tiles) {
-            if (rect.width() < 40 || rect.height() < 40) continue
-            val tile = Bitmap.createBitmap(bitmap, rect.left, rect.top, rect.width(), rect.height())
-            try {
-                out += recognize(
-                    recognizer = recognizer,
-                    bitmap = tile,
-                    pageIndex = pageIndex,
-                    originX = rect.left,
-                    originY = rect.top,
-                    fullWidth = bitmap.width,
-                    fullHeight = bitmap.height,
-                    confidence = 68
+        val tileWidth = (bitmap.width * .46f).toInt().coerceIn(80, bitmap.width)
+        val tileHeight = (bitmap.height * .46f).toInt().coerceIn(80, bitmap.height)
+        val startsX = listOf(
+            0,
+            ((bitmap.width - tileWidth) / 2).coerceAtLeast(0),
+            (bitmap.width - tileWidth).coerceAtLeast(0)
+        ).distinct()
+        val startsY = listOf(
+            0,
+            ((bitmap.height - tileHeight) / 2).coerceAtLeast(0),
+            (bitmap.height - tileHeight).coerceAtLeast(0)
+        ).distinct()
+
+        for (top in startsY) {
+            for (left in startsX) {
+                val rect = Rect(
+                    left,
+                    top,
+                    (left + tileWidth).coerceAtMost(bitmap.width),
+                    (top + tileHeight).coerceAtMost(bitmap.height)
                 )
-            } finally {
-                tile.recycle()
+                if (rect.width() < 80 || rect.height() < 80) continue
+                val tile = Bitmap.createBitmap(bitmap, rect.left, rect.top, rect.width(), rect.height())
+                try {
+                    out += recognize(
+                        recognizer = recognizer,
+                        bitmap = tile,
+                        pageIndex = pageIndex,
+                        originX = rect.left,
+                        originY = rect.top,
+                        fullWidth = bitmap.width,
+                        fullHeight = bitmap.height,
+                        confidence = 70
+                    )
+                } finally {
+                    tile.recycle()
+                }
             }
         }
         return out
