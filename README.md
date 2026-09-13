@@ -48,13 +48,16 @@
 ## هوية الإصدار
 - `applicationId = com.manzili.hai` — لا يغير.
 - الإصدار الحالي: `0.62.0` / `versionCode 62`.
+- هوية GLB/GLTF المصدرة تسجل `Manzili HAI 0.62.0`.
 - أي تحديث مثبت فوق نسخة سابقة يحتاج نفس Android signing key مع زيادة `versionCode`.
 
 ## الخصوصية والأمان
 - أسرار المزود والجلسة تستخدم `EncryptedSharedPreferences`.
+- المخططات المحلية وسجل النسخ ومراجع ملفات PDF/الصور الأصلية تحفظ في `EncryptedSharedPreferences` مع ترحيل تلقائي من التخزين القديم غير المشفر.
 - Cleartext HTTP معطل في Manifest؛ الخدمات الإنتاجية يجب أن تستخدم HTTPS.
 - Android backup معطل افتراضيًا لأن المشاريع قد تحتوي مخططات منازل حساسة.
 - CodeQL يفحص Kotlin/Python، وAndroid CI يشغل unit tests وlint والبناء.
+- تصدير أرشيف مشروع إلى ملف/نص هو عملية صريحة ومحمولة، لذلك يجب التعامل مع الملف المصدر كبيانات حساسة خارج التطبيق.
 
 ## البناء
 ```bash
