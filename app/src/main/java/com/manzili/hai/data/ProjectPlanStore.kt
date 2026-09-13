@@ -16,13 +16,24 @@ class ProjectPlanStore(context: Context) {
     init { migrateSinglePlan() }
 
     fun activeProjectId(): String? = prefs.getString(KEY_ACTIVE, null)
+    fun contains(projectId: String): Boolean = projectId in ids()
 
     fun createProject(plan: FloorPlan): String {
         val id = UUID.randomUUID().toString()
-        val ids = ids().toMutableSet().apply { add(id) }
-        prefs.edit().putStringSet(KEY_IDS, ids).putString(KEY_ACTIVE, id).apply()
-        persist(id, ProjectMemoryEngine.reconcile(plan), true)
+        upsertProject(id, plan, makeActive = true)
         return id
+    }
+
+    /** Insert or replace a project under a stable ID. Used by cloud sync to avoid duplicate IDs. */
+    fun upsertProject(projectId: String, plan: FloorPlan, makeActive: Boolean = true): FloorPlan {
+        require(projectId.isNotBlank()) { "projectId must not be blank" }
+        val ready = ProjectMemoryEngine.reconcile(plan)
+        val ids = ids().toMutableSet().apply { add(projectId) }
+        val edit = prefs.edit().putStringSet(KEY_IDS, ids)
+        if (makeActive) edit.putString(KEY_ACTIVE, projectId)
+        edit.apply()
+        persist(projectId, ready, snapshot = load(projectId) != ready, makeActive = makeActive)
+        return ready
     }
 
     fun save(plan: FloorPlan) {
@@ -84,10 +95,11 @@ class ProjectPlanStore(context: Context) {
         return next?.let { load(it.id) }
     }
 
-    private fun persist(id: String, plan: FloorPlan, snapshot: Boolean) {
+    private fun persist(id: String, plan: FloorPlan, snapshot: Boolean, makeActive: Boolean = true) {
         val now = System.currentTimeMillis()
         val encoded = PlanStorageCodec.encode(plan)
-        val e = prefs.edit().putString(currentKey(id), encoded.toString()).putLong(updatedKey(id), now).putString(KEY_ACTIVE, id)
+        val e = prefs.edit().putString(currentKey(id), encoded.toString()).putLong(updatedKey(id), now)
+        if (makeActive) e.putString(KEY_ACTIVE, id)
         if (snapshot) e.putString(versionsKey(id), addSnapshot(id, plan, now).toString())
         e.apply()
     }
