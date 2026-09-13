@@ -42,6 +42,7 @@ jobs:
           PLAN_STORE=app/src/main/java/com/manzili/hai/data/ProjectPlanStore.kt
           SOURCE_STORE=app/src/main/java/com/manzili/hai/data/ProjectSourceStore.kt
           GLTF=app/src/main/java/com/manzili/hai/export/GltfPlanExporter.kt
+          REMOTE_PARSER=app/src/main/java/com/manzili/hai/engine/RemoteFloorplanEvidenceClient.kt
 
           grep -q 'android:name=".FocusedMainActivityV2"' "$MANIFEST"
           ! grep -q 'composable("4d")' "$LAUNCHER"
@@ -57,7 +58,7 @@ jobs:
           grep -q 'manzili_hai_project_sources_secure_v1' "$SOURCE_STORE"
 
           grep -q 'BuildConfig.VERSION_NAME' "$GLTF"
-          grep -q 'android-0.62' app/src/main/java/com/manzili/hai/engine/RemoteFloorplanEvidenceClient.kt
+          grep -q 'android-accuracy-v3' "$REMOTE_PARSER"
       - name: Run engine regression tests
         run: ./gradlew testDebugUnitTest
       - name: Run Android lint
