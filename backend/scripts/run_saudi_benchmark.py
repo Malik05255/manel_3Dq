@@ -6,7 +6,7 @@ from typing import Any
 
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/"backend"))
-from app.parser import parse_floorplan
+from app.parser_v2 import parse_floorplan
 
 
 def f1(tp:int,fp:int,fn:int)->float:
@@ -52,7 +52,7 @@ def main()->int:
             walls=greedy(expected.get("walls",[]),actual.get("walls",[]),wall_dist,7.0)
             openings=greedy(expected.get("openings",[]),actual.get("openings",[]),opening_dist,6.5,"type")
             overall=round(walls*.65+openings*.35,5)
-            results.append({"id":row["id"],"city":row["city"],"split":row["split"],"model_used":actual.get("model_used"),"wall_f1":round(walls,5),"opening_f1":round(openings,5),"overall":overall})
+            results.append({"id":row["id"],"city":row["city"],"split":row["split"],"model_used":actual.get("model_used"),"wall_f1":round(walls,5),"opening_f1":round(openings,5),"overall":overall,"verified_confidence":actual.get("confidence"),"quality":actual.get("quality",{})})
         except Exception as exc:errors.append(f"{row.get('id')}: {type(exc).__name__}: {exc}")
     report={"licensed_cases_in_manifest":len(rows),"executed_cases":len(results),"mean_overall":round(sum(r["overall"] for r in results)/len(results),5) if results else 0.0,"results":results,"errors":errors,"claim_policy":"Measured claims require executed licensed/deidentified cases; zero remains zero."}
     out.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8");print(json.dumps(report,ensure_ascii=False,indent=2))
