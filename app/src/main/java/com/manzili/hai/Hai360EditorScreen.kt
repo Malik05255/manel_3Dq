@@ -45,6 +45,7 @@ import kotlin.math.hypot
 private enum class EditorTool { SELECT, ROOM, WALL, DOOR, WINDOW }
 private data class EditorSelection(val kind: String, val id: String)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun Hai360StudioScreen(
     source: Uri?,
@@ -53,22 +54,94 @@ internal fun Hai360StudioScreen(
     onEdit: (FloorPlan) -> Unit,
     onConfirm: (FloorPlan) -> Unit
 ) {
-    Box(Modifier.fillMaxSize()) {
-        Hai360StudioScreen(source, initialPlan, onBack, onConfirm)
-        ExtendedFloatingActionButton(
-            onClick = { onEdit(PlanVerificationEngine.inspect(initialPlan).plan) },
-            containerColor = H360CyanDeep,
-            contentColor = Color.White,
-            shape = RoundedCornerShape(20.dp),
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .navigationBarsPadding()
-                .padding(end = 18.dp, bottom = 88.dp)
-        ) {
-            Icon(Icons.Rounded.Edit, null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(7.dp))
-            Text("تعديل", fontWeight = FontWeight.Black)
+    val plan = remember(initialPlan) { PlanVerificationEngine.inspect(initialPlan).plan }
+    val report = remember(plan) { PlanVerificationEngine.inspect(plan) }
+
+    Scaffold(
+        containerColor = H360Ivory,
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text("المخطط", color = H360Ink, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                        Text("${plan.rooms.size} غرف  •  ${plan.walls.size} جدار  •  ${report.readingConfidence}%", color = H360Muted, fontSize = 9.sp)
+                    }
+                },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowForward, "رجوع", tint = H360Ink) } },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = H360Paper)
+            )
+        },
+        bottomBar = {
+            Surface(color = H360Paper, shadowElevation = 10.dp) {
+                Row(
+                    Modifier.fillMaxWidth().navigationBarsPadding().padding(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(9.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { onEdit(plan) },
+                        border = BorderStroke(1.dp, H360CyanDeep.copy(alpha = .35f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = H360CyanDeep),
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.weight(1f).height(52.dp)
+                    ) {
+                        Icon(Icons.Rounded.Edit, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("تعديل", fontWeight = FontWeight.Black)
+                    }
+                    Button(
+                        onClick = { onConfirm(report.plan) },
+                        enabled = !report.blocking,
+                        colors = ButtonDefaults.buttonColors(containerColor = H360CyanDeep, contentColor = Color.White),
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.weight(1.25f).height(52.dp)
+                    ) {
+                        Icon(Icons.Rounded.Check, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("اعتماد", fontWeight = FontWeight.Black)
+                    }
+                }
+            }
         }
+    ) { pad ->
+        Box(Modifier.fillMaxSize().padding(pad)) {
+            EditorCanvas(
+                source = source,
+                plan = plan,
+                tool = EditorTool.SELECT,
+                selection = null,
+                firstWallPoint = null,
+                onTap = { _, _ -> }
+            )
+            Row(
+                Modifier.align(Alignment.TopStart).padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                ReviewBadge("${report.readingConfidence}%", if (report.readingConfidence >= 90) H360Mint else H360Peach)
+                ReviewBadge("${plan.rooms.size} غرف", H360Sky)
+                ReviewBadge("${plan.walls.size} جدار", H360Lilac)
+            }
+            if (report.blocking) {
+                Surface(
+                    color = H360Peach.copy(alpha = .96f),
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, H360Amber.copy(alpha = .35f)),
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp)
+                ) {
+                    Row(Modifier.padding(horizontal = 13.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.ErrorOutline, null, tint = H360Danger, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text(report.issues.firstOrNull()?.title ?: "يحتاج مراجعة", color = H360Ink, fontSize = 10.sp, fontWeight = FontWeight.Black)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReviewBadge(text: String, color: Color) {
+    Surface(color = color.copy(alpha = .96f), shape = RoundedCornerShape(50.dp), border = BorderStroke(1.dp, H360Line), shadowElevation = 1.dp) {
+        Text(text, color = H360Ink, fontSize = 9.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp))
     }
 }
 
@@ -80,7 +153,6 @@ internal fun Hai360EditorScreen(
     onCancel: () -> Unit,
     onDone: (FloorPlan) -> Unit
 ) {
-    val context = LocalContext.current
     var plan by remember(initialPlan) { mutableStateOf(PlanVerificationEngine.inspect(initialPlan).plan) }
     var tool by remember { mutableStateOf(EditorTool.SELECT) }
     var selected by remember { mutableStateOf<EditorSelection?>(null) }
@@ -104,9 +176,7 @@ internal fun Hai360EditorScreen(
                         Text("${plan.rooms.size} غرف  •  ${plan.walls.size} جدار  •  ${report.readingConfidence}%", color = H360Muted, fontSize = 9.sp)
                     }
                 },
-                navigationIcon = {
-                    IconButton(onClick = onCancel) { Icon(Icons.Rounded.Close, "إلغاء", tint = H360Ink) }
-                },
+                navigationIcon = { IconButton(onClick = onCancel) { Icon(Icons.Rounded.Close, "إلغاء", tint = H360Ink) } },
                 actions = {
                     IconButton(
                         onClick = {
@@ -136,18 +206,20 @@ internal fun Hai360EditorScreen(
                     if (it != EditorTool.SELECT) selected = null
                 },
                 onDelete = {
-                    val s = selected ?: return@EditorToolbar
-                    val next = when (s.kind) {
-                        "room" -> plan.copy(rooms = plan.rooms.filterNot { it.id == s.id })
-                        "wall" -> plan.copy(
-                            walls = plan.walls.filterNot { it.id == s.id },
-                            openings = plan.openings.filterNot { it.wallId == s.id }
-                        )
-                        "opening" -> plan.copy(openings = plan.openings.filterNot { it.id == s.id })
-                        else -> plan
+                    val s = selected
+                    if (s != null) {
+                        val next = when (s.kind) {
+                            "room" -> plan.copy(rooms = plan.rooms.filterNot { it.id == s.id })
+                            "wall" -> plan.copy(
+                                walls = plan.walls.filterNot { it.id == s.id },
+                                openings = plan.openings.filterNot { it.wallId == s.id }
+                            )
+                            "opening" -> plan.copy(openings = plan.openings.filterNot { it.id == s.id })
+                            else -> plan
+                        }
+                        commit(next)
+                        selected = null
                     }
-                    commit(next)
-                    selected = null
                 }
             )
         }
@@ -327,37 +399,42 @@ private fun EditorCanvas(
             .pointerInput(Unit) {
                 detectTransformGestures { _, pan, zoom, _ ->
                     scale = (scale * zoom).coerceIn(0.7f, 6f)
-                    offset += pan
+                    offset = offset + pan
                     val maxX = measured.width * (scale - 1f) / 2f + measured.width * .45f
                     val maxY = measured.height * (scale - 1f) / 2f + measured.height * .45f
                     offset = Offset(offset.x.coerceIn(-maxX, maxX), offset.y.coerceIn(-maxY, maxY))
                 }
             }
             .pointerInput(tool, scale, offset, bitmap) {
-                detectTapGestures(onDoubleTap = {
-                    scale = 1f
-                    offset = Offset.Zero
-                }) { pos ->
-                    val w = measured.width.toFloat().coerceAtLeast(1f)
-                    val h = measured.height.toFloat().coerceAtLeast(1f)
-                    val center = Offset(w / 2f, h / 2f)
-                    val local = (pos - center - offset) / scale + center
-                    val rect = fittedRect(w, h)
-                    val x = ((local.x - rect[0]) / rect[2] * 100f).coerceIn(0f, 100f)
-                    val y = ((local.y - rect[1]) / rect[3] * 100f).coerceIn(0f, 100f)
-                    if (local.x in rect[0]..(rect[0] + rect[2]) && local.y in rect[1]..(rect[1] + rect[3])) onTap(x, y)
-                }
+                detectTapGestures(
+                    onDoubleTap = {
+                        scale = 1f
+                        offset = Offset.Zero
+                    },
+                    onTap = { pos ->
+                        val w = measured.width.toFloat().coerceAtLeast(1f)
+                        val h = measured.height.toFloat().coerceAtLeast(1f)
+                        val center = Offset(w / 2f, h / 2f)
+                        val local = (pos - center - offset) / scale + center
+                        val rect = fittedRect(w, h)
+                        val insideX = local.x >= rect[0] && local.x <= rect[0] + rect[2]
+                        val insideY = local.y >= rect[1] && local.y <= rect[1] + rect[3]
+                        if (insideX && insideY) {
+                            val x = ((local.x - rect[0]) / rect[2] * 100f).coerceIn(0f, 100f)
+                            val y = ((local.y - rect[1]) / rect[3] * 100f).coerceIn(0f, 100f)
+                            onTap(x, y)
+                        }
+                    }
+                )
             }
     ) {
         Box(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = offset.x
-                    translationY = offset.y
-                }
+            Modifier.fillMaxSize().graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                translationX = offset.x
+                translationY = offset.y
+            }
         ) {
             BlueprintGrid(Modifier.matchParentSize(), dark = false, step = 28f)
             bitmap?.let {
