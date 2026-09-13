@@ -33,7 +33,7 @@ services:
       - key: ROBOFLOW_API_KEY
         sync: false
       - key: ROBOFLOW_MODEL_IDS
-        value: floor-plan-detector/19,floor-plan-nnoub-ngvnw/1
+        value: harsh-bagadiya/floor-plan-detector-19-rfdetr-seg-medium-t1,floor-plan-nnoub-ngvnw/1
       - key: ROBOFLOW_CONFIDENCE
         value: "0.25"
       - key: BLENDER_WORKER_URL
