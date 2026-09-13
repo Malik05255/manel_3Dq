@@ -3,7 +3,6 @@ package com.manzili.hai.engine
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import com.manzili.hai.model.PlanPoint
@@ -14,9 +13,47 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
+/** Pure pixel classification kept Android-free so import regressions can be unit-tested. */
+internal object RasterPixelClassifier {
+    private fun rgb(pixel: Int): Triple<Int, Int, Int> = Triple(
+        (pixel shr 16) and 0xFF,
+        (pixel shr 8) and 0xFF,
+        pixel and 0xFF
+    )
+
+    fun isDarkInk(pixel: Int): Boolean {
+        val alpha = (pixel ushr 24) and 0xFF
+        if (alpha < 80) return false
+        val (r, g, b) = rgb(pixel)
+        val luma = (r * 299 + g * 587 + b * 114) / 1000
+        return luma < 118
+    }
+
+    /**
+     * Architectural drawings are often exported with medium blue wall strokes rather than black.
+     * Those strokes can have a luma above the dark-ink threshold, so the old parser skipped them.
+     * Restrict the rule to clearly blue-dominant pixels to avoid promoting red labels, green
+     * dimensions, or cyan app chrome to walls.
+     */
+    fun isBlueprintBlue(pixel: Int): Boolean {
+        val alpha = (pixel ushr 24) and 0xFF
+        if (alpha < 80) return false
+        val (r, g, b) = rgb(pixel)
+        val luma = (r * 299 + g * 587 + b * 114) / 1000
+        return b >= 112 &&
+            b - r >= 28 &&
+            b - g >= 16 &&
+            r <= 165 &&
+            g <= 180 &&
+            luma < 190
+    }
+}
+
 /**
- * Lightweight raster parser that detects long dark wall-like runs directly from pixels.
+ * Lightweight raster parser that detects long wall-like runs directly from pixels.
  * It is intentionally evidence-first: unmatched lines are not silently promoted to truth.
+ * Blue architectural strokes are parsed on their own channel so screenshots/PDFs with blue walls
+ * do not collapse to zero geometry merely because their luminance is higher than black ink.
  */
 class RasterFloorplanParserEngine(private val context: Context) {
     data class Result(
@@ -32,7 +69,13 @@ class RasterFloorplanParserEngine(private val context: Context) {
             val bitmap = context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
                 ?: return@withContext Result(emptyList(), 0, 0, listOf("تعذر فك الصورة للـRaster parser"))
             val walls = detectWalls(bitmap, 0)
-            Result(walls, 1, confidence(walls), listOf("Raster parser قرأ ${walls.size} خطًا جداريًا مرشحًا من الصفحة الأولى."))
+            val mode = if (walls.any { it.kind == "raster-blueprint" }) "الأزرق المعماري" else "الحبر الداكن"
+            Result(
+                walls,
+                1,
+                confidence(walls),
+                listOf("Raster parser قرأ ${walls.size} خطًا جداريًا مرشحًا من الصفحة الأولى عبر قناة $mode.")
+            )
         }
     }
 
@@ -58,11 +101,15 @@ class RasterFloorplanParserEngine(private val context: Context) {
                     bitmap.recycle()
                 }
             }
+            val mode = if (firstPageWalls.any { it.kind == "raster-blueprint" }) "الأزرق المعماري" else "الحبر الداكن"
             Result(
                 firstPageWalls,
                 count,
                 confidence(firstPageWalls),
-                listOf("Raster parser فحص $count صفحة. مرشحات الخطوط حسب الصفحة: ${counts.joinToString("، ")}.")
+                listOf(
+                    "Raster parser فحص $count صفحة. مرشحات الخطوط حسب الصفحة: ${counts.joinToString("، ")}.",
+                    "قناة الهندسة الأساسية: $mode."
+                )
             )
         }
     }
@@ -78,17 +125,64 @@ class RasterFloorplanParserEngine(private val context: Context) {
         val step = max(2, min(w, h) / 420)
         val minHorizontal = max(20, (w * .085f).toInt())
         val minVertical = max(20, (h * .085f).toInt())
+
+        val blueprint = scanRuns(
+            bitmap = bitmap,
+            pageIndex = pageIndex,
+            step = step,
+            minHorizontal = minHorizontal,
+            minVertical = minVertical,
+            kind = "raster-blueprint",
+            confidence = 84,
+            predicate = RasterPixelClassifier::isBlueprintBlue
+        )
+        val blueprintMerged = mergeCandidates(blueprint)
+
+        val selected = if (blueprintMerged.size >= 3) {
+            // When a coherent blue wall network exists, prefer it over black UI/text elements.
+            blueprintMerged
+        } else {
+            mergeCandidates(
+                scanRuns(
+                    bitmap = bitmap,
+                    pageIndex = pageIndex,
+                    step = step,
+                    minHorizontal = minHorizontal,
+                    minVertical = minVertical,
+                    kind = "raster-evidence",
+                    confidence = 69,
+                    predicate = RasterPixelClassifier::isDarkInk
+                )
+            )
+        }
+
+        if (bitmap !== source) bitmap.recycle()
+        return selected.take(180)
+    }
+
+    private fun scanRuns(
+        bitmap: Bitmap,
+        pageIndex: Int,
+        step: Int,
+        minHorizontal: Int,
+        minVertical: Int,
+        kind: String,
+        confidence: Int,
+        predicate: (Int) -> Boolean
+    ): List<Wall> {
+        val w = bitmap.width
+        val h = bitmap.height
         val raw = mutableListOf<Wall>()
 
         var y = 0
         while (y < h) {
             var x = 0
             while (x < w) {
-                if (dark(bitmap.getPixel(x, y))) {
+                if (predicate(bitmap.getPixel(x, y))) {
                     val start = x
                     var end = x
-                    while (end + step < w && darkNeighborhood(bitmap, end + step, y, step, true)) end += step
-                    if (end - start >= minHorizontal) raw += wall(pageIndex, raw.size, start, y, end, y, w, h, 69)
+                    while (end + step < w && inkNeighborhood(bitmap, end + step, y, step, true, predicate)) end += step
+                    if (end - start >= minHorizontal) raw += wall(pageIndex, raw.size, start, y, end, y, w, h, confidence, kind)
                     x = max(x + step, end + step)
                 } else x += step
             }
@@ -99,47 +193,60 @@ class RasterFloorplanParserEngine(private val context: Context) {
         while (x < w) {
             var yy = 0
             while (yy < h) {
-                if (dark(bitmap.getPixel(x, yy))) {
+                if (predicate(bitmap.getPixel(x, yy))) {
                     val start = yy
                     var end = yy
-                    while (end + step < h && darkNeighborhood(bitmap, x, end + step, step, false)) end += step
-                    if (end - start >= minVertical) raw += wall(pageIndex, raw.size, x, start, x, end, w, h, 69)
+                    while (end + step < h && inkNeighborhood(bitmap, x, end + step, step, false, predicate)) end += step
+                    if (end - start >= minVertical) raw += wall(pageIndex, raw.size, x, start, x, end, w, h, confidence, kind)
                     yy = max(yy + step, end + step)
                 } else yy += step
             }
             x += step
         }
-
-        val merged = mutableListOf<Wall>()
-        raw.sortedByDescending { lengthPct(it) }.forEach { candidate ->
-            val duplicate = merged.any { similar(it, candidate) }
-            if (!duplicate) merged += candidate
-        }
-        if (bitmap !== source) bitmap.recycle()
-        return merged.take(180)
+        return raw
     }
 
-    private fun darkNeighborhood(bitmap: Bitmap, x: Int, y: Int, r: Int, horizontal: Boolean): Boolean {
-        val offsets = if (horizontal) listOf(-r, 0, r) else listOf(-r, 0, r)
+    private fun mergeCandidates(raw: List<Wall>): List<Wall> {
+        val merged = mutableListOf<Wall>()
+        raw.sortedByDescending { lengthPct(it) }.forEach { candidate ->
+            if (merged.none { similar(it, candidate) }) merged += candidate
+        }
+        return merged
+    }
+
+    private fun inkNeighborhood(
+        bitmap: Bitmap,
+        x: Int,
+        y: Int,
+        r: Int,
+        horizontal: Boolean,
+        predicate: (Int) -> Boolean
+    ): Boolean {
         var hits = 0
-        offsets.forEach { d ->
+        for (d in intArrayOf(-r, 0, r)) {
             val px = if (horizontal) x else (x + d).coerceIn(0, bitmap.width - 1)
             val py = if (horizontal) (y + d).coerceIn(0, bitmap.height - 1) else y
-            if (dark(bitmap.getPixel(px.coerceIn(0, bitmap.width - 1), py.coerceIn(0, bitmap.height - 1)))) hits++
+            if (predicate(bitmap.getPixel(px.coerceIn(0, bitmap.width - 1), py.coerceIn(0, bitmap.height - 1)))) hits++
         }
         return hits >= 2
     }
 
-    private fun dark(pixel: Int): Boolean {
-        val luma = (Color.red(pixel) * 299 + Color.green(pixel) * 587 + Color.blue(pixel) * 114) / 1000
-        return luma < 92
-    }
-
-    private fun wall(page: Int, index: Int, x1: Int, y1: Int, x2: Int, y2: Int, w: Int, h: Int, confidence: Int): Wall = Wall(
+    private fun wall(
+        page: Int,
+        index: Int,
+        x1: Int,
+        y1: Int,
+        x2: Int,
+        y2: Int,
+        w: Int,
+        h: Int,
+        confidence: Int,
+        kind: String
+    ): Wall = Wall(
         id = "raster-p${page}-w$index",
         start = PlanPoint(x1.toFloat() / w * 100f, y1.toFloat() / h * 100f),
         end = PlanPoint(x2.toFloat() / w * 100f, y2.toFloat() / h * 100f),
-        kind = "raster-evidence",
+        kind = kind,
         confidence = confidence
     )
 
@@ -160,8 +267,9 @@ class RasterFloorplanParserEngine(private val context: Context) {
         (min(max(a1, a2), max(b1, b2)) - max(min(a1, a2), min(b1, b2))).coerceAtLeast(0f)
 
     private fun confidence(walls: List<Wall>): Int = when {
-        walls.size >= 12 -> 78
-        walls.size >= 6 -> 68
+        walls.size >= 12 -> 82
+        walls.size >= 6 -> 72
+        walls.size >= 3 -> 64
         walls.isNotEmpty() -> 55
         else -> 0
     }
