@@ -167,7 +167,7 @@ fun CloudSyncScreen(
                                 scope.launch {
                                     runCatching { uploader.upload(activeId!!, active!!) }
                                         .onSuccess { result ->
-                                            val synced = store.upsertProject(activeId, result.plan, makeActive = true)
+                                            val synced = store.upsertProject(activeId!!, result.plan, makeActive = true)
                                             onPlanChanged(synced)
                                             message = "تم رفع المشروع الحالي • V${result.revision}"
                                             remote = runCatching { cloud.listProjects() }.getOrDefault(remote)
