@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 from functools import lru_cache
 from typing import Any
 
@@ -69,10 +70,26 @@ def _mask_from_onnx(image: np.ndarray, session: Any) -> np.ndarray | None:
         return None
 
 
+def _blue_wall_mask(image: np.ndarray) -> np.ndarray:
+    """Detect common blue/purple architectural wall strokes without selecting gray paper/text."""
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    hsv_blue = cv2.inRange(hsv, np.array([85, 45, 35], dtype=np.uint8), np.array([150, 255, 255], dtype=np.uint8))
+    b, g, r = cv2.split(image)
+    dominant = (
+        (b.astype(np.int16) >= r.astype(np.int16) + 18)
+        & (b.astype(np.int16) >= g.astype(np.int16) + 6)
+        & (b >= 65)
+    ).astype(np.uint8) * 255
+    blue = cv2.bitwise_or(hsv_blue, dominant)
+    return cv2.morphologyEx(blue, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+
+
 def _fallback_wall_mask(image: np.ndarray) -> np.ndarray:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
-    _, binary = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY_INV)
+    _, dark = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY_INV)
+    blue = _blue_wall_mask(image)
+    binary = cv2.bitwise_or(dark, blue)
     h = max(9, image.shape[1] // 45)
     v = max(9, image.shape[0] // 45)
     hk = cv2.getStructuringElement(cv2.MORPH_RECT, (h, 2))
@@ -114,21 +131,31 @@ def _extract_lines(mask: np.ndarray, confidence: int) -> list[dict[str, Any]]:
     return out
 
 
+def _seal_room_boundaries(wall_mask: np.ndarray) -> np.ndarray:
+    """Temporarily bridge door-sized gaps for room counting without changing returned wall geometry."""
+    h, w = wall_mask.shape[:2]
+    base = ((wall_mask > 0) * 255).astype(np.uint8)
+    gap = max(7, int(round(min(w, h) * 0.045)))
+    gap = min(gap, max(11, int(round(min(w, h) * 0.075))))
+    horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (gap, 3))
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, gap))
+    horizontal = cv2.morphologyEx(base, cv2.MORPH_CLOSE, horizontal_kernel)
+    vertical = cv2.morphologyEx(base, cv2.MORPH_CLOSE, vertical_kernel)
+    sealed = cv2.bitwise_or(base, cv2.bitwise_or(horizontal, vertical))
+    sealed = cv2.morphologyEx(sealed, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=1)
+    return cv2.dilate(sealed, np.ones((3, 3), np.uint8), iterations=1)
+
+
 def _extract_enclosed_rooms(wall_mask: np.ndarray, confidence: int) -> list[dict[str, Any]]:
     h, w = wall_mask.shape[:2]
     if h < 16 or w < 16:
         return []
-    k = max(3, int(round(min(w, h) / 220.0)))
-    if k % 2 == 0:
-        k += 1
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
-    sealed = cv2.morphologyEx(wall_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-    sealed = cv2.dilate(sealed, kernel, iterations=1)
+    sealed = _seal_room_boundaries(wall_mask)
     free = cv2.bitwise_not(sealed)
     count, labels, stats, _ = cv2.connectedComponentsWithStats(free, connectivity=8)
     total = float(w * h)
-    min_area = max(220.0, total * 0.0025)
-    max_area = total * 0.42
+    min_area = max(180.0, total * 0.0015)
+    max_area = total * 0.48
     rooms: list[dict[str, Any]] = []
 
     for label in range(1, count):
@@ -136,6 +163,8 @@ def _extract_enclosed_rooms(wall_mask: np.ndarray, confidence: int) -> list[dict
         if area < min_area or area > max_area:
             continue
         if x <= 1 or y <= 1 or x + rw >= w - 1 or y + rh >= h - 1:
+            continue
+        if rw < max(8, int(w * 0.018)) or rh < max(8, int(h * 0.018)):
             continue
         component = np.zeros((h, w), dtype=np.uint8)
         component[labels == label] = 255
@@ -176,7 +205,7 @@ def _recover_sparse_walls(image: np.ndarray, walls: list[dict[str, Any]]) -> tup
     if len(walls) >= 3:
         return walls, False, None
     fallback_mask = _fallback_wall_mask(image)
-    recovered = _extract_lines(fallback_mask, confidence=68)
+    recovered = _extract_lines(fallback_mask, confidence=72)
     if len(recovered) >= 3 and len(recovered) > len(walls):
         return recovered, True, fallback_mask
     return walls, False, None
@@ -220,12 +249,19 @@ def _ocr(image: np.ndarray) -> list[dict[str, Any]]:
     reader = _easy_reader()
     if reader is None:
         return []
-    h, w = image.shape[:2]
-    result = reader.readtext(image, detail=1, paragraph=False)
+    h0, w0 = image.shape[:2]
+    max_side = max(h0, w0)
+    if max_side < 2200:
+        scale = 2200.0 / max(max_side, 1)
+        work = cv2.resize(image, (max(1, int(round(w0 * scale))), max(1, int(round(h0 * scale)))), interpolation=cv2.INTER_CUBIC)
+    else:
+        work = image
+    h, w = work.shape[:2]
+    result = reader.readtext(work, detail=1, paragraph=False)
     out: list[dict[str, Any]] = []
-    for item in result[:500]:
+    for item in result[:700]:
         box, text, score = item
-        if not text or score < 0.25:
+        if not text or score < 0.22:
             continue
         xs = [float(p[0]) for p in box]
         ys = [float(p[1]) for p in box]
@@ -238,6 +274,89 @@ def _ocr(image: np.ndarray) -> list[dict[str, Any]]:
             "confidence": int(max(0.0, min(1.0, float(score))) * 100),
         })
     return out
+
+
+_DIGIT_MAP = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹٫,", "01234567890123456789..")
+
+
+def _normalize_digits(text: str) -> str:
+    return text.translate(_DIGIT_MAP)
+
+
+def _area_from_text(text: str) -> float | None:
+    normalized = _normalize_digits(text).lower()
+    match = re.search(r"(?<!\d)(\d{1,4}(?:\.\d{1,3})?)\s*(?:m\s*[²2]|م\s*[²2])", normalized)
+    if not match:
+        return None
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None
+    return value if 0.2 <= value <= 2000.0 else None
+
+
+def _room_type(text: str) -> str:
+    t = text.lower()
+    rules = [
+        (("مجلس", "majlis"), "majlis"),
+        (("صالة", "معيشة", "living"), "living"),
+        (("مطبخ", "kitchen"), "kitchen"),
+        (("حمام", "دورة مياه", "مغسلة", "bath", "wc"), "bath"),
+        (("درج", "سلم", "stair"), "stairs"),
+        (("مخزن", "مستودع", "store"), "storage"),
+        (("غرفة", "نوم", "bed"), "bedroom"),
+        (("ممر", "corridor", "hall"), "corridor"),
+    ]
+    for keys, value in rules:
+        if any(key in t for key in keys):
+            return value
+    return "unknown"
+
+
+def _label_rooms_from_ocr(rooms: list[dict[str, Any]], lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not rooms or not lines:
+        return rooms
+    for room in rooms:
+        x1 = float(room.get("x", 0.0)) - 1.0
+        y1 = float(room.get("y", 0.0)) - 1.0
+        x2 = x1 + float(room.get("width", 0.0)) + 2.0
+        y2 = y1 + float(room.get("height", 0.0)) + 2.0
+        inside: list[dict[str, Any]] = []
+        for line in lines:
+            cx = (float(line.get("left_pct", 0.0)) + float(line.get("right_pct", 0.0))) / 2.0
+            cy = (float(line.get("top_pct", 0.0)) + float(line.get("bottom_pct", 0.0))) / 2.0
+            if x1 <= cx <= x2 and y1 <= cy <= y2:
+                inside.append(line)
+        if not inside:
+            continue
+
+        area_candidates = [(line, _area_from_text(str(line.get("text", "")))) for line in inside]
+        area_candidates = [(line, area) for line, area in area_candidates if area is not None]
+        if area_candidates:
+            line, area = max(area_candidates, key=lambda item: float(item[0].get("confidence", 0)))
+            room["area_m2"] = float(area)
+            room["confidence"] = max(int(room.get("confidence", 0)), min(96, int(line.get("confidence", 0)) + 6))
+
+        name_candidates: list[tuple[float, str, dict[str, Any]]] = []
+        for line in inside:
+            text = str(line.get("text", "")).strip()
+            if not text:
+                continue
+            letters = sum(ch.isalpha() for ch in text)
+            if letters < 2:
+                continue
+            score = float(line.get("confidence", 0)) + min(20.0, letters * 1.5)
+            if _room_type(text) != "unknown":
+                score += 18.0
+            name_candidates.append((score, text, line))
+        if name_candidates:
+            _, text, line = max(name_candidates, key=lambda item: item[0])
+            room["name"] = text[:80]
+            detected_type = _room_type(text)
+            if detected_type != "unknown":
+                room["type"] = detected_type
+            room["confidence"] = max(int(room.get("confidence", 0)), min(96, int(line.get("confidence", 0)) + 4))
+    return rooms
 
 
 def parse_floorplan(image_base64: str) -> dict[str, Any]:
@@ -273,26 +392,28 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
         else:
             mask = _fallback_wall_mask(image)
             room_mask = mask
-            walls = _extract_lines(mask, confidence=68)
-            model_used = "opencv-fallback"
+            walls = _extract_lines(mask, confidence=72)
+            model_used = "opencv-blue-aware-fallback"
             model_meta = model_status()
-            base_confidence = 56
-            warnings.append("Real segmentation weights are not available; deterministic OpenCV evidence was used.")
+            base_confidence = 62
+            warnings.append("Real segmentation weights are not available; blue-aware deterministic OpenCV evidence was used.")
 
-    if model_used != "opencv-fallback":
+    if model_used != "opencv-blue-aware-fallback":
         walls, recovered, recovered_mask = _recover_sparse_walls(image, walls)
         if recovered:
             room_mask = recovered_mask
-            model_used = f"{model_used}+opencv-recovery"
-            base_confidence = min(base_confidence, 68)
-            warnings.append("Segmentation returned insufficient wall geometry; deterministic OpenCV recovery supplied reviewable wall evidence.")
+            model_used = f"{model_used}+opencv-blue-recovery"
+            base_confidence = min(base_confidence, 72)
+            warnings.append("Segmentation returned insufficient wall geometry; blue-aware OpenCV recovery supplied reviewable wall evidence.")
 
-    rooms = _extract_enclosed_rooms(room_mask, confidence=max(60, base_confidence - 8)) if room_mask is not None and len(walls) >= 3 else []
+    rooms = _extract_enclosed_rooms(room_mask, confidence=max(62, base_confidence - 6)) if room_mask is not None and len(walls) >= 3 else []
+    ocr_lines = _ocr(image)
+    rooms = _label_rooms_from_ocr(rooms, ocr_lines)
     if walls and not rooms:
         warnings.append("Walls were detected but no closed room regions were reliable enough; review the wall overlay before 3D.")
 
-    ocr_lines = _ocr(image)
-    confidence = min(97, base_confidence + min(len(walls), 14) // 3 + (2 if ocr_lines else 0)) if walls else 0
+    evidence_bonus = min(len(walls), 14) // 3 + min(len(rooms), 10) // 3 + (3 if ocr_lines else 0)
+    confidence = min(98, base_confidence + evidence_bonus) if walls else 0
     return {
         "model_used": model_used,
         "model": model_meta,
