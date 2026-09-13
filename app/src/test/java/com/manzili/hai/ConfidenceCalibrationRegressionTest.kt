@@ -98,6 +98,11 @@ class ConfidenceCalibrationRegressionTest {
             ocrLines = emptyList(),
             modelUsed = "test",
             confidence = 90,
+            geometryConfidence = 88,
+            ocrConfidence = 0,
+            scaleConfidence = 0,
+            wallTopology = 100,
+            dimensionEvidenceCount = 0,
             warnings = emptyList()
         )
 
