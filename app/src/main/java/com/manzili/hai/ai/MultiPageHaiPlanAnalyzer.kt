@@ -31,7 +31,8 @@ class MultiPageHaiPlanAnalyzer(private val context:Context) {
         check(settings.configured){"أدخل إعدادات الذكاء الاصطناعي أولًا"}
         val isPdf=renderer.isPdf(uri)
         val total=if(isPdf) renderer.pageCount(uri) else 1
-        val images=renderer.render(uri,maxPdfPages=maxPdfPages,targetMaxPx=2800,jpegQuality=96)
+        // Preserve small dimensions, wall breaks and room labels before the vision provider downsamples.
+        val images=renderer.render(uri,maxPdfPages=maxPdfPages,targetMaxPx=3200,jpegQuality=97)
         val typeContext=projectType?.let { type ->
             "\n\nاختيار المستخدم المسبق: نوع المشروع هو «${type.label}». استخدمه فقط لفهم وظيفة المساحات والتسميات؛ لا تجبر الصورة على عناصر غير ظاهرة، ولا تحول اختيار المستخدم إلى دليل بصري."
         }.orEmpty()
