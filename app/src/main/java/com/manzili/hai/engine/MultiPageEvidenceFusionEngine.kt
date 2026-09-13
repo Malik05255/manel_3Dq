@@ -7,8 +7,20 @@ object MultiPageEvidenceFusionEngine {
         if (pages.isEmpty()) return plan
         if (plan.floors.isEmpty()) {
             val p = pages.first()
+            val seedRooms = if (plan.rooms.isEmpty()) p.rooms else plan.rooms
             val fused = OpeningEvidenceFusion.merge(plan.openings, p.openings, plan.walls + p.walls)
-            return FloorplanParserEngine.refine(plan.copy(openings = fused.openings), p.walls).plan
+            return FloorplanParserEngine.refine(
+                plan.copy(
+                    rooms = seedRooms,
+                    openings = fused.openings,
+                    observations = (plan.observations + if (p.rooms.isNotEmpty()) {
+                        "استخرج Deep Parser ${p.rooms.size} مساحة مغلقة أولية للمراجعة فوق المخطط الأصلي."
+                    } else {
+                        "لم يستخرج Deep Parser غرفًا مغلقة مؤكدة؛ راجع الجدران فوق الأصل قبل الاعتماد."
+                    }).distinct()
+                ),
+                p.walls
+            ).plan
         }
         val evidence = pages.associateBy { it.pageIndex }
         val floors = plan.floors.map { floor ->
@@ -18,7 +30,7 @@ object MultiPageEvidenceFusionEngine {
                 title = floor.name,
                 widthM = plan.widthM,
                 heightM = plan.heightM,
-                rooms = floor.rooms,
+                rooms = if (floor.rooms.isEmpty()) p.rooms else floor.rooms,
                 walls = floor.walls,
                 openings = fused.openings,
                 footprint = floor.footprint,
