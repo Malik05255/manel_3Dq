@@ -56,7 +56,7 @@ object GltfPlanExporter {
         }
         val rootNodes=JSONArray((0 until nodes.length()).toList())
         val json=JSONObject()
-            .put("asset",JSONObject().put("version","2.0").put("generator","Manzili HAI 0.60"))
+            .put("asset",JSONObject().put("version","2.0").put("generator","Manzili HAI 0.62.0"))
             .put("scene",0).put("scenes",JSONArray().put(JSONObject().put("nodes",rootNodes).put("name",scene.title)))
             .put("nodes",nodes).put("meshes",meshesJson).put("materials",materials).put("bufferViews",bufferViews).put("accessors",accessors)
             .put("buffers",JSONArray().put(JSONObject().put("byteLength",bin.size())))
