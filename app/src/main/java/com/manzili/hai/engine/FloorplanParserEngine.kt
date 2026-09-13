@@ -37,6 +37,27 @@ object FloorplanParserEngine {
 
     private fun fuseWalls(plan: FloorPlan, rasterWalls: List<Wall>, notes: MutableList<String>, uncertainties: MutableList<String>): List<Wall> {
         val current = plan.walls.toMutableList()
+
+        // A newly imported plan can legitimately start with no structured rooms/walls yet.
+        // Previously every parser wall was rejected in that state because boundarySupport() is
+        // necessarily zero when plan.rooms is empty. That made successful Deep Parser / Raster
+        // channels collapse back to an empty plan and triggered the "no reviewable geometry" gate.
+        // Bootstrap only from multiple strong, non-degenerate lines and keep the result explicitly
+        // marked as evidence that still needs user review.
+        if (current.isEmpty() && plan.rooms.isEmpty()) {
+            val seeds = rasterWalls
+                .filter { it.confidence >= 68 && wallLength(it) >= 2.5f }
+                .distinctBy { signature(it) }
+                .sortedWith(compareByDescending<Wall> { it.confidence }.thenByDescending { wallLength(it) })
+                .take(220)
+            if (seeds.size >= 3) {
+                current += seeds
+                notes += "بدأت هندسة المخطط من ${seeds.size} خطًا عالي الثقة من Deep Parser/Raster لأن الاستيراد لم يحتوِ هندسة سابقة."
+                uncertainties += "الهندسة الأولية بُنيت من أدلة parser قوية وتبقى قابلة للمراجعة قبل الاعتماد النهائي."
+                return current.distinctBy { signature(it) }
+            }
+        }
+
         rasterWalls.forEach { raster ->
             val matchIndex = current.indexOfFirst { similarLine(it, raster) }
             if (matchIndex >= 0) {
@@ -69,6 +90,9 @@ object FloorplanParserEngine {
         val bm = PlanPoint((b1.x + b2.x) / 2f, (b1.y + b2.y) / 2f)
         return hypot((am.x - bm.x).toDouble(), (am.y - bm.y).toDouble()).toFloat()
     }
+
+    private fun wallLength(wall: Wall): Float =
+        hypot((wall.end.x - wall.start.x).toDouble(), (wall.end.y - wall.start.y).toDouble()).toFloat()
 
     private fun similarLine(a: Wall, b: Wall): Boolean {
         val ah = abs(a.start.y - a.end.y) < 1.4f

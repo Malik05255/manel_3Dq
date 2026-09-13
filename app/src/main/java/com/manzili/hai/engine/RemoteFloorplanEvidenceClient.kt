@@ -5,6 +5,7 @@ import android.net.Uri
 import com.manzili.hai.data.HaiSettings
 import com.manzili.hai.model.Opening
 import com.manzili.hai.model.PlanPoint
+import com.manzili.hai.model.Room
 import com.manzili.hai.model.Wall
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -26,6 +27,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
 
     data class PageResult(
         val pageIndex: Int,
+        val rooms: List<Room>,
         val walls: List<Wall>,
         val openings: List<Opening>,
         val ocrLines: List<PlanTextOcrEngine.SpatialLine>,
@@ -35,6 +37,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
     )
 
     data class Result(val pages: List<PageResult>) {
+        val rooms: List<Room> get() = pages.firstOrNull()?.rooms.orEmpty()
         val walls: List<Wall> get() = pages.firstOrNull()?.walls.orEmpty()
         val openings: List<Opening> get() = pages.firstOrNull()?.openings.orEmpty()
         val ocrLines: List<PlanTextOcrEngine.SpatialLine> get() = pages.flatMap { it.ocrLines }
@@ -100,6 +103,34 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
 
     private fun parse(pageIndex: Int, root: JSONObject): PageResult {
         val prefix = "p$pageIndex-"
+        val roomsJson = root.optJSONArray("rooms")
+        val rooms = buildList {
+            if (roomsJson != null) for (i in 0 until roomsJson.length()) {
+                val r = roomsJson.optJSONObject(i) ?: continue
+                val polygonJson = r.optJSONArray("polygon")
+                val polygon = buildList {
+                    if (polygonJson != null) for (j in 0 until polygonJson.length()) {
+                        val p = polygonJson.optJSONObject(j) ?: continue
+                        add(PlanPoint(
+                            p.optDouble("x").toFloat().coerceIn(0f,100f),
+                            p.optDouble("y").toFloat().coerceIn(0f,100f)
+                        ))
+                    }
+                }
+                add(Room(
+                    id = prefix + r.optString("id", "remote-room-$i"),
+                    name = r.optString("name", "مساحة مكتشفة ${i + 1}"),
+                    type = r.optString("type", "unknown"),
+                    x = r.optDouble("x").toFloat().coerceIn(0f,100f),
+                    y = r.optDouble("y").toFloat().coerceIn(0f,100f),
+                    width = r.optDouble("width").toFloat().coerceIn(.1f,100f),
+                    height = r.optDouble("height").toFloat().coerceIn(.1f,100f),
+                    areaM2 = r.optDouble("area_m2", 0.0),
+                    confidence = r.optInt("confidence", 70).coerceIn(0,100),
+                    polygon = polygon
+                ))
+            }
+        }
         val wallsJson = root.optJSONArray("walls")
         val walls = buildList {
             if (wallsJson != null) for (i in 0 until wallsJson.length()) {
@@ -152,6 +183,6 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         val warnings = buildList {
             if (warningsJson != null) for (i in 0 until warningsJson.length()) warningsJson.optString(i).takeIf { it.isNotBlank() }?.let(::add)
         }
-        return PageResult(pageIndex, walls, openings, ocr, root.optString("model_used", "unknown"), root.optInt("confidence", 0), warnings)
+        return PageResult(pageIndex, rooms, walls, openings, ocr, root.optString("model_used", "unknown"), root.optInt("confidence", 0), warnings)
     }
 }

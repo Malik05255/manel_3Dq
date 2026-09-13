@@ -118,7 +118,6 @@ fun VerifiedImportScreenV3(
                         runCatching {
                             val uri = source!!
                             coroutineScope {
-                                // Each channel uses the highest page count it currently supports safely on-device.
                                 val visionJob = async {
                                     if (vision.available) runCatching { vision.analyze(uri, maxPdfPages = 8, projectType = projectType) }
                                     else Result.success(null)
@@ -155,12 +154,12 @@ fun VerifiedImportScreenV3(
                                 }
 
                                 if (visionPlan == null && rasterResult == null && remoteResult == null) {
-                                    error("فشلت جميع قنوات استخراج الهندسة. لا يمكن اعتماد تحليل مبني على النص فقط. راجع الاتصال أو جرّب ملفًا أوضح.")
+                                    error("فشلت جميع قنوات استخراج الهندسة. راجع الاتصال أو جرّب ملفًا أوضح.")
                                 }
 
                                 val base = visionPlan ?: FloorPlan(
                                     title = "مخطط مستورد",
-                                    sourceSummary = "تحليل استيراد متعدد المسارات مع بوابة جودة تمنع اعتماد نتيجة بلا هندسة.",
+                                    sourceSummary = "تحليل استيراد متعدد المسارات يتبعه دائمًا فحص بصري ومراجعة بشرية قبل الاعتماد و3D.",
                                     observations = listOf("تم التحليل دون HAI Vision؛ النتيجة تعتمد على الأدلة المحلية/Deep Parser المتاحة."),
                                     uncertainties = emptyList()
                                 )
@@ -185,11 +184,14 @@ fun VerifiedImportScreenV3(
                                 val deepApplied = MultiPageEvidenceFusionEngine.apply(enriched, remoteResult?.pages.orEmpty())
                                 val locallyRefined = FloorplanParserEngine.refine(deepApplied, rasterResult?.primaryWalls.orEmpty()).plan
                                 val typed = projectType?.let { SaudiProjectTypeEngine.apply(locallyRefined, it) } ?: locallyRefined
-                                val normalized = MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(typed))
+                                var normalized = MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(typed))
 
-                                val geometryCount = normalized.walls.size + normalized.rooms.size + normalized.openings.size
-                                require(geometryCount > 0) {
-                                    "اكتملت القنوات لكن لم تُستخرج هندسة قابلة للمراجعة. لا يمكن المتابعة إلى 3D."
+                                val structuralGeometry = normalized.walls.size + normalized.rooms.size
+                                if (structuralGeometry == 0) {
+                                    normalized = normalized.copy(
+                                        uncertainties = (normalized.uncertainties +
+                                            "لم يكتمل استخراج الحدود والجدران تلقائيًا. افتح المراجعة لمقارنة الأصل، ثم استخدم HAI أو التعديل قبل اعتماد المشروع و3D.").distinct()
+                                    )
                                 }
                                 normalized
                             }
@@ -213,7 +215,7 @@ fun VerifiedImportScreenV3(
                     Icon(Icons.Rounded.AutoAwesome, null)
                     Spacer(Modifier.width(8.dp))
                 }
-                Text(if (busy) "جاري التحليل" else "حلّل", fontWeight = FontWeight.Black, fontSize = 17.sp)
+                Text(if (busy) "جاري التحليل" else "حلّل ثم راجع", fontWeight = FontWeight.Black, fontSize = 17.sp)
             }
 
             Spacer(Modifier.navigationBarsPadding().height(8.dp))

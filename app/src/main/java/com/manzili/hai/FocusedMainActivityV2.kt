@@ -173,8 +173,14 @@ private fun FocusedAppV2() {
                 }
 
                 composable("3d") {
-                    OptionalRulesStage(nav, plan, rulesEnabled, ::toggleRules) {
-                        Production3DScreenV3(nav, plan)
+                    val current = plan
+                    val report = current?.let { PlanVerificationEngine.inspect(it) }
+                    if (current == null || report == null || report.blocking) {
+                        Incomplete3DBlockedScreen(nav, report?.issues?.firstOrNull { it.level == "error" }?.detail)
+                    } else {
+                        OptionalRulesStage(nav, current, rulesEnabled, ::toggleRules) {
+                            Production3DScreenV3(nav, current)
+                        }
                     }
                 }
 
@@ -204,6 +210,7 @@ private fun FocusedAppV2() {
 
 @Composable
 private fun FocusedHomeV2(nav: NavHostController, plan: FloorPlan?, projectCount: Int) {
+    val readyFor3D = plan?.let { !PlanVerificationEngine.inspect(it).blocking } == true
     Surface(Modifier.fillMaxSize(), color = Color(0xFFF8F6F2)) {
         Column(
             Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp)
@@ -292,7 +299,7 @@ private fun FocusedHomeV2(nav: NavHostController, plan: FloorPlan?, projectCount
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(plan.title, fontSize = 17.sp, fontWeight = FontWeight.Black, maxLines = 1)
-                                Text("المشروع الحالي", color = Color(0xFF8B857D), fontSize = 11.sp)
+                                Text(if (readyFor3D) "المشروع الحالي" else "يحتاج مراجعة قبل 3D", color = Color(0xFF8B857D), fontSize = 11.sp)
                             }
                         }
 
@@ -309,6 +316,7 @@ private fun FocusedHomeV2(nav: NavHostController, plan: FloorPlan?, projectCount
                             }
                             FilledTonalButton(
                                 onClick = { nav.navigate("3d") },
+                                enabled = readyFor3D,
                                 shape = RoundedCornerShape(18.dp),
                                 modifier = Modifier.weight(1f).height(52.dp)
                             ) {
@@ -328,6 +336,33 @@ private fun FocusedHomeV2(nav: NavHostController, plan: FloorPlan?, projectCount
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             ) {
                 Text("مشاريعي  $projectCount", color = Color(0xFF6F6A64), fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun Incomplete3DBlockedScreen(nav: NavHostController, detail: String?) {
+    Surface(Modifier.fillMaxSize(), color = Color(0xFFF8F6F2)) {
+        Column(
+            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(Icons.Rounded.Rule, null, tint = Color(0xFFE28B5A), modifier = Modifier.size(48.dp))
+            Spacer(Modifier.height(14.dp))
+            Text("راجع المخطط قبل 3D", fontSize = 24.sp, fontWeight = FontWeight.Black)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                detail ?: "الهندسة الحالية غير مكتملة. راجع الحدود والجدران والغرف أولًا ثم اعتمد المشروع.",
+                color = Color(0xFF6F6A64),
+                lineHeight = 20.sp
+            )
+            Spacer(Modifier.height(20.dp))
+            Button(onClick = { nav.navigate("editor") }, shape = RoundedCornerShape(18.dp)) {
+                Icon(Icons.Rounded.Edit, null)
+                Spacer(Modifier.width(7.dp))
+                Text("العودة للمراجعة والتعديل", fontWeight = FontWeight.Black)
             }
         }
     }
