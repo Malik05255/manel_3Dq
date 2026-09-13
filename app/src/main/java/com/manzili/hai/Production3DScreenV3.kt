@@ -40,6 +40,7 @@ import java.nio.ByteBuffer
 fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
     if (plan == null) {
         Scaffold(
+            containerColor = H360Ivory,
             topBar = {
                 TopAppBar(
                     title = { Text("المجسم", fontWeight = FontWeight.Black) },
@@ -47,17 +48,16 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                         IconButton(onClick = { nav.popBackStack() }) {
                             Icon(Icons.Rounded.ArrowBack, "رجوع")
                         }
-                    }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = H360Paper)
                 )
             }
         ) { pad ->
             Box(
-                Modifier
-                    .fillMaxSize()
-                    .padding(pad),
+                Modifier.fillMaxSize().padding(pad),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Rounded.ViewInAr, null, tint = Color(0xFFB0AAA2), modifier = Modifier.size(48.dp))
+                Icon(Icons.Rounded.ViewInAr, null, tint = H360Muted, modifier = Modifier.size(48.dp))
             }
         }
         return
@@ -70,21 +70,21 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
     }
 
     val semanticScene = remember(plan) { ProductionSceneEngine.build(plan) }
-    val visual = remember(plan) { SaudiVisualRenderEngine.build(plan, SaudiVisualRenderEngine.Quality.HIGH) }
+    val visual = remember(plan) { SaudiVisualRenderEngine.build(plan, SaudiVisualRenderEngine.Quality.ULTRA) }
     val frame = remember(semanticScene) { PbrSceneFramingEngine.frame(semanticScene) }
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine)
-    val lightIntensity = (115_000f * visual.sun.intensity).coerceIn(80_000f, 145_000f)
+    val lightIntensity = (132_000f * visual.sun.intensity).coerceIn(95_000f, 180_000f)
     val mainLight = rememberMainLightNode(engine) { intensity = lightIntensity }
     val cameraManipulator = rememberCameraManipulator(
         orbitHomePosition = Position(frame.cameraX, frame.cameraY, frame.cameraZ),
         targetPosition = Position(frame.targetX, frame.targetY, frame.targetZ)
     )
     val background = when (SaudiResidentialEngine.context(plan.site.city).climate) {
-        SaudiResidentialEngine.Climate.HOT_DRY -> Color(0xFFE9E1D2)
-        SaudiResidentialEngine.Climate.HOT_HUMID -> Color(0xFFE0E7E5)
-        SaudiResidentialEngine.Climate.HIGHLAND_MILD -> Color(0xFFE4E7DF)
-        SaudiResidentialEngine.Climate.DESERT_CONTINENTAL -> Color(0xFFE8E2D8)
+        SaudiResidentialEngine.Climate.HOT_DRY -> Color(0xFFF3EEE5)
+        SaudiResidentialEngine.Climate.HOT_HUMID -> Color(0xFFEDF3F2)
+        SaudiResidentialEngine.Climate.HIGHLAND_MILD -> Color(0xFFF0F3ED)
+        SaudiResidentialEngine.Climate.DESERT_CONTINENTAL -> Color(0xFFF2EEE7)
     }
 
     val glb by produceState<ByteArray?>(initialValue = null, plan) {
@@ -113,10 +113,15 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
     val renderError = modelLoad?.exceptionOrNull()
 
     Scaffold(
-        containerColor = Color(0xFFF8F6F2),
+        containerColor = H360Ivory,
         topBar = {
             TopAppBar(
-                title = { Text("المجسم", fontSize = 26.sp, fontWeight = FontWeight.Black) },
+                title = {
+                    Column {
+                        Text("المجسم", fontSize = 24.sp, fontWeight = FontWeight.Black)
+                        Text("ULTRA", color = H360CyanDeep, fontSize = 8.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = { nav.popBackStack() }) {
                         Icon(Icons.Rounded.ArrowBack, "رجوع")
@@ -125,22 +130,20 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                 actions = {
                     Surface(
                         shape = CircleShape,
-                        color = Color(0xFF6353D9).copy(alpha = 0.10f),
+                        color = H360Cyan,
                         modifier = Modifier.padding(end = 10.dp)
                     ) {
                         IconButton(onClick = { nav.navigate("walkthrough") }) {
-                            Icon(Icons.Rounded.DirectionsWalk, "جولة", tint = Color(0xFF4F40B8))
+                            Icon(Icons.Rounded.DirectionsWalk, "جولة", tint = H360CyanDeep)
                         }
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = H360Paper)
             )
         }
     ) { pad ->
         Box(
-            Modifier
-                .fillMaxSize()
-                .padding(pad)
-                .background(background)
+            Modifier.fillMaxSize().padding(pad).background(background)
         ) {
             if (renderError == null) {
                 Scene(
@@ -157,37 +160,35 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                 glb == null -> Surface(
                     modifier = Modifier.align(Alignment.Center),
                     shape = CircleShape,
-                    color = Color.White.copy(alpha = 0.94f),
+                    color = H360Paper.copy(alpha = 0.96f),
                     shadowElevation = 4.dp
                 ) {
                     Box(Modifier.size(64.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(
                             Modifier.size(26.dp),
                             strokeWidth = 2.5.dp,
-                            color = Color(0xFF6353D9)
+                            color = H360CyanDeep
                         )
                     }
                 }
 
                 renderError != null -> Card(
-                    Modifier
-                        .align(Alignment.Center)
-                        .padding(24.dp),
+                    Modifier.align(Alignment.Center).padding(24.dp),
                     shape = RoundedCornerShape(28.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White)
+                    colors = CardDefaults.cardColors(containerColor = H360Paper)
                 ) {
                     Column(
                         Modifier.padding(22.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(Icons.Rounded.ViewInAr, null, tint = Color(0xFFE28B5A), modifier = Modifier.size(36.dp))
+                        Icon(Icons.Rounded.ViewInAr, null, tint = H360Amber, modifier = Modifier.size(36.dp))
                         Spacer(Modifier.height(12.dp))
                         Text("تعذر العرض", fontWeight = FontWeight.Black, fontSize = 18.sp)
                         Spacer(Modifier.height(14.dp))
                         Button(
                             onClick = { compatibilityMode = true },
                             shape = RoundedCornerShape(18.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F40B8))
+                            colors = ButtonDefaults.buttonColors(containerColor = H360CyanDeep)
                         ) {
                             Text("عرض بديل")
                         }
