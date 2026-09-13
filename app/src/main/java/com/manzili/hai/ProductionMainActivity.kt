@@ -182,7 +182,6 @@ private fun ProductionApp() {
                 composable("3d") { OptionalRulesStage(nav, plan, pendingRulesEnabled, ::toggleExistingRules) { Production3DScreenV3(nav, plan) } }
                 composable("walkthrough") { OptionalRulesStage(nav, plan, pendingRulesEnabled, ::toggleExistingRules) { WalkthroughScreen(nav, plan) } }
                 composable("saudi-audit") { OptionalRulesStage(nav, plan, pendingRulesEnabled, ::toggleExistingRules) { SaudiPlanAuditScreen(nav, plan) } }
-                composable("4d") { OptionalRulesStage(nav, plan, pendingRulesEnabled, ::toggleExistingRules) { Saudi4DScreen(nav, plan) { updateProject(it) } } }
                 composable("saudi-rules") { SaudiRulesScreen(nav, plan) { updateProject(it, true) } }
                 composable("projects") {
                     ProjectLibraryScreen(nav, store) { opened ->
@@ -290,7 +289,6 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     HomeAction(Icons.Rounded.ViewInAr, "3D", Color(0xFF6353D9), Modifier.weight(1f)) { nav.navigate("3d") }
                     HomeAction(Icons.Rounded.DirectionsWalk, "جولة", Color(0xFFE28B5A), Modifier.weight(1f)) { nav.navigate("walkthrough") }
-                    HomeAction(Icons.Rounded.Schedule, "التنفيذ", Color(0xFF4C8A78), Modifier.weight(1f)) { nav.navigate("4d") }
                 }
 
                 Spacer(Modifier.height(10.dp))
