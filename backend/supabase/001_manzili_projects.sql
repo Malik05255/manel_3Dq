@@ -35,7 +35,11 @@ create policy "manzili_delete_own"
   using (auth.uid() = user_id);
 
 create or replace function public.set_manzili_updated_at()
-returns trigger language plpgsql security invoker as $$
+returns trigger
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
 begin
   new.updated_at = now();
   return new;
