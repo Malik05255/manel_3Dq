@@ -27,9 +27,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'android:name=".FocusedMainActivityV2"' app/src/main/AndroidManifest.xml
-          ! grep -q 'composable("4d")' app/src/main/java/com/manzili/hai/FocusedMainActivityV2.kt
+          MANIFEST=app/src/main/AndroidManifest.xml
+          LAUNCHER=app/src/main/java/com/manzili/hai/FocusedMainActivityV2.kt
+          PLAN_STORE=app/src/main/java/com/manzili/hai/data/ProjectPlanStore.kt
+          SOURCE_STORE=app/src/main/java/com/manzili/hai/data/ProjectSourceStore.kt
+          GLTF=app/src/main/java/com/manzili/hai/export/GltfPlanExporter.kt
+
+          grep -q 'android:name=".FocusedMainActivityV2"' "$MANIFEST"
+          ! grep -q 'composable("4d")' "$LAUNCHER"
+
           grep -q 'versionCode = 62' app/build.gradle.kts
+          grep -q 'versionName = "0.62.0"' app/build.gradle.kts
+          grep -q 'android:allowBackup="false"' "$MANIFEST"
+          grep -q 'android:usesCleartextTraffic="false"' "$MANIFEST"
+
+          grep -q 'EncryptedSharedPreferences.create' "$PLAN_STORE"
+          grep -q 'manzili_hai_project_secure_v1' "$PLAN_STORE"
+          grep -q 'EncryptedSharedPreferences.create' "$SOURCE_STORE"
+          grep -q 'manzili_hai_project_sources_secure_v1' "$SOURCE_STORE"
+
+          grep -q 'Manzili HAI 0.62.0' "$GLTF"
+          grep -q 'android-0.62' app/src/main/java/com/manzili/hai/engine/RemoteFloorplanEvidenceClient.kt
       - name: Run engine regression tests
         run: ./gradlew testDebugUnitTest
       - name: Run Android lint
