@@ -18,6 +18,7 @@ import androidx.navigation.NavHostController
 import com.manzili.hai.data.CloudSyncClient
 import com.manzili.hai.data.HaiSettings
 import com.manzili.hai.data.ProjectPlanStore
+import com.manzili.hai.data.SafeCloudUploaderV2
 import com.manzili.hai.data.SupabaseOtpAuth
 import com.manzili.hai.model.FloorPlan
 import kotlinx.coroutines.launch
@@ -33,6 +34,7 @@ fun CloudSyncScreen(
     val settings = remember(context) { HaiSettings(context) }
     val auth = remember(settings) { SupabaseOtpAuth(settings) }
     val cloud = remember(settings) { CloudSyncClient(settings) }
+    val uploader = remember(settings, cloud) { SafeCloudUploaderV2(settings, cloud) }
     val scope = rememberCoroutineScope()
 
     var email by remember { mutableStateOf("") }
@@ -149,7 +151,7 @@ fun CloudSyncScreen(
                             Spacer(Modifier.width(8.dp))
                             Column(Modifier.weight(1f)) {
                                 Text("الجلسة السحابية متصلة", fontWeight = FontWeight.Black)
-                                Text("المشاريع محمية بسياسات RLS لحساب المستخدم", fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary)
+                                Text("المشاريع محمية بسياسات RLS ومنع الكتابة فوق إصدار أحدث", fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary)
                             }
                             IconButton(onClick = {
                                 cloud.signOut(); signedIn = false; remote = emptyList(); message = "تم تسجيل الخروج"
@@ -163,9 +165,20 @@ fun CloudSyncScreen(
                             onClick = {
                                 busy = true; message = null
                                 scope.launch {
-                                    runCatching { cloud.upload(activeId!!, active!!) }
-                                        .onSuccess { message = "تم رفع المشروع الحالي"; remote = runCatching { cloud.listProjects() }.getOrDefault(remote) }
-                                        .onFailure { message = it.message ?: "فشل رفع المشروع" }
+                                    runCatching { uploader.upload(activeId!!, active!!) }
+                                        .onSuccess { result ->
+                                            val synced = store.upsertProject(activeId!!, result.plan, makeActive = true)
+                                            onPlanChanged(synced)
+                                            message = "تم رفع المشروع الحالي • V${result.revision}"
+                                            remote = runCatching { cloud.listProjects() }.getOrDefault(remote)
+                                        }
+                                        .onFailure { error ->
+                                            message = when (error) {
+                                                is SafeCloudUploaderV2.Conflict -> error.message
+                                                else -> error.message ?: "فشل رفع المشروع"
+                                            }
+                                            remote = runCatching { cloud.listProjects() }.getOrDefault(remote)
+                                        }
                                     busy = false
                                 }
                             },
