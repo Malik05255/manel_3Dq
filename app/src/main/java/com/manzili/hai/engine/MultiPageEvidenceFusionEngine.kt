@@ -10,17 +10,14 @@ object MultiPageEvidenceFusionEngine {
         if (pages.isEmpty()) return plan
         if (plan.floors.isEmpty()) {
             val p = pages.first()
-            val fusedRooms = fuseRooms(plan.rooms, p.rooms)
+            val fusedRooms = fuseRooms(plan.rooms, p.rooms, p)
             val fused = OpeningEvidenceFusion.merge(plan.openings, p.openings, plan.walls + p.walls)
             return FloorplanParserEngine.refine(
                 plan.copy(
                     rooms = fusedRooms,
                     openings = fused.openings,
-                    observations = (plan.observations + if (p.rooms.isNotEmpty()) {
-                        "قورنت قراءة Vision مع ${p.rooms.size} مساحة من Deep Parser، ولم تُرفع الثقة إلا عند وجود توافق هندسي."
-                    } else {
-                        "لم يستخرج Deep Parser غرفًا مغلقة مؤكدة؛ بقيت قراءة Vision مرشحة للمراجعة ولم تعتبر دليلًا مستقلًا."
-                    }).distinct()
+                    scaleConfidence = calibratedScale(plan.scaleConfidence, p),
+                    observations = (plan.observations + pageObservation(p)).distinct()
                 ),
                 p.walls
             ).plan
@@ -33,11 +30,11 @@ object MultiPageEvidenceFusionEngine {
                 title = floor.name,
                 widthM = plan.widthM,
                 heightM = plan.heightM,
-                rooms = fuseRooms(floor.rooms, p.rooms),
+                rooms = fuseRooms(floor.rooms, p.rooms, p),
                 walls = floor.walls,
                 openings = fused.openings,
                 footprint = floor.footprint,
-                scaleConfidence = plan.scaleConfidence,
+                scaleConfidence = calibratedScale(plan.scaleConfidence, p),
                 site = plan.site,
                 elements = floor.elements
             )
@@ -45,6 +42,7 @@ object MultiPageEvidenceFusionEngine {
             floor.copy(rooms = refined.rooms, walls = refined.walls, openings = refined.openings, elements = refined.elements)
         }
         val active = floors.firstOrNull { it.id == plan.activeFloorId } ?: floors.firstOrNull()
+        val pageScale = pages.map { calibratedScale(plan.scaleConfidence, it) }.maxOrNull() ?: plan.scaleConfidence
         return plan.copy(
             floors = floors,
             activeFloorId = active?.id,
@@ -53,19 +51,44 @@ object MultiPageEvidenceFusionEngine {
             openings = active?.openings ?: plan.openings,
             elements = active?.elements ?: plan.elements,
             footprint = active?.footprint?.takeIf { it.isNotEmpty() } ?: plan.footprint,
-            observations = (plan.observations + "تم ربط أدلة التحليل العميق بكل صفحة PDF على حدة مع معايرة توافق الغرف.").distinct()
+            scaleConfidence = max(plan.scaleConfidence, pageScale),
+            observations = (plan.observations + pages.map(::pageObservation) + "تم ربط أدلة التحليل العميق بكل صفحة PDF على حدة مع معايرة هندسة الجدران والطوبولوجيا والأبعاد.").distinct()
         )
+    }
+
+    private fun pageObservation(page: RemoteFloorplanEvidenceClient.PageResult): String {
+        return if (page.rooms.isNotEmpty()) {
+            "Deep Parser صفحة ${page.pageIndex + 1}: ${page.rooms.size} مساحة، هندسة ${page.geometryConfidence}%، ترابط جدران ${page.wallTopology}%، أبعاد مؤكدة ${page.dimensionEvidenceCount}."
+        } else {
+            "Deep Parser صفحة ${page.pageIndex + 1}: لم يستخرج غرفًا مغلقة مؤكدة؛ بقيت قراءة Vision للمراجعة ولم تعتبر دليلًا مستقلًا."
+        }
+    }
+
+    private fun calibratedScale(current: Int, page: RemoteFloorplanEvidenceClient.PageResult): Int {
+        if (page.scaleConfidence <= 0) return current
+        return if (page.dimensionEvidenceCount >= 2) {
+            max(current, page.scaleConfidence)
+        } else {
+            min(current, page.scaleConfidence.coerceAtMost(76))
+        }
     }
 
     /**
      * Vision is not allowed to win simply because it returned a high self-confidence value.
-     * Rooms that agree spatially with the independent parser become consensus rooms. Unsupported
-     * rooms stay reviewable but their confidence is capped, while strong non-overlapping evidence
-     * from the independent parser can recover rooms Vision missed.
+     * The backend's page-level geometry/topology verification also caps the consensus room score.
      */
-    private fun fuseRooms(primary: List<Room>, evidence: List<Room>): List<Room> {
-        if (primary.isEmpty()) return evidence.map { it.copy(confidence = min(it.confidence, 82)) }
-        if (evidence.isEmpty()) return primary.map { it.copy(confidence = min(it.confidence, 72)) }
+    private fun fuseRooms(
+        primary: List<Room>,
+        evidence: List<Room>,
+        page: RemoteFloorplanEvidenceClient.PageResult
+    ): List<Room> {
+        val qualityValues = listOf(page.confidence, page.geometryConfidence, page.wallTopology).filter { it > 0 }
+        val pageTrust = if (qualityValues.isEmpty()) 70 else qualityValues.average().toInt()
+        val evidenceCap = (pageTrust + 8).coerceIn(58, 92)
+        val consensusCap = (pageTrust + 12).coerceIn(66, 96)
+
+        if (primary.isEmpty()) return evidence.map { it.copy(confidence = min(it.confidence, evidenceCap)) }
+        if (evidence.isEmpty()) return primary.map { it.copy(confidence = min(it.confidence, min(72, pageTrust + 4))) }
 
         val usedEvidence = mutableSetOf<String>()
         val out = mutableListOf<Room>()
@@ -73,7 +96,7 @@ object MultiPageEvidenceFusionEngine {
             val candidates = evidence.map { it to overlapScore(room, it) }
             val matched = candidates.maxByOrNull { it.second }?.takeIf { it.second >= .34f }
             if (matched == null) {
-                val cap = if (evidence.size >= 3) 62 else 70
+                val cap = if (evidence.size >= 3) min(62, evidenceCap) else min(70, evidenceCap)
                 out += room.copy(confidence = min(room.confidence, cap))
                 return@forEach
             }
@@ -89,11 +112,12 @@ object MultiPageEvidenceFusionEngine {
                 else -> room.name
             }
             val type = if (room.type.equals("unknown", true) && !other.type.equals("unknown", true)) other.type else room.type
+            val localAgreement = (max(room.confidence, other.confidence) + 6).coerceAtMost(consensusCap)
             out += geometry.copy(
                 id = room.id,
                 name = name,
                 type = type,
-                confidence = (max(room.confidence, other.confidence) + 6).coerceAtMost(96)
+                confidence = localAgreement
             )
         }
 
@@ -104,7 +128,7 @@ object MultiPageEvidenceFusionEngine {
             .forEach { recovered ->
                 out += recovered.copy(
                     id = "remote-recovered-${recovered.id}",
-                    confidence = min(recovered.confidence, 74)
+                    confidence = min(recovered.confidence, min(74, evidenceCap))
                 )
             }
 
