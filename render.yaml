@@ -19,3 +19,9 @@ services:
         sync: false
       - key: SUPABASE_PUBLISHABLE_KEY
         sync: false
+      - key: AI_ENDPOINT
+        value: https://openrouter.ai/api/v1/chat/completions
+      - key: AI_MODEL_DEFAULT
+        value: google/gemini-2.5-flash
+      - key: AI_API_KEY
+        sync: false
