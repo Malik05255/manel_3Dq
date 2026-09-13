@@ -129,9 +129,9 @@ private fun FocusedProductionApp() {
                     OptionalRulesStage(nav, null, pendingRulesEnabled, { pendingRulesEnabled = it }) {
                         VerifiedImportScreenV3(
                             nav = nav,
-                            initialUri = source,
-                            onUri = { source = it },
-                            onPlan = { pending = it },
+                            source = source,
+                            setSource = { source = it },
+                            onAnalyzed = { pending = it },
                             projectType = selectedProjectType
                         )
                     }
