@@ -35,6 +35,13 @@ jobs:
           python -c "from app.main import app; assert app.title == 'Manzili HAI Backend'; assert app.version == '0.62.0'"
       - name: Validate deployment blueprint
         run: |
+          set -euo pipefail
           grep -q 'healthCheckPath: /readyz' render.yaml
-          grep -q 'FLOORPLAN_SAFETENSORS_MODEL' render.yaml
           grep -q 'dockerfilePath: ./backend/Dockerfile.ml' render.yaml
+          grep -q 'FLOORPLAN_SAFETENSORS_MODEL' render.yaml
+          grep -q 'MANZILI_API_TOKEN' render.yaml
+          grep -q 'SUPABASE_URL' render.yaml
+          grep -q 'SUPABASE_PUBLISHABLE_KEY' render.yaml
+          grep -q 'AI_ENDPOINT' render.yaml
+          grep -q 'AI_MODEL_DEFAULT' render.yaml
+          grep -q 'AI_API_KEY' render.yaml
