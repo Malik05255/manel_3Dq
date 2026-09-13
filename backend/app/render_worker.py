@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from .blender_renderer import blender_status, render_plan_glb
 from .geometry import canonicalize_plan
 
-app = FastAPI(title="Manzili HAI Blender Worker", version="0.63.0")
+app = FastAPI(title="Manzili HAI Blender Worker", version="0.65.0")
 
 
 class RenderRequest(BaseModel):
@@ -33,11 +33,12 @@ def _authorize(authorization: str | None) -> None:
 @app.get("/health")
 async def health() -> dict[str, Any]:
     status = blender_status()
+    auth_configured = bool(os.getenv("RENDER_WORKER_TOKEN", "").strip())
     return {
-        "ok": bool(status.get("configured")),
-        "renderer": "blender-headless",
+        "ok": bool(status.get("ready")) and auth_configured,
+        "renderer": status.get("renderer", "blender-pbr-v3"),
         "renderer_status": status,
-        "auth_configured": bool(os.getenv("RENDER_WORKER_TOKEN", "").strip()),
+        "auth_configured": auth_configured,
     }
 
 
@@ -55,8 +56,9 @@ async def render_3d(payload: RenderRequest, authorization: str | None = Header(d
         raise HTTPException(503, str(exc)) from exc
 
     headers = {
-        "X-Manzili-Renderer": "blender-headless",
+        "X-Manzili-Renderer": str(metadata.get("renderer", "blender-pbr-v3")),
         "X-Manzili-Bytes": str(metadata.get("bytes", len(glb))),
+        "X-Manzili-PBR-Complete": "1" if metadata.get("pbr_assets_complete") else "0",
         "Cache-Control": "private, no-store",
     }
     return Response(content=glb, media_type="model/gltf-binary", headers=headers)
