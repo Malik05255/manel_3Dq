@@ -79,7 +79,10 @@ object SaudiVisualRenderEngine {
             renderScale=renderScale,
             shadowQuality=shadowQuality,
             anisotropy=if(ultra)16 else if(quality==Quality.HIGH)8 else 4,
-            warnings=emptyList()
+            warnings=listOf(
+                "الخامات والإضاءة طبقة عرض فقط؛ Geometry V3 هو المصدر الهندسي الوحيد.",
+                "تحسين الجودة البصرية لا يضيف أو يحذف جدارًا أو فتحة من المخطط المعتمد."
+            )
         )
     }
 }
