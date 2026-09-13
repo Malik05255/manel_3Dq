@@ -12,9 +12,9 @@ from pydantic import BaseModel, Field
 from .blender_renderer import blender_status, render_plan_glb
 from .cubicasa_model import model_status
 from .geometry import canonicalize_plan
-from .parser import parse_floorplan
+from .parser_v2 import parse_floorplan
 
-app = FastAPI(title="Manzili HAI Backend", version="0.63.0")
+app = FastAPI(title="Manzili HAI Backend", version="0.64.0")
 
 
 class ParseRequest(BaseModel):
@@ -142,7 +142,7 @@ async def parser_status(_: dict[str, Any] = Depends(backend_principal)) -> dict[
     return {
         "ready": bool(status.get("configured")),
         "model": status,
-        "preferred_path": "cubicasa-unet-resnet34" if status.get("configured") else "fallback",
+        "preferred_path": "cubicasa-unet-resnet34+adaptive-v2" if status.get("configured") else "fallback+adaptive-v2",
     }
 
 
