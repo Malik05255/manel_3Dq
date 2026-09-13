@@ -14,14 +14,18 @@ from .geometry import canonicalize_plan
 def blender_status() -> dict[str, Any]:
     configured = os.getenv("BLENDER_BIN", "").strip()
     executable = configured or shutil.which("blender") or ""
+    pbr_root = Path(os.getenv("PBR_ASSET_DIR", "/srv/manzili/assets/pbr"))
     return {
         "configured": bool(executable),
         "executable": executable or None,
         "worker_url_configured": bool(os.getenv("BLENDER_WORKER_URL", "").strip()),
+        "renderer": "blender-pbr-v2",
+        "pbr_asset_dir": str(pbr_root),
+        "pbr_assets_present": pbr_root.is_dir() and any(pbr_root.glob("*_basecolor.jpg")),
     }
 
 
-def render_plan_glb(plan: dict[str, Any], timeout_seconds: int = 300) -> tuple[bytes, dict[str, Any]]:
+def render_plan_glb(plan: dict[str, Any], timeout_seconds: int = 360) -> tuple[bytes, dict[str, Any]]:
     canonical = canonicalize_plan(plan)
     if not canonical.ready:
         raise ValueError("; ".join(canonical.errors))
@@ -30,9 +34,9 @@ def render_plan_glb(plan: dict[str, Any], timeout_seconds: int = 300) -> tuple[b
     if not executable:
         raise RuntimeError("Blender executable is not installed on this service")
 
-    script = Path(__file__).resolve().parents[1] / "scripts" / "blender_build.py"
+    script = Path(__file__).resolve().parents[1] / "scripts" / "blender_build_v2.py"
     if not script.is_file():
-        raise RuntimeError("Blender build script is missing")
+        raise RuntimeError("Blender PBR v2 build script is missing")
 
     with tempfile.TemporaryDirectory(prefix="manzili-blender-") as temp_dir:
         temp = Path(temp_dir)
@@ -40,28 +44,10 @@ def render_plan_glb(plan: dict[str, Any], timeout_seconds: int = 300) -> tuple[b
         output_path = temp / "house.glb"
         input_path.write_text(json.dumps(canonical.geometry, ensure_ascii=False), encoding="utf-8")
 
-        command = [
-            str(executable),
-            "-b",
-            "--factory-startup",
-            "--python",
-            str(script),
-            "--",
-            "--input",
-            str(input_path),
-            "--output",
-            str(output_path),
-        ]
-        completed = subprocess.run(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
-        )
+        command = [str(executable), "-b", "--factory-startup", "--python", str(script), "--", "--input", str(input_path), "--output", str(output_path)]
+        completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout_seconds, check=False)
         if completed.returncode != 0:
-            tail = completed.stdout[-4000:] if completed.stdout else ""
+            tail = completed.stdout[-5000:] if completed.stdout else ""
             raise RuntimeError(f"Blender render failed ({completed.returncode}): {tail}")
         if not output_path.is_file():
             raise RuntimeError("Blender finished without producing a GLB")
@@ -74,5 +60,6 @@ def render_plan_glb(plan: dict[str, Any], timeout_seconds: int = 300) -> tuple[b
             "bytes": len(payload),
             "geometry": canonical.geometry.get("metrics", {}),
             "warnings": canonical.warnings,
-            "renderer": "blender-headless",
+            "renderer": "blender-pbr-v2",
+            "pbr_assets_present": blender_status()["pbr_assets_present"],
         }
