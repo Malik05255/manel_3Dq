@@ -1,7 +1,11 @@
 package com.manzili.hai
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -17,10 +21,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -33,7 +39,9 @@ import com.manzili.hai.engine.PlanVerificationEngine
 import com.manzili.hai.engine.ProjectMemoryEngine
 import com.manzili.hai.model.FloorPlan
 import com.manzili.hai.model.PlanProposal
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.hypot
 
 private val WBg = Color(0xFFF8F6F2)
@@ -74,25 +82,42 @@ fun ImportedProjectWorkspaceScreen(
     fun invokeHai() {
         if (haiBusy) return
         haiBusy = true
-        haiMessage = if (tab == WorkspaceTab.PLAN) "HAI يقرأ المشكلة الحالية..." else "HAI يراجع التعديل الحالي..."
+        haiMessage = if (tab == WorkspaceTab.PLAN) "HAI يحل المشكلة الظاهرة في هذه الشاشة..." else "HAI يقرأ المخطط ويجهّز اقتراح التعديل..."
         scope.launch {
-            if (tab == WorkspaceTab.PLAN) {
-                runCatching { resolver.resolveReview(source, working) }
-                    .onSuccess { result ->
-                        working = result.plan
-                        haiProposal = null
-                        haiMessage = result.message
+            try {
+                if (tab == WorkspaceTab.PLAN) {
+                    val result = resolver.resolveReview(source, working)
+                    working = result.plan
+                    haiProposal = null
+                    haiMessage = result.message
+                } else {
+                    var base = working
+                    val baseReport = PlanVerificationEngine.inspect(base)
+                    val geometryInsufficient = base.rooms.isEmpty() && base.walls.size < 3
+                    if (geometryInsufficient || baseReport.blocking) {
+                        val repaired = resolver.resolveReview(source, base)
+                        base = repaired.plan
+                        working = base
+                        val repairedReport = PlanVerificationEngine.inspect(base)
+                        if (base.rooms.isEmpty() && base.walls.size < 3) {
+                            haiProposal = null
+                            haiMessage = repaired.message
+                            return@launch
+                        }
+                        if (repairedReport.blocking) {
+                            haiMessage = repaired.message
+                        }
                     }
-                    .onFailure { haiMessage = "تعذر استدعاء HAI: ${it.message.orEmpty().take(120)}" }
-            } else {
-                runCatching { resolver.proposeEdit(working) }
-                    .onSuccess { proposal ->
-                        haiProposal = proposal
-                        haiMessage = proposal.message.lineSequence().firstOrNull().orEmpty().ifBlank { "اكتملت مراجعة HAI." }
-                    }
-                    .onFailure { haiMessage = "تعذر استدعاء HAI: ${it.message.orEmpty().take(120)}" }
+
+                    val proposal = resolver.proposeEdit(base)
+                    haiProposal = proposal
+                    haiMessage = proposal.message.lineSequence().firstOrNull().orEmpty().ifBlank { "اكتملت مراجعة HAI." }
+                }
+            } catch (error: Throwable) {
+                haiMessage = "تعذر استدعاء HAI: ${error.message.orEmpty().take(120)}"
+            } finally {
+                haiBusy = false
             }
-            haiBusy = false
         }
     }
 
@@ -172,6 +197,7 @@ fun ImportedProjectWorkspaceScreen(
                         tab = WorkspaceTab.EDIT
                     }
                     WorkspaceTab.EDIT -> ContextualPlanEditor(
+                        source = source,
                         plan = working,
                         haiProposal = haiProposal,
                         haiMessage = haiMessage,
@@ -238,9 +264,9 @@ private fun WorkspaceNav(
     }
 }
 
-/** A rebuilt editor: current geometry stays neutral; every proposed change is a colored overlay. */
 @Composable
 private fun ContextualPlanEditor(
+    source: Uri?,
     plan: FloorPlan,
     haiProposal: PlanProposal?,
     haiMessage: String?,
@@ -253,6 +279,7 @@ private fun ContextualPlanEditor(
     val preview = proposal?.updatedPlan
     val validation = proposal?.let { ArchitecturalEngine.validate(plan, it) }
     val score = remember(plan) { ArchitecturalEngine.score(plan) }
+    val geometryMissing = plan.rooms.isEmpty() && plan.walls.size < 3
 
     fun buildManualProposal(action: String) {
         val sel = selection ?: return
@@ -278,7 +305,7 @@ private fun ContextualPlanEditor(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("التعديل", fontSize = 24.sp, fontWeight = FontWeight.Black, color = WInk)
-                Text("الحالي بالرمادي • اقتراح HAI بالبنفسجي قبل التطبيق", fontSize = 10.sp, color = WMuted)
+                Text("الأصل في الخلفية • هندسة التطبيق بالرمادي • اقتراح HAI بالبنفسجي", fontSize = 10.sp, color = WMuted)
             }
             Surface(color = WViolet.copy(alpha = .10f), shape = RoundedCornerShape(15.dp)) {
                 Column(Modifier.padding(horizontal = 11.dp, vertical = 7.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -295,18 +322,35 @@ private fun ContextualPlanEditor(
             shape = RoundedCornerShape(26.dp),
             modifier = Modifier.fillMaxWidth().weight(1f)
         ) {
-            Box(Modifier.fillMaxSize().padding(8.dp)) {
+            Box(Modifier.fillMaxSize()) {
+                EditorSourceBackdrop(source)
                 EditorPlanCanvas(
                     base = plan,
                     preview = preview,
                     selected = selection,
-                    onSelect = { selection = it }
+                    onSelect = { selection = it },
+                    modifier = Modifier.fillMaxSize()
                 )
-                if (preview != null) {
+
+                if (geometryMissing) {
+                    Surface(
+                        color = WInk.copy(alpha = .78f),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
+                    ) {
+                        Text(
+                            "المخطط الأصلي ظاهر — استدع HAI لبناء طبقة تعديل قابلة للمس",
+                            color = Color.White,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp)
+                        )
+                    }
+                } else if (preview != null) {
                     Surface(
                         color = WViolet,
                         shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
                     ) {
                         Text(
                             "معاينة HAI — لم تُطبّق",
@@ -366,7 +410,7 @@ private fun ContextualPlanEditor(
                         color = WInk,
                         fontSize = 10.5.sp,
                         lineHeight = 15.sp,
-                        maxLines = 4
+                        maxLines = 5
                     )
                     validation?.errors?.firstOrNull()?.let {
                         Text("اعتراض: $it", color = WOrange, fontSize = 9.5.sp, modifier = Modifier.padding(top = 4.dp))
@@ -382,7 +426,9 @@ private fun ContextualPlanEditor(
                         ) { Text("رفض") }
                         Button(
                             onClick = {
-                                p.updatedPlan?.let { onPlanChange(it.copy(revision = plan.revision + 1)) }
+                                p.updatedPlan?.let { next ->
+                                    onPlanChange(next.copy(revision = maxOf(next.revision, plan.revision + 1)))
+                                }
                                 localProposal = null
                                 onDismissHai()
                             },
@@ -397,11 +443,68 @@ private fun ContextualPlanEditor(
                 Row(Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.TipsAndUpdates, null, tint = WOrange, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(7.dp))
-                    Text("اختر عنصرًا للتعديل، أو اضغط «استدع HAI» ليظهر اعتراضه واقتراحه على المخطط مباشرة.", color = WMuted, fontSize = 9.8.sp, lineHeight = 14.sp)
+                    Text(
+                        if (geometryMissing) "المخطط الأصلي لم يعد شاشة بيضاء. استدع HAI ليحوّل ما فهمه إلى طبقة تعديل، أو ارجع للمراجعة لتصحيح القراءة."
+                        else "المس غرفة أو جدارًا للتعديل، أو استدع HAI ليعرض اعتراضه وتعديله بلون مختلف.",
+                        color = WMuted,
+                        fontSize = 9.8.sp,
+                        lineHeight = 14.sp
+                    )
                 }
             }
         }
     }
+}
+
+@Composable
+private fun EditorSourceBackdrop(source: Uri?) {
+    if (source == null) {
+        Box(Modifier.fillMaxSize().background(Color.White), contentAlignment = Alignment.Center) {
+            Text("المصدر الأصلي غير متاح", color = WMuted, fontSize = 11.sp)
+        }
+        return
+    }
+
+    val context = LocalContext.current
+    val bitmap by produceState<Bitmap?>(initialValue = null, source) {
+        value = withContext(Dispatchers.IO) { loadEditorBitmap(context, source) }
+    }
+    val image = bitmap
+    if (image == null) {
+        Box(Modifier.fillMaxSize().background(Color.White), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = WViolet, strokeWidth = 2.2.dp)
+        }
+    } else {
+        Image(
+            bitmap = image.asImageBitmap(),
+            contentDescription = "المخطط الأصلي في شاشة التعديل",
+            contentScale = ContentScale.FillBounds,
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
+private fun loadEditorBitmap(context: android.content.Context, source: Uri): Bitmap? {
+    val type = context.contentResolver.getType(source).orEmpty()
+    return runCatching {
+        if (type == "application/pdf") {
+            val pfd = context.contentResolver.openFileDescriptor(source, "r") ?: return@runCatching null
+            PdfRenderer(pfd).use { renderer ->
+                if (renderer.pageCount <= 0) return@use null
+                renderer.openPage(0).use { page ->
+                    val target = 1800f
+                    val scale = target / page.width.coerceAtLeast(1)
+                    val w = target.toInt()
+                    val h = (page.height * scale).toInt().coerceAtLeast(1)
+                    Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also {
+                        page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    }
+                }
+            }
+        } else {
+            context.contentResolver.openInputStream(source).use { BitmapFactory.decodeStream(it) }
+        }
+    }.getOrNull()
 }
 
 @Composable
@@ -423,29 +526,30 @@ private fun EditorPlanCanvas(
     base: FloorPlan,
     preview: FloorPlan?,
     selected: EditorSelection?,
-    onSelect: (EditorSelection?) -> Unit
+    onSelect: (EditorSelection?) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Canvas(
-        Modifier.fillMaxSize().pointerInput(base, preview) {
+        modifier.pointerInput(base, preview) {
             detectTapGestures { tap ->
                 val px = tap.x / size.width.coerceAtLeast(1) * 100f
                 val py = tap.y / size.height.coerceAtLeast(1) * 100f
-                val source = preview ?: base
-                val opening = source.openings.minByOrNull { hypot((it.x - px).toDouble(), (it.y - py).toDouble()) }
+                val active = preview ?: base
+                val opening = active.openings.minByOrNull { hypot((it.x - px).toDouble(), (it.y - py).toDouble()) }
                 if (opening != null && hypot((opening.x - px).toDouble(), (opening.y - py).toDouble()) <= 5.0) {
                     onSelect(EditorSelection("opening", opening.id)); return@detectTapGestures
                 }
-                val wall = source.walls.minByOrNull { pointToSegment(px, py, it.start.x, it.start.y, it.end.x, it.end.y) }
+                val wall = active.walls.minByOrNull { pointToSegment(px, py, it.start.x, it.start.y, it.end.x, it.end.y) }
                 if (wall != null && pointToSegment(px, py, wall.start.x, wall.start.y, wall.end.x, wall.end.y) <= 2.7) {
                     onSelect(EditorSelection("wall", wall.id)); return@detectTapGestures
                 }
-                val room = source.rooms.lastOrNull { px >= it.x && px <= it.x + it.width && py >= it.y && py <= it.y + it.height }
+                val room = active.rooms.lastOrNull { px >= it.x && px <= it.x + it.width && py >= it.y && py <= it.y + it.height }
                 onSelect(room?.let { EditorSelection("room", it.id) })
             }
         }
     ) {
-        drawPlanLayer(base, selected, Color(0xFF55575A), Color(0xFFB7B2C8), alpha = if (preview == null) 1f else .38f)
-        preview?.let { drawPlanLayer(it, selected, WViolet, Color(0xFF8D7CF0), alpha = .92f) }
+        drawPlanLayer(base, selected, Color(0xFF414246), Color(0xFF746F84), alpha = if (preview == null) .88f else .34f)
+        preview?.let { drawPlanLayer(it, selected, WViolet, Color(0xFF8D7CF0), alpha = .96f) }
     }
 }
 
@@ -462,12 +566,12 @@ private fun DrawScope.drawPlanLayer(
         val isSelected = selected?.kind == "room" && selected.id == room.id
         val topLeft = p(room.x, room.y)
         val roomSize = Size(size.width * room.width / 100f, size.height * room.height / 100f)
-        drawRect(roomColor.copy(alpha = if (isSelected) .28f * alpha else .10f * alpha), topLeft = topLeft, size = roomSize)
+        drawRect(roomColor.copy(alpha = if (isSelected) .25f * alpha else .08f * alpha), topLeft = topLeft, size = roomSize)
         drawRect(
-            if (isSelected) WOrange.copy(alpha = alpha) else lineColor.copy(alpha = .42f * alpha),
+            if (isSelected) WOrange.copy(alpha = alpha) else lineColor.copy(alpha = .72f * alpha),
             topLeft = topLeft,
             size = roomSize,
-            style = Stroke(if (isSelected) 3.dp.toPx() else 1.dp.toPx())
+            style = Stroke(if (isSelected) 3.dp.toPx() else 1.3.dp.toPx())
         )
     }
 
@@ -477,7 +581,7 @@ private fun DrawScope.drawPlanLayer(
             if (isSelected) WOrange.copy(alpha = alpha) else lineColor.copy(alpha = alpha),
             p(wall.start.x, wall.start.y),
             p(wall.end.x, wall.end.y),
-            strokeWidth = (if (isSelected) 4.dp else 2.2.dp).toPx()
+            strokeWidth = (if (isSelected) 4.dp else 2.4.dp).toPx()
         )
     }
 
