@@ -4,7 +4,10 @@ import com.manzili.hai.engine.ProjectMemoryEngine
 import com.manzili.hai.model.FloorPlan
 
 /** Project-level operations layered over ProjectPlanStore without mixing project histories. */
-class ProjectLibraryOps(private val store: ProjectPlanStore) {
+class ProjectLibraryOps(
+    private val store: ProjectPlanStore,
+    private val sources: ProjectSourceStore? = null
+) {
     fun rename(projectId: String, title: String): FloorPlan? {
         val clean = title.trim()
         if (clean.isBlank()) return store.load(projectId)
@@ -21,8 +24,12 @@ class ProjectLibraryOps(private val store: ProjectPlanStore) {
         val clean = title?.trim()?.takeIf { it.isNotBlank() } ?: "نسخة من ${source.title}"
         val copy = ProjectMemoryEngine.reconcile(source.copy(title = clean, revision = 1))
         val newId = store.createProject(copy)
+        sources?.copy(projectId, newId)
         return store.load(newId)
     }
 
-    fun delete(projectId: String): FloorPlan? = store.forgetProject(projectId)
+    fun delete(projectId: String): FloorPlan? {
+        sources?.delete(projectId)
+        return store.forgetProject(projectId)
+    }
 }
