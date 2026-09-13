@@ -1,4 +1,4 @@
-name: Saudi Benchmark Production Gate
+name: Saudi Benchmark Validation
 
 on:
   push:
@@ -17,6 +17,7 @@ on:
       - 'backend/app/parser.py'
       - 'backend/app/cubicasa_model.py'
       - '.github/workflows/benchmark.yml'
+  workflow_dispatch:
 
 jobs:
   validate-and-measure:
@@ -38,6 +39,23 @@ jobs:
         env:
           FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
         run: python backend/scripts/run_saudi_benchmark.py
+      - name: Enforce measured-claim policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('benchmark-execution-report.json').read_text(encoding='utf-8'))
+          licensed = int(report.get('licensed_cases_in_manifest', 0))
+          executed = int(report.get('executed_cases', 0))
+          if licensed == 0:
+              print('::warning::No licensed Saudi benchmark cases are present. Saudi accuracy claims remain DISABLED.')
+              print('claims_enabled=false')
+          else:
+              assert executed == licensed, report
+              print(f'claims_enabled=true; cases={executed}; mean_overall={report.get("mean_overall")}')
+          PY
       - name: Upload benchmark reports
         uses: actions/upload-artifact@v4
         with:
