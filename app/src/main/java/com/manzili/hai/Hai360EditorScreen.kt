@@ -42,8 +42,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.hypot
 
-private enum class EditorTool { SELECT, ROOM, WALL, DOOR, WINDOW }
-private data class EditorSelection(val kind: String, val id: String)
+private enum class HaiEditorTool { SELECT, ROOM, WALL, DOOR, WINDOW }
+private data class HaiEditorSelection(val kind: String, val id: String)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -107,7 +107,7 @@ internal fun Hai360StudioScreen(
             EditorCanvas(
                 source = source,
                 plan = plan,
-                tool = EditorTool.SELECT,
+                tool = HaiEditorTool.SELECT,
                 selection = null,
                 firstWallPoint = null,
                 onTap = { _, _ -> }
@@ -154,8 +154,8 @@ internal fun Hai360EditorScreen(
     onDone: (FloorPlan) -> Unit
 ) {
     var plan by remember(initialPlan) { mutableStateOf(PlanVerificationEngine.inspect(initialPlan).plan) }
-    var tool by remember { mutableStateOf(EditorTool.SELECT) }
-    var selected by remember { mutableStateOf<EditorSelection?>(null) }
+    var tool by remember { mutableStateOf(HaiEditorTool.SELECT) }
+    var selected by remember { mutableStateOf<HaiEditorSelection?>(null) }
     var firstWallPoint by remember { mutableStateOf<PlanPoint?>(null) }
     val undo = remember { mutableStateListOf<FloorPlan>() }
     val report = remember(plan) { PlanVerificationEngine.inspect(plan) }
@@ -203,7 +203,7 @@ internal fun Hai360EditorScreen(
                 onTool = {
                     tool = it
                     firstWallPoint = null
-                    if (it != EditorTool.SELECT) selected = null
+                    if (it != HaiEditorTool.SELECT) selected = null
                 },
                 onDelete = {
                     val s = selected
@@ -233,8 +233,8 @@ internal fun Hai360EditorScreen(
                 firstWallPoint = firstWallPoint,
                 onTap = { x, y ->
                     when (tool) {
-                        EditorTool.SELECT -> selected = selectEditorElement(plan, x, y)
-                        EditorTool.ROOM -> {
+                        HaiEditorTool.SELECT -> selected = selectEditorElement(plan, x, y)
+                        HaiEditorTool.ROOM -> {
                             val rw = 16f
                             val rh = 12f
                             val room = Room(
@@ -249,10 +249,10 @@ internal fun Hai360EditorScreen(
                                 confidence = 100
                             )
                             commit(plan.copy(rooms = plan.rooms + room))
-                            selected = EditorSelection("room", room.id)
-                            tool = EditorTool.SELECT
+                            selected = HaiEditorSelection("room", room.id)
+                            tool = HaiEditorTool.SELECT
                         }
-                        EditorTool.WALL -> {
+                        HaiEditorTool.WALL -> {
                             val start = firstWallPoint
                             if (start == null) {
                                 firstWallPoint = PlanPoint(x, y)
@@ -266,27 +266,27 @@ internal fun Hai360EditorScreen(
                                     confidence = 100
                                 )
                                 commit(plan.copy(walls = plan.walls + wall))
-                                selected = EditorSelection("wall", wall.id)
+                                selected = HaiEditorSelection("wall", wall.id)
                                 firstWallPoint = null
-                                tool = EditorTool.SELECT
+                                tool = HaiEditorTool.SELECT
                             }
                         }
-                        EditorTool.DOOR, EditorTool.WINDOW -> {
+                        HaiEditorTool.DOOR, HaiEditorTool.WINDOW -> {
                             val wall = plan.walls.minByOrNull {
                                 editorSegmentDistance(x, y, it.start.x, it.start.y, it.end.x, it.end.y)
                             }
                             val opening = Opening(
                                 id = "manual-opening-${System.nanoTime()}",
-                                type = if (tool == EditorTool.WINDOW) "window" else "door",
+                                type = if (tool == HaiEditorTool.WINDOW) "window" else "door",
                                 x = x,
                                 y = y,
-                                width = if (tool == EditorTool.WINDOW) 5f else 4f,
+                                width = if (tool == HaiEditorTool.WINDOW) 5f else 4f,
                                 wallId = wall?.id,
                                 confidence = 100
                             )
                             commit(plan.copy(openings = plan.openings + opening))
-                            selected = EditorSelection("opening", opening.id)
-                            tool = EditorTool.SELECT
+                            selected = HaiEditorSelection("opening", opening.id)
+                            tool = HaiEditorTool.SELECT
                         }
                     }
                 }
@@ -311,9 +311,9 @@ internal fun Hai360EditorScreen(
 
 @Composable
 private fun EditorToolbar(
-    tool: EditorTool,
-    selection: EditorSelection?,
-    onTool: (EditorTool) -> Unit,
+    tool: HaiEditorTool,
+    selection: HaiEditorSelection?,
+    onTool: (HaiEditorTool) -> Unit,
     onDelete: () -> Unit
 ) {
     Surface(color = H360Paper, shadowElevation = 10.dp) {
@@ -322,11 +322,11 @@ private fun EditorToolbar(
             horizontalArrangement = Arrangement.spacedBy(7.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            EditorToolButton("تحديد", Icons.Rounded.NearMe, tool == EditorTool.SELECT) { onTool(EditorTool.SELECT) }
-            EditorToolButton("غرفة", Icons.Rounded.CropSquare, tool == EditorTool.ROOM) { onTool(EditorTool.ROOM) }
-            EditorToolButton("جدار", Icons.Rounded.HorizontalRule, tool == EditorTool.WALL) { onTool(EditorTool.WALL) }
-            EditorToolButton("باب", Icons.Rounded.DoorFront, tool == EditorTool.DOOR) { onTool(EditorTool.DOOR) }
-            EditorToolButton("نافذة", Icons.Rounded.Window, tool == EditorTool.WINDOW) { onTool(EditorTool.WINDOW) }
+            EditorToolButton("تحديد", Icons.Rounded.NearMe, tool == HaiEditorTool.SELECT) { onTool(HaiEditorTool.SELECT) }
+            EditorToolButton("غرفة", Icons.Rounded.CropSquare, tool == HaiEditorTool.ROOM) { onTool(HaiEditorTool.ROOM) }
+            EditorToolButton("جدار", Icons.Rounded.HorizontalRule, tool == HaiEditorTool.WALL) { onTool(HaiEditorTool.WALL) }
+            EditorToolButton("باب", Icons.Rounded.DoorFront, tool == HaiEditorTool.DOOR) { onTool(HaiEditorTool.DOOR) }
+            EditorToolButton("نافذة", Icons.Rounded.Window, tool == HaiEditorTool.WINDOW) { onTool(HaiEditorTool.WINDOW) }
             if (selection != null) {
                 FilledTonalButton(
                     onClick = onDelete,
@@ -364,8 +364,8 @@ private fun EditorToolButton(label: String, icon: androidx.compose.ui.graphics.v
 private fun EditorCanvas(
     source: Uri?,
     plan: FloorPlan,
-    tool: EditorTool,
-    selection: EditorSelection?,
+    tool: HaiEditorTool,
+    selection: HaiEditorSelection?,
     firstWallPoint: PlanPoint?,
     onTap: (Float, Float) -> Unit
 ) {
@@ -502,12 +502,12 @@ private fun EditorCanvas(
     }
 }
 
-private fun selectEditorElement(plan: FloorPlan, x: Float, y: Float): EditorSelection? {
+private fun selectEditorElement(plan: FloorPlan, x: Float, y: Float): HaiEditorSelection? {
     val opening = plan.openings.minByOrNull { hypot((it.x - x).toDouble(), (it.y - y).toDouble()) }
-    if (opening != null && hypot((opening.x - x).toDouble(), (opening.y - y).toDouble()) <= 4.5) return EditorSelection("opening", opening.id)
+    if (opening != null && hypot((opening.x - x).toDouble(), (opening.y - y).toDouble()) <= 4.5) return HaiEditorSelection("opening", opening.id)
     val wall = plan.walls.minByOrNull { editorSegmentDistance(x, y, it.start.x, it.start.y, it.end.x, it.end.y) }
-    if (wall != null && editorSegmentDistance(x, y, wall.start.x, wall.start.y, wall.end.x, wall.end.y) <= 2.8) return EditorSelection("wall", wall.id)
-    return plan.rooms.lastOrNull { x in it.x..(it.x + it.width) && y in it.y..(it.y + it.height) }?.let { EditorSelection("room", it.id) }
+    if (wall != null && editorSegmentDistance(x, y, wall.start.x, wall.start.y, wall.end.x, wall.end.y) <= 2.8) return HaiEditorSelection("wall", wall.id)
+    return plan.rooms.lastOrNull { x in it.x..(it.x + it.width) && y in it.y..(it.y + it.height) }?.let { HaiEditorSelection("room", it.id) }
 }
 
 private fun editorRoomArea(plan: FloorPlan, widthPct: Float, heightPct: Float): Double {
