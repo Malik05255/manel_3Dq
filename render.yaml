@@ -28,6 +28,14 @@ services:
         value: google/gemini-2.5-flash
       - key: AI_API_KEY
         sync: false
+      - key: ROBOFLOW_API_URL
+        value: https://serverless.roboflow.com
+      - key: ROBOFLOW_API_KEY
+        sync: false
+      - key: ROBOFLOW_MODEL_IDS
+        value: floor-plan-detector/19,floor-plan-nnoub-ngvnw/1
+      - key: ROBOFLOW_CONFIDENCE
+        value: "0.25"
       - key: BLENDER_WORKER_URL
         sync: false
       - key: RENDER_WORKER_TOKEN
