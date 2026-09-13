@@ -10,7 +10,7 @@ import httpx
 import numpy as np
 
 DEFAULT_MODELS = (
-    "floor-plan-detector/19",
+    "harsh-bagadiya/floor-plan-detector-19-rfdetr-seg-medium-t1",
     "floor-plan-nnoub-ngvnw/1",
 )
 
@@ -139,23 +139,26 @@ def _infer_model(model_id: str, image_bytes: bytes, base64_value: str) -> dict[s
     base_url = os.getenv("ROBOFLOW_API_URL", "https://serverless.roboflow.com").rstrip("/")
     confidence = float(os.getenv("ROBOFLOW_CONFIDENCE", "0.25"))
     url = f"{base_url}/{model_id.lstrip('/')}"
-    params = {"api_key": api_key, "confidence": max(0.01, min(0.99, confidence))}
+    params = {"confidence": max(0.01, min(0.99, confidence))}
     timeout = httpx.Timeout(75.0, connect=20.0)
+    auth_headers = {"Authorization": f"Bearer {api_key}"}
 
-    # The legacy model endpoint accepts raw image bytes. A JSON base64 retry keeps this
-    # compatible with inference-server deployments that require an explicit image input.
+    # Current Roboflow Serverless models prefer bearer-header authentication.
+    # Keep the raw-image request first because it matches the hosted inference REST contract;
+    # retry with explicit base64 JSON for inference-server-compatible deployments.
     with httpx.Client(timeout=timeout) as client:
         response = client.post(
             url,
             params=params,
             content=image_bytes,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            headers={**auth_headers, "Content-Type": "application/x-www-form-urlencoded"},
         )
         if response.status_code >= 400:
             response = client.post(
                 url,
                 params=params,
                 json={"image": {"type": "base64", "value": base64_value}},
+                headers=auth_headers,
             )
     if response.status_code >= 400:
         raise RuntimeError(f"HTTP {response.status_code}: {response.text[:220]}")
