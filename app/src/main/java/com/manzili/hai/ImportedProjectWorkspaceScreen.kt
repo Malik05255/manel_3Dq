@@ -9,7 +9,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -34,11 +36,8 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import com.manzili.hai.engine.ArchitecturalEngine
 import com.manzili.hai.engine.ContextualHaiResolver
-import com.manzili.hai.engine.GeometrySolver
 import com.manzili.hai.engine.PlanVerificationEngine
-import com.manzili.hai.engine.ProjectMemoryEngine
-import com.manzili.hai.model.FloorPlan
-import com.manzili.hai.model.PlanProposal
+import com.manzili.hai.model.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -53,6 +52,7 @@ private val WGreen = Color(0xFF4C8A78)
 private val WMuted = Color(0xFF8F8A83)
 
 private enum class WorkspaceTab { PLAN, EDIT }
+private enum class EditMode { SELECT, ADD_ROOM, ADD_WALL, ADD_DOOR, ADD_WINDOW }
 private data class EditorSelection(val kind: String, val id: String)
 
 @Composable
@@ -82,7 +82,7 @@ fun ImportedProjectWorkspaceScreen(
     fun invokeHai() {
         if (haiBusy) return
         haiBusy = true
-        haiMessage = if (tab == WorkspaceTab.PLAN) "HAI يحل المشكلة الظاهرة في هذه الشاشة..." else "HAI يقرأ المخطط ويجهّز اقتراح التعديل..."
+        haiMessage = if (tab == WorkspaceTab.PLAN) "HAI يحل المشكلة الظاهرة في المراجعة..." else "HAI يراجع المخطط ويبحث عن اعتراض أو تحسين..."
         scope.launch {
             try {
                 if (tab == WorkspaceTab.PLAN) {
@@ -92,23 +92,16 @@ fun ImportedProjectWorkspaceScreen(
                     haiMessage = result.message
                 } else {
                     var base = working
-                    val baseReport = PlanVerificationEngine.inspect(base)
-                    val geometryInsufficient = base.rooms.isEmpty() && base.walls.size < 3
-                    if (geometryInsufficient || baseReport.blocking) {
+                    if (base.rooms.isEmpty() && base.walls.size < 3) {
                         val repaired = resolver.resolveReview(source, base)
                         base = repaired.plan
                         working = base
-                        val repairedReport = PlanVerificationEngine.inspect(base)
                         if (base.rooms.isEmpty() && base.walls.size < 3) {
                             haiProposal = null
                             haiMessage = repaired.message
                             return@launch
                         }
-                        if (repairedReport.blocking) {
-                            haiMessage = repaired.message
-                        }
                     }
-
                     val proposal = resolver.proposeEdit(base)
                     haiProposal = proposal
                     haiMessage = proposal.message.lineSequence().firstOrNull().orEmpty().ifBlank { "اكتملت مراجعة HAI." }
@@ -133,7 +126,7 @@ fun ImportedProjectWorkspaceScreen(
                         IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
                         Column(Modifier.weight(1f)) {
                             Text("معالجة المشروع", fontSize = 20.sp, fontWeight = FontWeight.Black, color = WInk)
-                            Text("المخطط • تعديل بصري • استدع HAI عند الحاجة", fontSize = 10.sp, color = WMuted)
+                            Text("المخطط • محرر كامل • استدع HAI عند الحاجة", fontSize = 10.sp, color = WMuted)
                         }
                         Surface(
                             color = if (report.blocking) WOrange.copy(alpha = .12f) else WGreen.copy(alpha = .12f),
@@ -196,7 +189,7 @@ fun ImportedProjectWorkspaceScreen(
                         working = it
                         tab = WorkspaceTab.EDIT
                     }
-                    WorkspaceTab.EDIT -> ContextualPlanEditor(
+                    WorkspaceTab.EDIT -> FullPlanEditor(
                         source = source,
                         plan = working,
                         haiProposal = haiProposal,
@@ -238,7 +231,7 @@ fun ImportedProjectWorkspaceScreen(
         FloatingHaiButton(
             busy = haiBusy,
             onClick = ::invokeHai,
-            modifier = Modifier.fillMaxSize().padding(top = 84.dp, bottom = 126.dp, start = 8.dp, end = 8.dp)
+            modifier = Modifier.fillMaxSize().padding(top = 78.dp, bottom = 120.dp, start = 6.dp, end = 6.dp)
         )
     }
 }
@@ -265,7 +258,7 @@ private fun WorkspaceNav(
 }
 
 @Composable
-private fun ContextualPlanEditor(
+private fun FullPlanEditor(
     source: Uri?,
     plan: FloorPlan,
     haiProposal: PlanProposal?,
@@ -273,21 +266,174 @@ private fun ContextualPlanEditor(
     onPlanChange: (FloorPlan) -> Unit,
     onDismissHai: () -> Unit
 ) {
+    var mode by remember { mutableStateOf(EditMode.SELECT) }
     var selection by remember(plan.revision) { mutableStateOf<EditorSelection?>(null) }
-    var localProposal by remember(plan.revision) { mutableStateOf<PlanProposal?>(null) }
-    val proposal = haiProposal ?: localProposal
+    var wallStart by remember { mutableStateOf<PlanPoint?>(null) }
+    val undo = remember { mutableStateListOf<FloorPlan>() }
+    val redo = remember { mutableStateListOf<FloorPlan>() }
+    val proposal = haiProposal
     val preview = proposal?.updatedPlan
     val validation = proposal?.let { ArchitecturalEngine.validate(plan, it) }
     val score = remember(plan) { ArchitecturalEngine.score(plan) }
-    val geometryMissing = plan.rooms.isEmpty() && plan.walls.size < 3
 
-    fun buildManualProposal(action: String) {
+    fun commit(next: FloorPlan) {
+        undo += plan
+        if (undo.size > 40) undo.removeAt(0)
+        redo.clear()
+        onPlanChange(next.copy(revision = maxOf(next.revision, plan.revision + 1)))
+    }
+
+    fun undoOnce() {
+        val previous = undo.removeLastOrNull() ?: return
+        redo += plan
+        onPlanChange(previous.copy(revision = plan.revision + 1))
+    }
+
+    fun redoOnce() {
+        val next = redo.removeLastOrNull() ?: return
+        undo += plan
+        onPlanChange(next.copy(revision = plan.revision + 1))
+    }
+
+    fun areaFor(xPct: Float, yPct: Float): Double {
+        val w = plan.widthM ?: return 0.0
+        val h = plan.heightM ?: return 0.0
+        return (w * xPct / 100.0) * (h * yPct / 100.0)
+    }
+
+    fun addAt(x: Float, y: Float) {
+        when (mode) {
+            EditMode.ADD_ROOM -> {
+                val width = 18f
+                val height = 13f
+                val room = Room(
+                    id = "manual-room-${System.currentTimeMillis()}",
+                    name = "غرفة ${plan.rooms.size + 1}",
+                    type = "generic",
+                    x = (x - width / 2f).coerceIn(0f, 100f - width),
+                    y = (y - height / 2f).coerceIn(0f, 100f - height),
+                    width = width,
+                    height = height,
+                    areaM2 = areaFor(width, height),
+                    confidence = 100
+                )
+                commit(plan.copy(rooms = plan.rooms + room))
+                selection = EditorSelection("room", room.id)
+                mode = EditMode.SELECT
+            }
+            EditMode.ADD_WALL -> {
+                val first = wallStart
+                if (first == null) {
+                    wallStart = PlanPoint(x, y)
+                } else {
+                    val wall = Wall(
+                        id = "manual-wall-${System.currentTimeMillis()}",
+                        start = first,
+                        end = PlanPoint(x, y),
+                        thicknessCm = 15.0,
+                        kind = "manual",
+                        confidence = 100
+                    )
+                    commit(plan.copy(walls = plan.walls + wall))
+                    selection = EditorSelection("wall", wall.id)
+                    wallStart = null
+                    mode = EditMode.SELECT
+                }
+            }
+            EditMode.ADD_DOOR, EditMode.ADD_WINDOW -> {
+                val nearest = plan.walls.minByOrNull { pointToSegment(x, y, it.start.x, it.start.y, it.end.x, it.end.y) }
+                val opening = Opening(
+                    id = "manual-opening-${System.currentTimeMillis()}",
+                    type = if (mode == EditMode.ADD_WINDOW) "window" else "door",
+                    x = x.coerceIn(0f, 100f),
+                    y = y.coerceIn(0f, 100f),
+                    width = if (mode == EditMode.ADD_WINDOW) 5f else 4f,
+                    wallId = nearest?.id,
+                    confidence = 100
+                )
+                commit(plan.copy(openings = plan.openings + opening))
+                selection = EditorSelection("opening", opening.id)
+                mode = EditMode.SELECT
+            }
+            else -> Unit
+        }
+    }
+
+    fun selectAt(x: Float, y: Float) {
+        val opening = plan.openings.minByOrNull { hypot((it.x - x).toDouble(), (it.y - y).toDouble()) }
+        if (opening != null && hypot((opening.x - x).toDouble(), (opening.y - y).toDouble()) <= 5.0) {
+            selection = EditorSelection("opening", opening.id); return
+        }
+        val wall = plan.walls.minByOrNull { pointToSegment(x, y, it.start.x, it.start.y, it.end.x, it.end.y) }
+        if (wall != null && pointToSegment(x, y, wall.start.x, wall.start.y, wall.end.x, wall.end.y) <= 3.0) {
+            selection = EditorSelection("wall", wall.id); return
+        }
+        val room = plan.rooms.lastOrNull { x >= it.x && x <= it.x + it.width && y >= it.y && y <= it.y + it.height }
+        selection = room?.let { EditorSelection("room", it.id) }
+    }
+
+    fun moveSelected(dx: Float, dy: Float) {
         val sel = selection ?: return
-        val candidate = GeometrySolver.actionCandidates(plan, sel.kind, sel.id, action)
-            .firstOrNull { !ProjectMemoryEngine.review(plan, it.plan).hasObjection }
-        localProposal = candidate?.let { GeometrySolver.toProposal(plan, it) }
-            ?: PlanProposal("لم أجد تعديلًا هندسيًا آمنًا لهذا العنصر.", null, confidence = 100)
-        onDismissHai()
+        when (sel.kind) {
+            "room" -> commit(plan.copy(rooms = plan.rooms.map { room ->
+                if (room.id != sel.id || room.locked) room else room.copy(
+                    x = (room.x + dx).coerceIn(0f, 100f - room.width),
+                    y = (room.y + dy).coerceIn(0f, 100f - room.height)
+                )
+            }))
+            "wall" -> commit(plan.copy(walls = plan.walls.map { wall ->
+                if (wall.id != sel.id || wall.locked) wall else wall.copy(
+                    start = PlanPoint((wall.start.x + dx).coerceIn(0f, 100f), (wall.start.y + dy).coerceIn(0f, 100f)),
+                    end = PlanPoint((wall.end.x + dx).coerceIn(0f, 100f), (wall.end.y + dy).coerceIn(0f, 100f))
+                )
+            }))
+            "opening" -> commit(plan.copy(openings = plan.openings.map { opening ->
+                if (opening.id != sel.id || opening.locked) opening else opening.copy(
+                    x = (opening.x + dx).coerceIn(0f, 100f),
+                    y = (opening.y + dy).coerceIn(0f, 100f)
+                )
+            }))
+        }
+    }
+
+    fun resizeSelected(factor: Float) {
+        val sel = selection ?: return
+        when (sel.kind) {
+            "room" -> commit(plan.copy(rooms = plan.rooms.map { room ->
+                if (room.id != sel.id || room.locked) room else {
+                    val nw = (room.width * factor).coerceIn(4f, 60f)
+                    val nh = (room.height * factor).coerceIn(4f, 60f)
+                    room.copy(
+                        width = nw,
+                        height = nh,
+                        x = room.x.coerceIn(0f, 100f - nw),
+                        y = room.y.coerceIn(0f, 100f - nh),
+                        areaM2 = areaFor(nw, nh)
+                    )
+                }
+            }))
+            "opening" -> commit(plan.copy(openings = plan.openings.map { opening ->
+                if (opening.id != sel.id || opening.locked) opening else opening.copy(width = (opening.width * factor).coerceIn(1.5f, 18f))
+            }))
+            "wall" -> commit(plan.copy(walls = plan.walls.map { wall ->
+                if (wall.id != sel.id || wall.locked) wall else wall.copy(thicknessCm = ((wall.thicknessCm ?: 15.0) * factor).coerceIn(7.0, 45.0))
+            }))
+        }
+    }
+
+    fun deleteSelected() {
+        val sel = selection ?: return
+        val next = when (sel.kind) {
+            "room" -> plan.copy(rooms = plan.rooms.filterNot { it.id == sel.id })
+            "wall" -> plan.copy(
+                walls = plan.walls.filterNot { it.id == sel.id },
+                openings = plan.openings.filterNot { it.wallId == sel.id }
+            )
+            "opening" -> plan.copy(openings = plan.openings.filterNot { it.id == sel.id })
+            else -> plan
+        }
+        commit(next)
+        selection = null
     }
 
     fun toggleLock() {
@@ -298,161 +444,175 @@ private fun ContextualPlanEditor(
             "opening" -> plan.copy(openings = plan.openings.map { if (it.id == sel.id) it.copy(locked = !it.locked) else it })
             else -> plan
         }
-        onPlanChange(next.copy(revision = plan.revision + 1))
+        commit(next)
     }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 8.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("التعديل", fontSize = 24.sp, fontWeight = FontWeight.Black, color = WInk)
-                Text("الأصل في الخلفية • هندسة التطبيق بالرمادي • اقتراح HAI بالبنفسجي", fontSize = 10.sp, color = WMuted)
+                Text("التعديل", fontSize = 25.sp, fontWeight = FontWeight.Black, color = WInk)
+                Text("حرّر الجدران والغرف والفتحات مباشرة — الأصل يبقى مرجعًا في الخلفية", fontSize = 9.5.sp, color = WMuted)
             }
             Surface(color = WViolet.copy(alpha = .10f), shape = RoundedCornerShape(15.dp)) {
-                Column(Modifier.padding(horizontal = 11.dp, vertical = 7.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("${score.overall}", color = WViolet, fontWeight = FontWeight.Black, fontSize = 16.sp)
-                    Text("تقييم", color = WMuted, fontSize = 8.5.sp)
+                    Text("تقييم", color = WMuted, fontSize = 8.sp)
                 }
             }
         }
 
-        Spacer(Modifier.height(9.dp))
+        Spacer(Modifier.height(6.dp))
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            ToolChip("تحديد", Icons.Rounded.TouchApp, mode == EditMode.SELECT) { mode = EditMode.SELECT; wallStart = null }
+            ToolChip("غرفة +", Icons.Rounded.Add, mode == EditMode.ADD_ROOM) { mode = EditMode.ADD_ROOM; wallStart = null }
+            ToolChip("جدار +", Icons.Rounded.Add, mode == EditMode.ADD_WALL) { mode = EditMode.ADD_WALL; wallStart = null }
+            ToolChip("باب +", Icons.Rounded.Add, mode == EditMode.ADD_DOOR) { mode = EditMode.ADD_DOOR; wallStart = null }
+            ToolChip("نافذة +", Icons.Rounded.Add, mode == EditMode.ADD_WINDOW) { mode = EditMode.ADD_WINDOW; wallStart = null }
+            ToolChip("تراجع", Icons.Rounded.Undo, false, enabled = undo.isNotEmpty()) { undoOnce() }
+            ToolChip("إعادة", Icons.Rounded.Redo, false, enabled = redo.isNotEmpty()) { redoOnce() }
+        }
+
+        if (mode == EditMode.ADD_WALL && wallStart != null) {
+            Text("اختر النقطة الثانية للجدار", color = WViolet, fontWeight = FontWeight.Bold, fontSize = 9.5.sp, modifier = Modifier.padding(vertical = 4.dp))
+        } else {
+            Spacer(Modifier.height(4.dp))
+        }
 
         Card(
             colors = CardDefaults.cardColors(containerColor = Color.White),
-            shape = RoundedCornerShape(26.dp),
+            shape = RoundedCornerShape(24.dp),
             modifier = Modifier.fillMaxWidth().weight(1f)
         ) {
             Box(Modifier.fillMaxSize()) {
                 EditorSourceBackdrop(source)
-                EditorPlanCanvas(
-                    base = plan,
-                    preview = preview,
-                    selected = selection,
-                    onSelect = { selection = it },
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                if (geometryMissing) {
-                    Surface(
-                        color = WInk.copy(alpha = .78f),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
-                    ) {
-                        Text(
-                            "المخطط الأصلي ظاهر — استدع HAI لبناء طبقة تعديل قابلة للمس",
-                            color = Color.White,
-                            fontSize = 9.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp)
-                        )
+                Canvas(
+                    Modifier.fillMaxSize().pointerInput(plan, preview, mode, wallStart) {
+                        detectTapGestures { tap ->
+                            val x = tap.x / size.width.coerceAtLeast(1) * 100f
+                            val y = tap.y / size.height.coerceAtLeast(1) * 100f
+                            if (mode == EditMode.SELECT) selectAt(x, y) else addAt(x, y)
+                        }
                     }
-                } else if (preview != null) {
+                ) {
+                    drawPlanLayer(plan, selection, Color(0xFF35373A), Color(0xFF756F86), alpha = if (preview == null) .94f else .34f)
+                    preview?.let { drawPlanLayer(it, selection, WViolet, Color(0xFF8D7CF0), alpha = .96f) }
+                    wallStart?.let { start ->
+                        drawCircle(WOrange, 6.dp.toPx(), Offset(size.width * start.x / 100f, size.height * start.y / 100f))
+                    }
+                }
+
+                Surface(
+                    color = WInk.copy(alpha = .76f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
+                ) {
+                    Text(
+                        when (mode) {
+                            EditMode.SELECT -> "المس أي غرفة أو جدار أو فتحة لتعديلها"
+                            EditMode.ADD_ROOM -> "المس مكان الغرفة الجديدة"
+                            EditMode.ADD_WALL -> if (wallStart == null) "المس بداية الجدار" else "المس نهاية الجدار"
+                            EditMode.ADD_DOOR -> "المس مكان الباب"
+                            EditMode.ADD_WINDOW -> "المس مكان النافذة"
+                        },
+                        color = Color.White,
+                        fontSize = 9.2.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                    )
+                }
+
+                if (preview != null) {
                     Surface(
                         color = WViolet,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp)
                     ) {
-                        Text(
-                            "معاينة HAI — لم تُطبّق",
-                            color = Color.White,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 9.5.sp,
-                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp)
-                        )
+                        Text("البنفسجي = اقتراح HAI قبل التطبيق", color = Color.White, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
                     }
                 }
             }
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
 
         selection?.let { sel ->
-            val title = selectionTitle(plan, sel)
-            Surface(color = WCard, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(10.dp)) {
+            Surface(color = WCard, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(34.dp).background(WViolet.copy(alpha = .10f), CircleShape), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Rounded.TouchApp, null, tint = WViolet, modifier = Modifier.size(18.dp))
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Text(title, fontWeight = FontWeight.Black, fontSize = 11.5.sp, modifier = Modifier.weight(1f))
-                        TextButton(onClick = ::toggleLock) { Text("قفل/فتح", fontSize = 9.5.sp) }
+                        Text(selectionTitle(plan, sel), fontWeight = FontWeight.Black, fontSize = 10.5.sp, modifier = Modifier.weight(1f))
+                        TextButton(onClick = ::toggleLock) { Text("قفل/فتح", fontSize = 9.sp) }
+                        TextButton(onClick = ::deleteSelected) { Text("حذف", color = WOrange, fontSize = 9.sp) }
                     }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        EditorAction(Modifier.weight(1f), Icons.Rounded.OpenWith, "تحريك") { buildManualProposal("MOVE") }
-                        if (sel.kind == "room") {
-                            EditorAction(Modifier.weight(1f), Icons.Rounded.ZoomOutMap, "تكبير") { buildManualProposal("EXPAND") }
-                            EditorAction(Modifier.weight(1f), Icons.Rounded.ZoomInMap, "تصغير") { buildManualProposal("SHRINK") }
-                        }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        MiniAction(Modifier.weight(1f), "←") { moveSelected(-1.5f, 0f) }
+                        MiniAction(Modifier.weight(1f), "→") { moveSelected(1.5f, 0f) }
+                        MiniAction(Modifier.weight(1f), "↑") { moveSelected(0f, -1.5f) }
+                        MiniAction(Modifier.weight(1f), "↓") { moveSelected(0f, 1.5f) }
+                        MiniAction(Modifier.weight(1f), "+") { resizeSelected(1.10f) }
+                        MiniAction(Modifier.weight(1f), "−") { resizeSelected(.90f) }
                     }
                 }
             }
-            Spacer(Modifier.height(7.dp))
+            Spacer(Modifier.height(5.dp))
         }
 
         proposal?.let { p ->
             Surface(
                 color = if (p.updatedPlan != null) WViolet.copy(alpha = .10f) else WOrange.copy(alpha = .11f),
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(Modifier.padding(12.dp)) {
+                Column(Modifier.padding(9.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.AutoAwesome, null, tint = WViolet)
-                        Spacer(Modifier.width(7.dp))
-                        Text("اقتراح HAI", fontWeight = FontWeight.Black, fontSize = 12.sp)
+                        Icon(Icons.Rounded.AutoAwesome, null, tint = WViolet, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("رأي HAI", fontWeight = FontWeight.Black, fontSize = 11.sp)
                         Spacer(Modifier.weight(1f))
-                        Text("${p.confidence}%", color = WMuted, fontSize = 9.5.sp)
+                        Text("${p.confidence}%", color = WMuted, fontSize = 9.sp)
                     }
-                    Spacer(Modifier.height(5.dp))
-                    Text(
-                        p.message.ifBlank { haiMessage ?: "مراجعة مكتملة." },
-                        color = WInk,
-                        fontSize = 10.5.sp,
-                        lineHeight = 15.sp,
-                        maxLines = 5
-                    )
-                    validation?.errors?.firstOrNull()?.let {
-                        Text("اعتراض: $it", color = WOrange, fontSize = 9.5.sp, modifier = Modifier.padding(top = 4.dp))
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = {
-                                localProposal = null
-                                onDismissHai()
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) { Text("رفض") }
+                    Text(p.message.ifBlank { haiMessage ?: "مراجعة مكتملة." }, fontSize = 9.6.sp, lineHeight = 13.sp, maxLines = 4)
+                    validation?.errors?.firstOrNull()?.let { Text("اعتراض: $it", color = WOrange, fontSize = 9.sp) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 5.dp)) {
+                        OutlinedButton(onClick = onDismissHai, modifier = Modifier.weight(1f), contentPadding = PaddingValues(4.dp)) { Text("رفض", fontSize = 9.sp) }
                         Button(
                             onClick = {
-                                p.updatedPlan?.let { next ->
-                                    onPlanChange(next.copy(revision = maxOf(next.revision, plan.revision + 1)))
-                                }
-                                localProposal = null
+                                p.updatedPlan?.let { commit(it) }
                                 onDismissHai()
                             },
                             enabled = p.updatedPlan != null && validation?.valid != false,
-                            modifier = Modifier.weight(1f)
-                        ) { Text("تطبيق التعديل", fontWeight = FontWeight.Black) }
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(4.dp)
+                        ) { Text("تطبيق", fontSize = 9.sp, fontWeight = FontWeight.Black) }
                     }
                 }
             }
-        } ?: run {
-            Surface(color = WCard, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.TipsAndUpdates, null, tint = WOrange, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(7.dp))
-                    Text(
-                        if (geometryMissing) "المخطط الأصلي لم يعد شاشة بيضاء. استدع HAI ليحوّل ما فهمه إلى طبقة تعديل، أو ارجع للمراجعة لتصحيح القراءة."
-                        else "المس غرفة أو جدارًا للتعديل، أو استدع HAI ليعرض اعتراضه وتعديله بلون مختلف.",
-                        color = WMuted,
-                        fontSize = 9.8.sp,
-                        lineHeight = 14.sp
-                    )
-                }
-            }
         }
+    }
+}
+
+@Composable
+private fun ToolChip(text: String, icon: ImageVector, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+    FilledTonalButton(
+        onClick = onClick,
+        enabled = enabled,
+        colors = ButtonDefaults.filledTonalButtonColors(containerColor = if (selected) WViolet.copy(alpha = .18f) else WCard),
+        shape = RoundedCornerShape(14.dp),
+        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 4.dp),
+        modifier = Modifier.height(38.dp)
+    ) {
+        Icon(icon, null, modifier = Modifier.size(14.dp), tint = if (selected) WViolet else WMuted)
+        Spacer(Modifier.width(3.dp))
+        Text(text, fontSize = 8.8.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun MiniAction(modifier: Modifier, text: String, onClick: () -> Unit) {
+    FilledTonalButton(onClick = onClick, modifier = modifier.height(34.dp), contentPadding = PaddingValues(0.dp), shape = RoundedCornerShape(10.dp)) {
+        Text(text, fontWeight = FontWeight.Black, fontSize = 13.sp)
     }
 }
 
@@ -464,7 +624,6 @@ private fun EditorSourceBackdrop(source: Uri?) {
         }
         return
     }
-
     val context = LocalContext.current
     val bitmap by produceState<Bitmap?>(initialValue = null, source) {
         value = withContext(Dispatchers.IO) { loadEditorBitmap(context, source) }
@@ -477,7 +636,7 @@ private fun EditorSourceBackdrop(source: Uri?) {
     } else {
         Image(
             bitmap = image.asImageBitmap(),
-            contentDescription = "المخطط الأصلي في شاشة التعديل",
+            contentDescription = "المخطط الأصلي",
             contentScale = ContentScale.FillBounds,
             modifier = Modifier.fillMaxSize()
         )
@@ -507,52 +666,6 @@ private fun loadEditorBitmap(context: android.content.Context, source: Uri): Bit
     }.getOrNull()
 }
 
-@Composable
-private fun EditorAction(modifier: Modifier, icon: ImageVector, text: String, onClick: () -> Unit) {
-    FilledTonalButton(
-        onClick = onClick,
-        modifier = modifier.height(42.dp),
-        shape = RoundedCornerShape(14.dp),
-        contentPadding = PaddingValues(horizontal = 5.dp)
-    ) {
-        Icon(icon, null, modifier = Modifier.size(15.dp))
-        Spacer(Modifier.width(4.dp))
-        Text(text, fontWeight = FontWeight.Bold, fontSize = 9.sp)
-    }
-}
-
-@Composable
-private fun EditorPlanCanvas(
-    base: FloorPlan,
-    preview: FloorPlan?,
-    selected: EditorSelection?,
-    onSelect: (EditorSelection?) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Canvas(
-        modifier.pointerInput(base, preview) {
-            detectTapGestures { tap ->
-                val px = tap.x / size.width.coerceAtLeast(1) * 100f
-                val py = tap.y / size.height.coerceAtLeast(1) * 100f
-                val active = preview ?: base
-                val opening = active.openings.minByOrNull { hypot((it.x - px).toDouble(), (it.y - py).toDouble()) }
-                if (opening != null && hypot((opening.x - px).toDouble(), (opening.y - py).toDouble()) <= 5.0) {
-                    onSelect(EditorSelection("opening", opening.id)); return@detectTapGestures
-                }
-                val wall = active.walls.minByOrNull { pointToSegment(px, py, it.start.x, it.start.y, it.end.x, it.end.y) }
-                if (wall != null && pointToSegment(px, py, wall.start.x, wall.start.y, wall.end.x, wall.end.y) <= 2.7) {
-                    onSelect(EditorSelection("wall", wall.id)); return@detectTapGestures
-                }
-                val room = active.rooms.lastOrNull { px >= it.x && px <= it.x + it.width && py >= it.y && py <= it.y + it.height }
-                onSelect(room?.let { EditorSelection("room", it.id) })
-            }
-        }
-    ) {
-        drawPlanLayer(base, selected, Color(0xFF414246), Color(0xFF746F84), alpha = if (preview == null) .88f else .34f)
-        preview?.let { drawPlanLayer(it, selected, WViolet, Color(0xFF8D7CF0), alpha = .96f) }
-    }
-}
-
 private fun DrawScope.drawPlanLayer(
     plan: FloorPlan,
     selected: EditorSelection?,
@@ -561,7 +674,6 @@ private fun DrawScope.drawPlanLayer(
     alpha: Float
 ) {
     fun p(x: Float, y: Float) = Offset(size.width * x / 100f, size.height * y / 100f)
-
     plan.rooms.forEach { room ->
         val isSelected = selected?.kind == "room" && selected.id == room.id
         val topLeft = p(room.x, room.y)
@@ -574,7 +686,6 @@ private fun DrawScope.drawPlanLayer(
             style = Stroke(if (isSelected) 3.dp.toPx() else 1.3.dp.toPx())
         )
     }
-
     plan.walls.forEach { wall ->
         val isSelected = selected?.kind == "wall" && selected.id == wall.id
         drawLine(
@@ -584,7 +695,6 @@ private fun DrawScope.drawPlanLayer(
             strokeWidth = (if (isSelected) 4.dp else 2.4.dp).toPx()
         )
     }
-
     plan.openings.forEach { opening ->
         val isSelected = selected?.kind == "opening" && selected.id == opening.id
         drawCircle(
@@ -597,7 +707,7 @@ private fun DrawScope.drawPlanLayer(
 
 private fun selectionTitle(plan: FloorPlan, selection: EditorSelection): String = when (selection.kind) {
     "room" -> plan.rooms.firstOrNull { it.id == selection.id }?.let { "${it.name} • ${"%.1f".format(it.areaM2)}م²" } ?: "غرفة"
-    "wall" -> plan.walls.firstOrNull { it.id == selection.id }?.let { "جدار • ${it.kind}" } ?: "جدار"
+    "wall" -> plan.walls.firstOrNull { it.id == selection.id }?.let { "جدار • ${it.thicknessCm?.let { t -> "${t.toInt()}سم" } ?: it.kind}" } ?: "جدار"
     "opening" -> plan.openings.firstOrNull { it.id == selection.id }?.let { if (it.type.contains("window", true)) "نافذة" else "باب" } ?: "فتحة"
     else -> "عنصر"
 }
