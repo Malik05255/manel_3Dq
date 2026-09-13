@@ -16,15 +16,30 @@ object HaiReviewResolutionEngine {
         var width = input.widthM
         var height = input.heightM
 
+        val pair = strongestDimensionPair(input.dimensions)
+        if (width == null && height == null && pair != null) {
+            width = pair.first
+            height = pair.second
+        }
+
         if (width == null) width = strongestOverallDimension(input.dimensions, "horizontal")
         if (height == null) height = strongestOverallDimension(input.dimensions, "vertical")
+
+        if (pair != null) {
+            if (width != null && height == null) {
+                height = pairedOtherValue(pair, width!!)
+            } else if (height != null && width == null) {
+                width = pairedOtherValue(pair, height!!)
+            }
+        }
 
         if (width == input.widthM && height == input.heightM) return input
         return input.copy(
             widthM = width,
             heightM = height,
+            scaleConfidence = maxOf(input.scaleConfidence, 72),
             revision = input.revision + 1,
-            observations = (input.observations + "أكمل HAI المقياس من أدلة الأبعاد الموجودة في المخطط.").distinct()
+            observations = (input.observations + "أكمل HAI المقياس تلقائيًا من أدلة الأبعاد المقروءة في المخطط.").distinct()
         )
     }
 
@@ -52,24 +67,52 @@ object HaiReviewResolutionEngine {
         )
     }
 
-    private fun strongestOverallDimension(dimensions: List<PlanDimension>, axis: String): Double? {
+    private fun strongestDimensionPair(dimensions: List<PlanDimension>): Pair<Double, Double>? {
         return dimensions
-            .filter { it.confidence >= 70 && it.axis.equals(axis, true) }
-            .filter { dimension ->
-                val text = "${dimension.label} ${dimension.sourceText}"
-                val namedOverall = if (axis == "horizontal") {
-                    text.contains("عرض") || text.contains("width", true)
-                } else {
-                    text.contains("طول") || text.contains("height", true) || text.contains("length", true)
-                }
-                val spanPct = dimension.start?.let { start ->
-                    dimension.end?.let { end ->
-                        if (axis == "horizontal") abs(end.x - start.x) else abs(end.y - start.y)
-                    }
-                } ?: 0f
-                namedOverall || spanPct >= 70f
+            .filter { it.confidence >= 70 && it.id.startsWith("pair-") }
+            .groupBy { it.id.removeSuffix("-a").removeSuffix("-b") }
+            .mapNotNull { (_, group) ->
+                val a = group.firstOrNull { it.id.endsWith("-a") }
+                val b = group.firstOrNull { it.id.endsWith("-b") }
+                if (a == null || b == null) null
+                else Triple(a.valueM, b.valueM, minOf(a.confidence, b.confidence))
             }
-            .maxWithOrNull(compareBy<PlanDimension> { it.confidence }.thenBy { it.valueM })
+            .maxByOrNull { it.third }
+            ?.let { it.first to it.second }
+    }
+
+    private fun pairedOtherValue(pair: Pair<Double, Double>, known: Double): Double? {
+        val tolerance = (known * .12).coerceAtLeast(.35)
+        return when {
+            abs(pair.first - known) <= tolerance -> pair.second
+            abs(pair.second - known) <= tolerance -> pair.first
+            else -> null
+        }
+    }
+
+    private fun strongestOverallDimension(dimensions: List<PlanDimension>, axis: String): Double? {
+        val axisCandidates = dimensions
+            .filter { it.confidence >= 70 && it.axis.equals(axis, true) && it.valueM in .5..250.0 }
+        if (axisCandidates.isEmpty()) return null
+
+        val explicit = axisCandidates.filter { dimension ->
+            val text = "${dimension.label} ${dimension.sourceText}"
+            val namedOverall = if (axis == "horizontal") {
+                text.contains("عرض") || text.contains("width", true)
+            } else {
+                text.contains("طول") || text.contains("height", true) || text.contains("length", true)
+            }
+            val spanPct = dimension.start?.let { start ->
+                dimension.end?.let { end ->
+                    if (axis == "horizontal") abs(end.x - start.x) else abs(end.y - start.y)
+                }
+            } ?: 0f
+            namedOverall || spanPct >= 70f
+        }
+
+        val pool = if (explicit.isNotEmpty()) explicit else axisCandidates
+        return pool
+            .maxWithOrNull(compareBy<PlanDimension> { it.valueM }.thenBy { it.confidence })
             ?.valueM
     }
 
