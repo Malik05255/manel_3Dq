@@ -5,9 +5,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AddHomeWork
-import androidx.compose.material.icons.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.UploadFile
+import androidx.compose.material.icons.outlined.AddHomeWork
+import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -21,7 +21,7 @@ import androidx.navigation.NavHostController
 
 @Composable
 fun ProductionBuildChoiceScreen(nav: NavHostController) {
-    Surface(Modifier.fillMaxSize(), color = Color(0xFFF8F6F2)) {
+    Surface(Modifier.fillMaxSize(), color = StudioColors.Canvas) {
         Column(
             Modifier
                 .fillMaxSize()
@@ -34,13 +34,13 @@ fun ProductionBuildChoiceScreen(nav: NavHostController) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { nav.popBackStack() }) {
-                    Icon(Icons.Rounded.ArrowForward, "رجوع")
+                    Icon(Icons.Outlined.ArrowForward, "رجوع")
                 }
                 Text(
                     "ابدأ",
                     fontSize = 30.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFF181A18)
+                    fontWeight = FontWeight.Bold,
+                    color = StudioColors.Ink
                 )
             }
 
@@ -48,8 +48,8 @@ fun ProductionBuildChoiceScreen(nav: NavHostController) {
 
             StartChoiceCard(
                 title = "مشروع جديد",
-                icon = Icons.Rounded.AddHomeWork,
-                accent = Color(0xFF6353D9),
+                icon = Icons.Outlined.AddHomeWork,
+                accent = StudioColors.Primary,
                 onClick = { nav.navigate("new") }
             )
 
@@ -57,8 +57,8 @@ fun ProductionBuildChoiceScreen(nav: NavHostController) {
 
             StartChoiceCard(
                 title = "عندي مخطط",
-                icon = Icons.Rounded.UploadFile,
-                accent = Color(0xFFE28B5A),
+                icon = Icons.Outlined.UploadFile,
+                accent = StudioColors.Warning,
                 onClick = { nav.navigate("import-type") }
             )
         }
@@ -74,7 +74,7 @@ private fun StartChoiceCard(
 ) {
     ElevatedCard(
         onClick = onClick,
-        shape = RoundedCornerShape(30.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
         modifier = Modifier
@@ -99,8 +99,8 @@ private fun StartChoiceCard(
             Text(
                 title,
                 fontSize = 23.sp,
-                fontWeight = FontWeight.Black,
-                color = Color(0xFF181A18)
+                fontWeight = FontWeight.Bold,
+                color = StudioColors.Ink
             )
         }
     }

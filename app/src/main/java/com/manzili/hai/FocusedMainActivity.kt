@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -101,14 +101,14 @@ private fun FocusedProductionApp() {
 
     MaterialTheme(
         colorScheme = lightColorScheme(
-            primary = Color(0xFF4F40B8),
+            primary = StudioColors.Primary,
             onPrimary = Color.White,
-            secondary = Color(0xFFE28B5A),
-            background = Color(0xFFF8F6F2),
-            surface = Color(0xFFFFFEFC),
-            surfaceVariant = Color(0xFFF0ECE6),
-            onBackground = Color(0xFF181A18),
-            onSurface = Color(0xFF181A18)
+            secondary = StudioColors.Warning,
+            background = StudioColors.Canvas,
+            surface = StudioColors.Paper,
+            surfaceVariant = StudioColors.Line,
+            onBackground = StudioColors.Ink,
+            onSurface = StudioColors.Ink
         )
     ) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
@@ -202,7 +202,7 @@ private fun FocusedProductionApp() {
 
 @Composable
 private fun FocusedHome(nav: NavHostController, plan: FloorPlan?, projectCount: Int) {
-    Surface(Modifier.fillMaxSize(), color = Color(0xFFF8F6F2)) {
+    Surface(Modifier.fillMaxSize(), color = StudioColors.Canvas) {
         Column(
             Modifier
                 .fillMaxSize()
@@ -215,21 +215,21 @@ private fun FocusedHome(nav: NavHostController, plan: FloorPlan?, projectCount: 
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
-                    color = Color(0xFF6353D9).copy(alpha = 0.10f),
+                    color = StudioColors.Primary.copy(alpha = 0.10f),
                     shape = RoundedCornerShape(18.dp)
                 ) {
                     Text(
                         "HAI",
                         modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
-                        color = Color(0xFF4F40B8),
-                        fontWeight = FontWeight.Black
+                        color = StudioColors.Primary,
+                        fontWeight = FontWeight.Bold
                     )
                 }
                 Spacer(Modifier.width(10.dp))
-                Text("منزلي", fontSize = 21.sp, fontWeight = FontWeight.Black)
+                Text("منزلي", fontSize = 21.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { nav.navigate("settings") }) {
-                    Icon(Icons.Rounded.Tune, "الإعدادات")
+                    Icon(Icons.Outlined.Tune, "الإعدادات")
                 }
             }
 
@@ -239,13 +239,13 @@ private fun FocusedHome(nav: NavHostController, plan: FloorPlan?, projectCount: 
                 "من المخطط إلى 3D.",
                 fontSize = 35.sp,
                 lineHeight = 40.sp,
-                fontWeight = FontWeight.Black,
-                color = Color(0xFF181A18)
+                fontWeight = FontWeight.Bold,
+                color = StudioColors.Ink
             )
             Spacer(Modifier.height(8.dp))
             Text(
                 "ارفع المخطط، راجع ما فهمه HAI وصححه، وبعدها افتح النموذج ثلاثي الأبعاد.",
-                color = Color(0xFF6F6A64),
+                color = StudioColors.Muted,
                 fontSize = 13.sp,
                 lineHeight = 19.sp
             )
@@ -254,23 +254,23 @@ private fun FocusedHome(nav: NavHostController, plan: FloorPlan?, projectCount: 
 
             Button(
                 onClick = { nav.navigate("import-type") },
-                shape = RoundedCornerShape(23.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF181A18)),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = StudioColors.Ink),
                 modifier = Modifier.fillMaxWidth().height(62.dp)
             ) {
-                Icon(Icons.Rounded.UploadFile, null)
+                Icon(Icons.Outlined.UploadFile, null)
                 Spacer(Modifier.width(8.dp))
-                Text("استيراد مخطط", fontWeight = FontWeight.Black, fontSize = 17.sp)
+                Text("استيراد مخطط", fontWeight = FontWeight.Bold, fontSize = 17.sp)
             }
 
             Spacer(Modifier.height(10.dp))
 
             OutlinedButton(
                 onClick = { nav.navigate("new") },
-                shape = RoundedCornerShape(23.dp),
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth().height(56.dp)
             ) {
-                Icon(Icons.Rounded.AddHomeWork, null)
+                Icon(Icons.Outlined.AddHomeWork, null)
                 Spacer(Modifier.width(8.dp))
                 Text("تصميم من الصفر", fontWeight = FontWeight.Bold)
             }
@@ -279,7 +279,7 @@ private fun FocusedHome(nav: NavHostController, plan: FloorPlan?, projectCount: 
                 Spacer(Modifier.height(22.dp))
                 val type = SaudiProjectTypeEngine.infer(plan)
                 ElevatedCard(
-                    shape = RoundedCornerShape(28.dp),
+                    shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
                     elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -289,15 +289,15 @@ private fun FocusedHome(nav: NavHostController, plan: FloorPlan?, projectCount: 
                             Box(
                                 Modifier
                                     .size(46.dp)
-                                    .background(Color(0xFFE28B5A).copy(alpha = 0.12f), CircleShape),
+                                    .background(StudioColors.Warning.copy(alpha = 0.12f), CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Rounded.HomeWork, null, tint = Color(0xFFE28B5A))
+                                Icon(Icons.Outlined.HomeWork, null, tint = StudioColors.Warning)
                             }
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(plan.title, fontSize = 17.sp, fontWeight = FontWeight.Black, maxLines = 1)
-                                Text(type.label, color = Color(0xFF8B857D), fontSize = 11.sp)
+                                Text(plan.title, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                Text(type.label, color = StudioColors.Muted, fontSize = 12.sp)
                             }
                         }
 
@@ -312,18 +312,18 @@ private fun FocusedHome(nav: NavHostController, plan: FloorPlan?, projectCount: 
                                 shape = RoundedCornerShape(18.dp),
                                 modifier = Modifier.weight(1f).height(52.dp)
                             ) {
-                                Icon(Icons.Rounded.FactCheck, null, modifier = Modifier.size(19.dp))
+                                Icon(Icons.Outlined.FactCheck, null, modifier = Modifier.size(19.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("مراجعة", fontWeight = FontWeight.Black)
+                                Text("مراجعة", fontWeight = FontWeight.Bold)
                             }
                             FilledTonalButton(
                                 onClick = { nav.navigate("3d") },
                                 shape = RoundedCornerShape(18.dp),
                                 modifier = Modifier.weight(1f).height(52.dp)
                             ) {
-                                Icon(Icons.Rounded.ViewInAr, null, modifier = Modifier.size(19.dp))
+                                Icon(Icons.Outlined.ViewInAr, null, modifier = Modifier.size(19.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("عرض 3D", fontWeight = FontWeight.Black)
+                                Text("عرض 3D", fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -336,7 +336,7 @@ private fun FocusedHome(nav: NavHostController, plan: FloorPlan?, projectCount: 
                 onClick = { nav.navigate("projects") },
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             ) {
-                Text("مشاريعي  $projectCount", color = Color(0xFF6F6A64), fontWeight = FontWeight.Bold)
+                Text("مشاريعي  $projectCount", color = StudioColors.Muted, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -349,14 +349,14 @@ private fun FocusedEditorStage(
     setPlan: (FloorPlan) -> Unit
 ) {
     Column(Modifier.fillMaxSize()) {
-        Surface(color = Color(0xFFFFFEFC), tonalElevation = 1.dp) {
+        Surface(color = StudioColors.Paper, tonalElevation = 1.dp) {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("راجع المخطط قبل 3D", fontWeight = FontWeight.Black, fontSize = 13.sp)
-                    Text("صحح أي غرفة أو جدار غير مطابق أولًا", color = Color.Gray, fontSize = 9.5.sp)
+                    Text("راجع المخطط قبل 3D", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("صحح أي غرفة أو جدار غير مطابق أولًا", color = Color.Gray, fontSize = 12.sp)
                 }
                 Button(
                     enabled = plan != null,
@@ -364,9 +364,9 @@ private fun FocusedEditorStage(
                     shape = RoundedCornerShape(16.dp),
                     contentPadding = PaddingValues(horizontal = 13.dp, vertical = 8.dp)
                 ) {
-                    Icon(Icons.Rounded.ViewInAr, null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Outlined.ViewInAr, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(5.dp))
-                    Text("عرض 3D", fontWeight = FontWeight.Black, fontSize = 11.sp)
+                    Text("عرض 3D", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
             }
         }

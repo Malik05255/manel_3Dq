@@ -3,7 +3,7 @@ package com.manzili.hai
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ChevronLeft
+import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -34,7 +34,7 @@ fun OptionalRulesStage(
         }
 
         Surface(
-            color = Color(0xFFF8F6F2),
+            color = StudioColors.Canvas,
             tonalElevation = 0.dp,
             shadowElevation = 0.dp
         ) {
@@ -61,7 +61,7 @@ fun OptionalRulesStage(
                             onCheckedChange = onToggle,
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = Color.White,
-                                checkedTrackColor = Color(0xFF6353D9)
+                                checkedTrackColor = StudioColors.Primary
                             )
                         )
                     }
@@ -71,7 +71,7 @@ fun OptionalRulesStage(
 
                 if (plan != null) {
                     IconButton(onClick = { nav.navigate("saudi-rules") }) {
-                        Icon(Icons.Rounded.ChevronLeft, "التفاصيل")
+                        Icon(Icons.Outlined.ChevronLeft, "التفاصيل")
                     }
                 }
             }

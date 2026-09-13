@@ -5,9 +5,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Done
+import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Done
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -35,13 +35,13 @@ fun NewBuildSolverScreen(nav: NavHostController, onChoose: (FloorPlan) -> Unit) 
     var candidates by remember { mutableStateOf<List<NewBuildSolver.Candidate>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F4EE)) {
+    Surface(Modifier.fillMaxSize(), color = StudioColors.Canvas) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 18.dp)) {
             Row(Modifier.fillMaxWidth()) {
-                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
+                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Outlined.ArrowForward, "رجوع") }
                 Column {
-                    Text("بناء من جديد", fontSize = 23.sp, fontWeight = FontWeight.Black)
-                    Text("Beam global search • مئات الحالات المفلترة • أفضل 3 حلول مختلفة", color = Color.Gray, fontSize = 10.sp)
+                    Text("بناء من جديد", fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                    Text("Beam global search • مئات الحالات المفلترة • أفضل 3 حلول مختلفة", color = Color.Gray, fontSize = 12.sp)
                 }
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
@@ -67,7 +67,7 @@ fun NewBuildSolverScreen(nav: NavHostController, onChoose: (FloorPlan) -> Unit) 
                     PrioritySlider("سهولة الحركة", circulation) { circulation = it }
                     PrioritySlider("الإضاءة الطبيعية", daylight) { daylight = it }
                     OutlinedTextField(notes, { notes = it }, label = { Text("أولوية/ملاحظة إضافية") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
-                    error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp)) }
+                    error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp)) }
                     Spacer(Modifier.height(18.dp))
                     Button(onClick = {
                         val w = width.toDoubleOrNull(); val d = depth.toDoubleOrNull()
@@ -79,24 +79,24 @@ fun NewBuildSolverScreen(nav: NavHostController, onChoose: (FloorPlan) -> Unit) 
                             ))
                         }.onSuccess { candidates = it; error = null }.onFailure { error = it.message ?: "تعذر توليد البدائل" }
                     }, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(17.dp)) {
-                        Icon(Icons.Rounded.AutoAwesome, null); Spacer(Modifier.width(6.dp)); Text("ابحث عالميًا واختر أفضل 3", fontWeight = FontWeight.Bold)
+                        Icon(Icons.Outlined.AutoAwesome, null); Spacer(Modifier.width(6.dp)); Text("ابحث عالميًا واختر أفضل 3", fontWeight = FontWeight.Bold)
                     }
                 } else {
-                    Text("أفضل ثلاثة حلول بعد البحث", fontSize = 19.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(vertical = 10.dp))
+                    Text("أفضل ثلاثة حلول بعد البحث", fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 10.dp))
                     candidates.forEachIndexed { index, candidate ->
                         Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
                             Column(Modifier.padding(12.dp)) {
                                 Row {
-                                    Text("${index + 1}. ${candidate.title}", fontWeight = FontWeight.Black, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                                    Text("${candidate.overall}/100", fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.secondary)
+                                    Text("${index + 1}. ${candidate.title}", fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                                    Text("${candidate.overall}/100", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
                                 }
-                                Text(candidate.rationale, color = Color.Gray, fontSize = 10.5.sp, lineHeight = 15.sp, modifier = Modifier.padding(vertical = 5.dp))
-                                Text(candidate.metrics.joinToString(" • "), fontSize = 9.5.sp)
+                                Text(candidate.rationale, color = Color.Gray, fontSize = 12.sp, lineHeight = 20.sp, modifier = Modifier.padding(vertical = 5.dp))
+                                Text(candidate.metrics.joinToString(" • "), fontSize = 12.sp)
                                 Spacer(Modifier.height(7.dp))
                                 PlanCanvas(candidate.plan, Modifier.fillMaxWidth().height(205.dp), previewMode = true, onSelect = {})
                                 Spacer(Modifier.height(8.dp))
                                 Button(onClick = { onChoose(candidate.plan) }, modifier = Modifier.fillMaxWidth()) {
-                                    Icon(Icons.Rounded.Done, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("اعتمد هذا الحل كمشروع")
+                                    Icon(Icons.Outlined.Done, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("اعتمد هذا الحل كمشروع")
                                 }
                             }
                         }
@@ -111,6 +111,6 @@ fun NewBuildSolverScreen(nav: NavHostController, onChoose: (FloorPlan) -> Unit) 
 
 @Composable
 private fun PrioritySlider(label: String, value: Float, onValue: (Float) -> Unit) {
-    Text("$label: ${value.toInt()}/100", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
+    Text("$label: ${value.toInt()}/100", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
     Slider(value = value, onValueChange = onValue, valueRange = 50f..100f)
 }

@@ -4,12 +4,14 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -102,15 +104,7 @@ private fun FocusedAppV2() {
         } ?: run { rulesEnabled = enabled }
     }
 
-    MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = Color(0xFF4F40B8),
-            onPrimary = Color.White,
-            secondary = Color(0xFFE28B5A),
-            background = Color(0xFFF8F6F2),
-            surface = Color(0xFFFFFEFC)
-        )
-    ) {
+    StudioTheme {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
             NavHost(nav, startDestination = "home") {
                 composable("home") { FocusedHomeV2(nav, plan, store.listProjects().size) }
@@ -202,6 +196,17 @@ private fun FocusedAppV2() {
                     CloudSyncScreen(nav, store, ::setOpenedPlan)
                 }
 
+                composable("floors") { ProjectFloorsScreen(nav, plan) { updateProject(it) } }
+                composable("polygon") { PolygonVertexEditorScreen(nav, plan) { updateProject(it) } }
+                composable("memory") { ProjectMemoryManagerScreen(nav, plan) { updateProject(it) } }
+                composable("export") { QuickExportScreen(nav, plan) }
+                composable("saudi-audit") { SaudiPlanAuditScreen(nav, plan) }
+                composable("change-type") {
+                    SaudiProjectTypeScreen(nav, "نوع المشروع", "", plan?.let(SaudiProjectTypeEngine::infer)) { type ->
+                        plan?.let { updateProject(SaudiProjectTypeEngine.apply(it, type)) }
+                        nav.popBackStack()
+                    }
+                }
                 composable("settings") { ProductionAiSettings(nav) }
             }
         }
@@ -210,159 +215,108 @@ private fun FocusedAppV2() {
 
 @Composable
 private fun FocusedHomeV2(nav: NavHostController, plan: FloorPlan?, projectCount: Int) {
-    val readyFor3D = plan?.let { !PlanVerificationEngine.inspect(it).blocking } == true
-    Surface(Modifier.fillMaxSize(), color = Color(0xFFF8F6F2)) {
-        Column(
-            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp)
-        ) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    color = Color(0xFF6353D9).copy(alpha = .10f),
-                    shape = RoundedCornerShape(18.dp)
-                ) {
-                    Text(
-                        "HAI",
-                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
-                        color = Color(0xFF4F40B8),
-                        fontWeight = FontWeight.Black
-                    )
+    val ready = plan?.let { !PlanVerificationEngine.inspect(it).blocking } == true
+    Scaffold(
+        containerColor = StudioColors.Canvas,
+        bottomBar = {
+            NavigationBar(containerColor = StudioColors.Paper, tonalElevation = 0.dp) {
+                NavigationBarItem(selected = true, onClick = {}, icon = { Icon(Icons.Outlined.Home, null) }, label = { Text("الرئيسية") })
+                NavigationBarItem(selected = false, onClick = { nav.navigate("projects") }, icon = { Icon(Icons.Outlined.FolderOpen, null) }, label = { Text("مشاريعي") })
+                NavigationBarItem(selected = false, onClick = { nav.navigate("settings") }, icon = { Icon(Icons.Outlined.Tune, null) }, label = { Text("الإعدادات") })
+            }
+        }
+    ) { inset ->
+        Column(Modifier.fillMaxSize().padding(inset).statusBarsPadding()
+            .verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(color = StudioColors.Ink, shape = RoundedCornerShape(12.dp)) {
+                    Icon(Icons.Outlined.Architecture, null, Modifier.padding(10.dp).size(26.dp), tint = Color.White)
                 }
                 Spacer(Modifier.width(10.dp))
-                Text("منزلي", fontSize = 21.sp, fontWeight = FontWeight.Black)
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = { nav.navigate("cloud") }) {
-                    Icon(Icons.Rounded.CloudSync, "السحابة")
+                Column(Modifier.weight(1f)) {
+                    Text("منزلي", style = MaterialTheme.typography.titleLarge)
+                    Text("HAI / استوديو التصميم", style = MaterialTheme.typography.bodySmall, color = StudioColors.Muted)
                 }
-                IconButton(onClick = { nav.navigate("settings") }) {
-                    Icon(Icons.Rounded.Tune, "الإعدادات")
-                }
+                IconButton(onClick = { nav.navigate("cloud") }) { Icon(Icons.Outlined.CloudSync, "المزامنة") }
             }
-
-            Spacer(Modifier.height(30.dp))
-
-            Text(
-                "من 2D إلى بيتك.",
-                fontSize = 35.sp,
-                lineHeight = 40.sp,
-                fontWeight = FontWeight.Black,
-                color = Color(0xFF181A18)
-            )
-            Spacer(Modifier.height(7.dp))
-            Text(
-                "استورد مخططًا سابقًا، راجعه وعدّله مع HAI، ثم انتقل إلى 3D.",
-                color = Color(0xFF6F6A64),
-                fontSize = 13.sp,
-                lineHeight = 19.sp
-            )
-
-            Spacer(Modifier.height(24.dp))
-
-            Button(
-                onClick = { nav.navigate("import-type") },
-                shape = RoundedCornerShape(23.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF181A18)),
-                modifier = Modifier.fillMaxWidth().height(64.dp)
-            ) {
-                Icon(Icons.Rounded.UploadFile, null)
-                Spacer(Modifier.width(8.dp))
-                Text("استيراد مشروع سابق", fontWeight = FontWeight.Black, fontSize = 17.sp)
-            }
-
-            Spacer(Modifier.height(10.dp))
-
-            OutlinedButton(
-                onClick = { nav.navigate("new") },
-                shape = RoundedCornerShape(23.dp),
-                modifier = Modifier.fillMaxWidth().height(56.dp)
-            ) {
-                Icon(Icons.Rounded.AddHomeWork, null)
-                Spacer(Modifier.width(8.dp))
-                Text("تصميم مشروع جديد", fontWeight = FontWeight.Bold)
-            }
-
-            if (plan != null) {
-                Spacer(Modifier.height(22.dp))
-                ElevatedCard(
-                    shape = RoundedCornerShape(28.dp),
-                    colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
-                    elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(Modifier.padding(18.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                Modifier.size(46.dp).background(Color(0xFFE28B5A).copy(alpha = .12f), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Rounded.HomeWork, null, tint = Color(0xFFE28B5A))
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(plan.title, fontSize = 17.sp, fontWeight = FontWeight.Black, maxLines = 1)
-                                Text(if (readyFor3D) "المشروع الحالي" else "يحتاج مراجعة قبل 3D", color = Color(0xFF8B857D), fontSize = 11.sp)
-                            }
+            Surface(color = StudioColors.Ink, shape = RoundedCornerShape(18.dp)) {
+                Column(Modifier.fillMaxWidth().padding(22.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("بيتك يبدأ\nبمخطط.", fontSize = 30.sp, lineHeight = 40.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Spacer(Modifier.height(8.dp))
+                            Text("ارفعه. عدّله. استكشفه.", color = Color(0xFFB8CCE3), style = MaterialTheme.typography.bodyMedium)
                         }
-
-                        Spacer(Modifier.height(14.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(
-                                onClick = { nav.navigate("editor") },
-                                shape = RoundedCornerShape(18.dp),
-                                modifier = Modifier.weight(1f).height(52.dp)
-                            ) {
-                                Icon(Icons.Rounded.Edit, null, Modifier.size(18.dp))
-                                Spacer(Modifier.width(5.dp))
-                                Text("تعديل", fontWeight = FontWeight.Black)
-                            }
-                            FilledTonalButton(
-                                onClick = { nav.navigate("3d") },
-                                enabled = readyFor3D,
-                                shape = RoundedCornerShape(18.dp),
-                                modifier = Modifier.weight(1f).height(52.dp)
-                            ) {
-                                Icon(Icons.Rounded.ViewInAr, null, Modifier.size(18.dp))
-                                Spacer(Modifier.width(5.dp))
-                                Text("عرض 3D", fontWeight = FontWeight.Black)
+                        StudioHouseIllustration(Modifier.width(120.dp).height(160.dp))
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    Button(onClick = { nav.navigate("import-type") },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = StudioColors.Ink),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp), shape = RoundedCornerShape(12.dp)) {
+                        Icon(Icons.Outlined.UploadFile, null); Spacer(Modifier.width(8.dp)); Text("رفع مخطط")
+                    }
+                }
+            }
+            OutlinedCard(onClick = { nav.navigate("new") }, modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.outlinedCardColors(containerColor = StudioColors.Paper), shape = RoundedCornerShape(14.dp)) {
+                Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.AddHomeWork, null, tint = StudioColors.Primary)
+                    Spacer(Modifier.width(12.dp))
+                    Text("تصميم من البداية", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    Icon(Icons.Outlined.ChevronLeft, null)
+                }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("مساحة العمل", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = { nav.navigate("projects") }) { Text("المشاريع ($projectCount)") }
+            }
+            if (plan == null) {
+                StudioEmpty("مشروعك الأول يبدأ هنا", "إنشاء مشروع") { nav.navigate("new") }
+            } else {
+                Card(colors = CardDefaults.cardColors(containerColor = StudioColors.Paper), shape = RoundedCornerShape(16.dp)) {
+                    Column(Modifier.padding(16.dp)) {
+                        PlanCanvas(plan = plan, modifier = Modifier.fillMaxWidth().height(180.dp), onSelect = {})
+                        Spacer(Modifier.height(12.dp))
+                        Text(plan.title, style = MaterialTheme.typography.titleMedium)
+                        Text(if (ready) "جاهز للاستكشاف" else "أكمل مراجعة المخطط", color = StudioColors.Muted, style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(onClick = { nav.navigate("editor") }, modifier = Modifier.weight(1f).heightIn(min = 50.dp)) { Text("متابعة التصميم") }
+                            FilledTonalButton(onClick = { nav.navigate("3d") }, enabled = ready, modifier = Modifier.weight(1f).heightIn(min = 50.dp)) {
+                                Icon(Icons.Outlined.ViewInAr, null, Modifier.size(20.dp)); Spacer(Modifier.width(6.dp)); Text("المجسم")
                             }
                         }
                     }
                 }
             }
-
-            Spacer(Modifier.weight(1f))
-
-            TextButton(
-                onClick = { nav.navigate("projects") },
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            ) {
-                Text("مشاريعي  $projectCount", color = Color(0xFF6F6A64), fontWeight = FontWeight.Bold)
-            }
+            Spacer(Modifier.height(12.dp))
         }
     }
 }
 
 @Composable
 private fun Incomplete3DBlockedScreen(nav: NavHostController, detail: String?) {
-    Surface(Modifier.fillMaxSize(), color = Color(0xFFF8F6F2)) {
+    Surface(Modifier.fillMaxSize(), color = StudioColors.Canvas) {
         Column(
             Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Icon(Icons.Rounded.Rule, null, tint = Color(0xFFE28B5A), modifier = Modifier.size(48.dp))
+            Icon(Icons.Outlined.Rule, null, tint = StudioColors.Warning, modifier = Modifier.size(48.dp))
             Spacer(Modifier.height(14.dp))
-            Text("راجع المخطط قبل 3D", fontSize = 24.sp, fontWeight = FontWeight.Black)
+            Text("راجع المخطط قبل 3D", fontSize = 24.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Text(
                 detail ?: "الهندسة الحالية غير مكتملة. راجع الحدود والجدران والغرف أولًا ثم اعتمد المشروع.",
-                color = Color(0xFF6F6A64),
+                color = StudioColors.Muted,
                 lineHeight = 20.sp
             )
             Spacer(Modifier.height(20.dp))
             Button(onClick = { nav.navigate("editor") }, shape = RoundedCornerShape(18.dp)) {
-                Icon(Icons.Rounded.Edit, null)
+                Icon(Icons.Outlined.Edit, null)
                 Spacer(Modifier.width(7.dp))
-                Text("العودة للمراجعة والتعديل", fontWeight = FontWeight.Black)
+                Text("العودة للمراجعة والتعديل", fontWeight = FontWeight.Bold)
             }
         }
     }

@@ -6,7 +6,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,24 +24,24 @@ import com.manzili.hai.model.RoadEdge
 
 @Composable
 fun SaudiRulesScreen(nav: NavHostController, plan: FloorPlan?, onUpdate: (FloorPlan) -> Unit) {
-    Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F4EE)) {
+    Surface(Modifier.fillMaxSize(), color = StudioColors.Canvas) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
+                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Outlined.ArrowForward, "رجوع") }
                 Column {
-                    Text("الاشتراطات السعودية", fontSize = 21.sp, fontWeight = FontWeight.Black)
-                    Text("اختيارية في أي مرحلة • SBC 2024 • لا تغيّر التصميم تلقائيًا", color = Color.Gray, fontSize = 9.5.sp)
+                    Text("الاشتراطات السعودية", fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                    Text("اختيارية في أي مرحلة • SBC 2024 • لا تغيّر التصميم تلقائيًا", color = Color.Gray, fontSize = 12.sp)
                 }
             }
             if (plan == null) { Text("لا يوجد مشروع مفتوح"); return@Column }
 
-            Card(colors = CardDefaults.cardColors(containerColor = if (plan.saudiRulesEnabled) Color(0xFF27312C) else Color.White), shape = RoundedCornerShape(18.dp)) {
+            Card(colors = CardDefaults.cardColors(containerColor = if (plan.saudiRulesEnabled) StudioColors.Ink else Color.White), shape = RoundedCornerShape(18.dp)) {
                 Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(if (plan.saudiRulesEnabled) Icons.Rounded.Verified else Icons.Rounded.AddTask, null, tint = if (plan.saudiRulesEnabled) Color.White else Color(0xFF9A7447))
+                    Icon(if (plan.saudiRulesEnabled) Icons.Outlined.Verified else Icons.Outlined.AddTask, null, tint = if (plan.saudiRulesEnabled) Color.White else StudioColors.Primary)
                     Spacer(Modifier.width(9.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(if (plan.saudiRulesEnabled) "الفحص الرسمي الاختياري مفعّل" else "الفحص الرسمي غير مفعّل", color = if (plan.saudiRulesEnabled) Color.White else Color.Black, fontWeight = FontWeight.Black)
-                        Text(if (plan.saudiRulesEnabled) "يمكن إلغاؤه فورًا؛ إلغاؤه لا يحذف المخطط ولا بيانات الموقع." else "HAI والتعديل و3D و4D تعمل بدونه بالكامل.", color = if (plan.saudiRulesEnabled) Color.White.copy(alpha=.72f) else Color.Gray, fontSize = 9.5.sp)
+                        Text(if (plan.saudiRulesEnabled) "الفحص الرسمي الاختياري مفعّل" else "الفحص الرسمي غير مفعّل", color = if (plan.saudiRulesEnabled) Color.White else Color.Black, fontWeight = FontWeight.Bold)
+                        Text(if (plan.saudiRulesEnabled) "يمكن إلغاؤه فورًا؛ إلغاؤه لا يحذف المخطط ولا بيانات الموقع." else "HAI والتعديل و3D و4D تعمل بدونه بالكامل.", color = if (plan.saudiRulesEnabled) Color.White.copy(alpha=.72f) else Color.Gray, fontSize = 12.sp)
                     }
                     Switch(checked=plan.saudiRulesEnabled,onCheckedChange={enabled->onUpdate(plan.copy(saudiRulesEnabled=enabled,revision=plan.revision+1))})
                 }
@@ -51,11 +51,11 @@ fun SaudiRulesScreen(nav: NavHostController, plan: FloorPlan?, onUpdate: (FloorP
             if (!plan.saudiRulesEnabled) {
                 Card(colors=CardDefaults.cardColors(containerColor=Color.White),shape=RoundedCornerShape(16.dp)){
                     Column(Modifier.padding(13.dp)){
-                        Text("بدون الاشتراطات",fontWeight=FontWeight.Black)
-                        Text("• لا توجد اعتراضات SBC.\n• لا تتغير الحلول المعمارية.\n• لا يتوقف الاستيراد أو 3D أو 4D.\n• تستطيع التفعيل لاحقًا من أي شاشة.",fontSize=10.5.sp,lineHeight=17.sp,color=Color.Gray)
+                        Text("بدون الاشتراطات",fontWeight=FontWeight.Bold)
+                        Text("• لا توجد اعتراضات SBC.\n• لا تتغير الحلول المعمارية.\n• لا يتوقف الاستيراد أو 3D أو 4D.\n• تستطيع التفعيل لاحقًا من أي شاشة.",fontSize=12.sp,lineHeight=20.sp,color=Color.Gray)
                     }
                 }
-                Spacer(Modifier.weight(1f));Text("هذا الفصل مقصود: السياق السعودي المعماري يعمل دائمًا، أما الفحص الرسمي فهو قرارك.",fontSize=9.5.sp,color=Color.Gray,modifier=Modifier.padding(bottom=12.dp));return@Column
+                Spacer(Modifier.weight(1f));Text("هذا الفصل مقصود: السياق السعودي المعماري يعمل دائمًا، أما الفحص الرسمي فهو قرارك.",fontSize=12.sp,color=Color.Gray,modifier=Modifier.padding(bottom=12.dp));return@Column
             }
 
             fun stored(kind:String)=plan.constraints.firstOrNull { it.kind==kind && it.active }?.value
@@ -72,19 +72,19 @@ fun SaudiRulesScreen(nav: NavHostController, plan: FloorPlan?, onUpdate: (FloorP
 
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){
                 Surface(color=Color(0xFFECE7DC),shape=RoundedCornerShape(14.dp),modifier=Modifier.fillMaxWidth()){
-                    Text("مرجع النطاق المنفذ: SBC 1101 Section 101.2 • إصدار 2024 مطبق من 30/06/2025. PASS داخل التطبيق ليس رخصة أو اعتمادًا رسميًا.",fontSize=9.2.sp,lineHeight=14.sp,modifier=Modifier.padding(10.dp))
+                    Text("مرجع النطاق المنفذ: SBC 1101 Section 101.2 • إصدار 2024 مطبق من 30/06/2025. PASS داخل التطبيق ليس رخصة أو اعتمادًا رسميًا.",fontSize=12.sp,lineHeight=20.sp,modifier=Modifier.padding(10.dp))
                 }
 
                 Card(colors=CardDefaults.cardColors(containerColor=Color.White),shape=RoundedCornerShape(17.dp)){
                     Column(Modifier.padding(12.dp)){
-                        Text("بيانات نطاق SBC 1101",fontWeight=FontWeight.Black,fontSize=12.sp)
-                        Text("لا أخمّن هذه البيانات من الرسم؛ أدخلها أنت ثم أقارنها بشروط النطاق الرسمية.",fontSize=9.sp,color=Color.Gray)
+                        Text("بيانات نطاق SBC 1101",fontWeight=FontWeight.Bold,fontSize=12.sp)
+                        Text("لا أخمّن هذه البيانات من الرسم؛ أدخلها أنت ثم أقارنها بشروط النطاق الرسمية.",fontSize=12.sp,color=Color.Gray)
                         Spacer(Modifier.height(7.dp))
                         Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
                             OutlinedTextField(basements,{basements=it.filter(Char::isDigit)},label={Text("أدوار تحت الأرض")},modifier=Modifier.weight(1f),singleLine=true)
                             OutlinedTextField(families,{families=it.filter(Char::isDigit)},label={Text("عدد الأسر")},modifier=Modifier.weight(1f),singleLine=true)
                         }
-                        Spacer(Modifier.height(7.dp));Text("خروج مستقل لكل عائلة",fontSize=10.sp,fontWeight=FontWeight.Bold)
+                        Spacer(Modifier.height(7.dp));Text("خروج مستقل لكل عائلة",fontSize=12.sp,fontWeight=FontWeight.Bold)
                         Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){
                             FilterChip(selected=egress==true,onClick={egress=true},label={Text("نعم")})
                             FilterChip(selected=egress==false,onClick={egress=false},label={Text("لا")})
@@ -96,7 +96,7 @@ fun SaudiRulesScreen(nav: NavHostController, plan: FloorPlan?, onUpdate: (FloorP
 
                 Card(colors=CardDefaults.cardColors(containerColor=Color.White),shape=RoundedCornerShape(17.dp)){
                     Column(Modifier.padding(12.dp)){
-                        Text("بيانات الموقع",fontWeight=FontWeight.Black,fontSize=12.sp)
+                        Text("بيانات الموقع",fontWeight=FontWeight.Bold,fontSize=12.sp)
                         Spacer(Modifier.height(6.dp));OutlinedTextField(city,{city=it},label={Text("المدينة")},modifier=Modifier.fillMaxWidth(),singleLine=true)
                         Spacer(Modifier.height(6.dp));Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){
                             OutlinedTextField(roadName,{roadName=it},label={Text("اسم الشارع")},modifier=Modifier.weight(1.3f),singleLine=true)
@@ -116,8 +116,8 @@ fun SaudiRulesScreen(nav: NavHostController, plan: FloorPlan?, onUpdate: (FloorP
                 report.checks.forEach{check->
                     Card(colors=CardDefaults.cardColors(containerColor=Color.White),shape=RoundedCornerShape(17.dp)){
                         Column(Modifier.padding(11.dp)){
-                            Row(verticalAlignment=Alignment.CenterVertically){Icon(ruleIcon(check.status),null,tint=ruleColor(check.status),modifier=Modifier.size(18.dp));Spacer(Modifier.width(7.dp));Text(check.title,fontWeight=FontWeight.Black,fontSize=12.sp,modifier=Modifier.weight(1f));Text(check.status.name,color=ruleColor(check.status),fontSize=8.5.sp,fontWeight=FontWeight.Bold)}
-                            Text(check.detail,fontSize=10.sp,lineHeight=15.sp,modifier=Modifier.padding(top=5.dp));Text("مرجع: ${check.source}",color=Color.Gray,fontSize=8.5.sp,modifier=Modifier.padding(top=4.dp))
+                            Row(verticalAlignment=Alignment.CenterVertically){Icon(ruleIcon(check.status),null,tint=ruleColor(check.status),modifier=Modifier.size(18.dp));Spacer(Modifier.width(7.dp));Text(check.title,fontWeight=FontWeight.Bold,fontSize=12.sp,modifier=Modifier.weight(1f));Text(check.status.name,color=ruleColor(check.status),fontSize=12.sp,fontWeight=FontWeight.Bold)}
+                            Text(check.detail,fontSize=12.sp,lineHeight=20.sp,modifier=Modifier.padding(top=5.dp));Text("مرجع: ${check.source}",color=Color.Gray,fontSize=12.sp,modifier=Modifier.padding(top=4.dp))
                         }
                     }
                 }
@@ -127,5 +127,5 @@ fun SaudiRulesScreen(nav: NavHostController, plan: FloorPlan?, onUpdate: (FloorP
     }
 }
 
-private fun ruleIcon(status: SaudiRulesEngine.Status)=when(status){SaudiRulesEngine.Status.PASS->Icons.Rounded.CheckCircle;SaudiRulesEngine.Status.NEEDS_DATA->Icons.Rounded.Help;SaudiRulesEngine.Status.REVIEW->Icons.Rounded.WarningAmber;SaudiRulesEngine.Status.INFO->Icons.Rounded.Info;SaudiRulesEngine.Status.NOT_APPLICABLE->Icons.Rounded.RemoveCircleOutline}
-private fun ruleColor(status: SaudiRulesEngine.Status)=when(status){SaudiRulesEngine.Status.PASS->Color(0xFF526D5A);SaudiRulesEngine.Status.NEEDS_DATA->Color(0xFF9A7447);SaudiRulesEngine.Status.REVIEW->Color(0xFFB36A3C);SaudiRulesEngine.Status.INFO->Color.Gray;SaudiRulesEngine.Status.NOT_APPLICABLE->Color.Gray}
+private fun ruleIcon(status: SaudiRulesEngine.Status)=when(status){SaudiRulesEngine.Status.PASS->Icons.Outlined.CheckCircle;SaudiRulesEngine.Status.NEEDS_DATA->Icons.Outlined.Help;SaudiRulesEngine.Status.REVIEW->Icons.Outlined.WarningAmber;SaudiRulesEngine.Status.INFO->Icons.Outlined.Info;SaudiRulesEngine.Status.NOT_APPLICABLE->Icons.Outlined.RemoveCircleOutline}
+private fun ruleColor(status: SaudiRulesEngine.Status)=when(status){SaudiRulesEngine.Status.PASS->Color(0xFF526D5A);SaudiRulesEngine.Status.NEEDS_DATA->StudioColors.Primary;SaudiRulesEngine.Status.REVIEW->Color(0xFFB36A3C);SaudiRulesEngine.Status.INFO->Color.Gray;SaudiRulesEngine.Status.NOT_APPLICABLE->Color.Gray}

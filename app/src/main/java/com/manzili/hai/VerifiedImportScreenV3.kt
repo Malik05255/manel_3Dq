@@ -4,15 +4,17 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.UploadFile
+import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -64,46 +66,48 @@ fun VerifiedImportScreenV3(
         }
     }
 
-    Surface(Modifier.fillMaxSize(), color = Color(0xFFF8F6F2)) {
+    Surface(Modifier.fillMaxSize(), color = StudioColors.Canvas) {
         Column(
             Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 10.dp)
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
-                Text("المخطط", fontSize = 29.sp, fontWeight = FontWeight.Black, color = Color(0xFF181A18))
-                Spacer(Modifier.weight(1f))
+                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Outlined.ArrowForward, "رجوع") }
+                Text("المخطط", fontSize = 29.sp, fontWeight = FontWeight.Bold, color = StudioColors.Ink)
+                Spacer(Modifier.height(24.dp))
                 projectType?.let {
-                    Surface(color = Color(0xFF6353D9).copy(alpha = 0.10f), shape = RoundedCornerShape(50)) {
-                        Text(it.label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp), color = Color(0xFF4F40B8), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    Surface(color = StudioColors.Primary.copy(alpha = 0.10f), shape = RoundedCornerShape(50)) {
+                        Text(it.label, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp), color = StudioColors.Primary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
             }
 
-            Spacer(Modifier.height(26.dp))
+            StudioSection("أضف مخطط بيتك", "صورة واضحة أو ملف PDF")
 
             ElevatedCard(
                 onClick = { picker.launch(arrayOf("image/*", "application/pdf")) },
-                shape = RoundedCornerShape(30.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
                 elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
                 modifier = Modifier.fillMaxWidth().height(220.dp)
             ) {
                 Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                    val accent = if (source == null) Color(0xFFE28B5A) else Color(0xFF6353D9)
+                    val accent = if (source == null) StudioColors.Warning else StudioColors.Primary
                     Box(Modifier.size(72.dp).background(accent.copy(alpha = 0.12f), CircleShape), contentAlignment = Alignment.Center) {
-                        Icon(if (source == null) Icons.Rounded.UploadFile else Icons.Rounded.CheckCircle, null, tint = accent, modifier = Modifier.size(34.dp))
+                        Icon(if (source == null) Icons.Outlined.UploadFile else Icons.Outlined.CheckCircle, null, tint = accent, modifier = Modifier.size(34.dp))
                     }
                     Spacer(Modifier.height(18.dp))
-                    Text(if (source == null) "اختر المخطط" else "جاهز", fontSize = 22.sp, fontWeight = FontWeight.Black, color = Color(0xFF181A18))
+                    Text(if (source == null) "اختر المخطط" else "تم اختيار المخطط", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = StudioColors.Ink)
                     Spacer(Modifier.height(5.dp))
-                    Text("PDF  •  صورة", color = Color(0xFF96918A), fontSize = 12.sp)
+                    Text(if (source == null) "اضغط لاختيار ملف" else "اضغط لاستبداله", color = StudioColors.Muted, fontSize = 12.sp)
                 }
             }
 
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(24.dp))
 
             error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(bottom = 10.dp))
@@ -204,7 +208,7 @@ fun VerifiedImportScreenV3(
                         busy = false
                     }
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F40B8)),
+                colors = ButtonDefaults.buttonColors(containerColor = StudioColors.Primary),
                 shape = RoundedCornerShape(22.dp),
                 modifier = Modifier.fillMaxWidth().height(60.dp)
             ) {
@@ -212,10 +216,10 @@ fun VerifiedImportScreenV3(
                     CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
                     Spacer(Modifier.width(10.dp))
                 } else {
-                    Icon(Icons.Rounded.AutoAwesome, null)
+                    Icon(Icons.Outlined.AutoAwesome, null)
                     Spacer(Modifier.width(8.dp))
                 }
-                Text(if (busy) "جاري التحليل" else "حلّل ثم راجع", fontWeight = FontWeight.Black, fontSize = 17.sp)
+                Text(if (busy) "جاري التحليل" else "حلّل ثم راجع", fontWeight = FontWeight.Bold, fontSize = 17.sp)
             }
 
             Spacer(Modifier.navigationBarsPadding().height(8.dp))

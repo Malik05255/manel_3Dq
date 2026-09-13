@@ -36,8 +36,8 @@ jobs:
           grep -q 'android:name=".FocusedMainActivityV2"' "$MANIFEST"
           ! grep -q 'composable("4d")' "$LAUNCHER"
 
-          grep -q 'versionCode = 62' app/build.gradle.kts
-          grep -q 'versionName = "0.62.0"' app/build.gradle.kts
+          grep -q 'versionCode = 63' app/build.gradle.kts
+          grep -q 'versionName = "0.63.0"' app/build.gradle.kts
           grep -q 'android:allowBackup="false"' "$MANIFEST"
           grep -q 'android:usesCleartextTraffic="false"' "$MANIFEST"
 

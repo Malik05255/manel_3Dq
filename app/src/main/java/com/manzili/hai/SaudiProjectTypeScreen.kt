@@ -7,10 +7,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Apartment
-import androidx.compose.material.icons.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.HomeWork
-import androidx.compose.material.icons.rounded.House
+import androidx.compose.material.icons.outlined.Apartment
+import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.HomeWork
+import androidx.compose.material.icons.outlined.House
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -30,7 +30,7 @@ fun SaudiProjectTypeScreen(
     current: SaudiProjectTypeEngine.Type? = null,
     onChoose: (SaudiProjectTypeEngine.Type) -> Unit
 ) {
-    Surface(Modifier.fillMaxSize(), color = Color(0xFFF8F6F2)) {
+    Surface(Modifier.fillMaxSize(), color = StudioColors.Canvas) {
         Column(
             Modifier
                 .fillMaxSize()
@@ -43,13 +43,13 @@ fun SaudiProjectTypeScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { nav.popBackStack() }) {
-                    Icon(Icons.Rounded.ArrowForward, "رجوع")
+                    Icon(Icons.Outlined.ArrowForward, "رجوع")
                 }
                 Text(
                     title,
                     fontSize = 28.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFF181A18)
+                    fontWeight = FontWeight.Bold,
+                    color = StudioColors.Ink
                 )
             }
 
@@ -62,21 +62,8 @@ fun SaudiProjectTypeScreen(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                SaudiProjectTypeEngine.Type.entries.chunked(2).forEach { rowTypes ->
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        rowTypes.forEach { type ->
-                            ProjectTypeCard(
-                                type = type,
-                                selected = current == type,
-                                modifier = Modifier.weight(1f),
-                                onClick = { onChoose(type) }
-                            )
-                        }
-                        if (rowTypes.size == 1) Spacer(Modifier.weight(1f))
-                    }
+                SaudiProjectTypeEngine.Type.entries.forEach { type ->
+                    ProjectTypeCard(type, current == type, Modifier.fillMaxWidth()) { onChoose(type) }
                 }
                 Spacer(Modifier.height(8.dp))
             }
@@ -91,22 +78,17 @@ private fun ProjectTypeCard(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    val accent = if (type.apartmentMode) Color(0xFF6353D9) else Color(0xFFE28B5A)
+    val accent = if (type.apartmentMode) StudioColors.Primary else StudioColors.Warning
     ElevatedCard(
         onClick = onClick,
-        modifier = modifier.height(126.dp),
-        shape = RoundedCornerShape(26.dp),
+        modifier = modifier.heightIn(min = 88.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.elevatedCardColors(
             containerColor = if (selected) accent.copy(alpha = 0.10f) else Color.White
         ),
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = if (selected) 5.dp else 1.dp)
     ) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
+        Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
             Box(
                 Modifier
                     .size(42.dp)
@@ -115,9 +97,9 @@ private fun ProjectTypeCard(
             ) {
                 Icon(
                     when {
-                        type.apartmentMode -> Icons.Rounded.Apartment
-                        type == SaudiProjectTypeEngine.Type.TRADITIONAL || type == SaudiProjectTypeEngine.Type.REST_HOUSE -> Icons.Rounded.House
-                        else -> Icons.Rounded.HomeWork
+                        type.apartmentMode -> Icons.Outlined.Apartment
+                        type == SaudiProjectTypeEngine.Type.TRADITIONAL || type == SaudiProjectTypeEngine.Type.REST_HOUSE -> Icons.Outlined.House
+                        else -> Icons.Outlined.HomeWork
                     },
                     contentDescription = null,
                     tint = accent,
@@ -126,9 +108,9 @@ private fun ProjectTypeCard(
             }
             Text(
                 type.label,
-                fontWeight = FontWeight.Black,
+                fontWeight = FontWeight.Bold,
                 fontSize = 15.sp,
-                color = Color(0xFF181A18),
+                color = StudioColors.Ink,
                 maxLines = 2
             )
         }

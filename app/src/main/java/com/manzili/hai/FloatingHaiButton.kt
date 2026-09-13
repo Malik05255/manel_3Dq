@@ -5,8 +5,14 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.outlined.Architecture
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
@@ -40,7 +46,7 @@ fun FloatingHaiButton(
 ) {
     BoxWithConstraints(modifier.fillMaxSize().zIndex(1000f)) {
         val density = LocalDensity.current
-        val bubbleDp = 58.dp
+        val bubbleDp = 52.dp
         val bubblePx = with(density) { bubbleDp.toPx() }
         val maxX = (with(density) { maxWidth.toPx() } - bubblePx).coerceAtLeast(0f)
         val maxY = (with(density) { maxHeight.toPx() } - bubblePx).coerceAtLeast(0f)
@@ -56,7 +62,12 @@ fun FloatingHaiButton(
                 .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
                 .size(bubbleDp)
                 .zIndex(1001f)
-                .shadow(11.dp, CircleShape)
+                .shadow(4.dp, RoundedCornerShape(16.dp))
+                .semantics {
+                    contentDescription = if (busy) "HAI يحلل المخطط" else "مساعد HAI"
+                    role = Role.Button
+                    onClick { if (!busy) onClick(); true }
+                }
                 .pointerInput(busy, maxX, maxY) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -87,13 +98,13 @@ fun FloatingHaiButton(
                         if (!dragging && !busy) onClick()
                     }
                 },
-            shape = CircleShape,
-            color = Color(0xFF5E4BDD),
+            shape = RoundedCornerShape(16.dp),
+            color = StudioColors.Primary,
             tonalElevation = 8.dp,
             shadowElevation = 8.dp
         ) {
             Box(
-                Modifier.fillMaxSize().background(Color(0xFF5E4BDD), CircleShape),
+                Modifier.fillMaxSize().background(StudioColors.Primary, RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 if (busy) {
@@ -105,12 +116,12 @@ fun FloatingHaiButton(
                 } else {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            Icons.Rounded.AutoAwesome,
+                            Icons.Outlined.Architecture,
                             contentDescription = "استدع HAI",
                             tint = Color.White,
                             modifier = Modifier.size(18.dp)
                         )
-                        Text("HAI", color = Color.White, fontWeight = FontWeight.Black, fontSize = 9.5.sp)
+                        Text("HAI", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
             }

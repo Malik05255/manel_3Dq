@@ -16,7 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -49,13 +49,13 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.hypot
 
-private val Sand = Color(0xFFF7F4EE)
-private val Paper = Color(0xFFFFFEFA)
-private val Ink = Color(0xFF20211E)
-private val Bronze = Color(0xFF9A7447)
-private val Mist = Color(0xFFE9E5DC)
-private val Deep = Color(0xFF27312C)
-private val Sage = Color(0xFF64756B)
+private val Sand = StudioColors.Canvas
+private val Paper = StudioColors.Paper
+private val Ink = StudioColors.Ink
+private val Bronze = StudioColors.Primary
+private val Mist = StudioColors.Line
+private val Deep = StudioColors.Ink
+private val Sage = StudioColors.Muted
 private val SoftBlue = Color(0xFF70808A)
 
 data class PlanSelection(val kind: String, val id: String)
@@ -112,17 +112,17 @@ private fun BrandTop(nav: NavHostController? = null, settings: Boolean = true) {
         Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (nav != null) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
+        if (nav != null) IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Outlined.ArrowForward, "رجوع") }
         Box(Modifier.size(44.dp).background(Deep, RoundedCornerShape(14.dp)), contentAlignment = Alignment.Center) {
-            Text("H", color = Color.White, fontWeight = FontWeight.Black, fontSize = 22.sp)
+            Text("H", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 22.sp)
         }
         Spacer(Modifier.width(10.dp))
         Column {
             Text("منزلي HAI", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
-            Text("HAI Architectural Intelligence", color = Color.Gray, fontSize = 10.sp)
+            Text("HAI Architectural Intelligence", color = Color.Gray, fontSize = 12.sp)
         }
         Spacer(Modifier.weight(1f))
-        if (settings && nav != null) IconButton(onClick = { nav.navigate("settings") }) { Icon(Icons.Rounded.Tune, "إعدادات HAI") }
+        if (settings && nav != null) IconButton(onClick = { nav.navigate("settings") }) { Icon(Icons.Outlined.Tune, "إعدادات HAI") }
     }
 }
 
@@ -132,13 +132,13 @@ fun Home(nav: NavHostController) = Page {
     Spacer(Modifier.height(20.dp))
     Surface(color = Mist, shape = RoundedCornerShape(50.dp)) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Rounded.AutoAwesome, null, tint = Bronze, modifier = Modifier.size(15.dp))
+            Icon(Icons.Outlined.AutoAwesome, null, tint = Bronze, modifier = Modifier.size(15.dp))
             Spacer(Modifier.width(6.dp))
-            Text("مهندس HAI • تحليل + قيود + تحقق هندسي", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Text("مهندس HAI • تحليل + قيود + تحقق هندسي", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         }
     }
     Spacer(Modifier.height(16.dp))
-    Text("بيتك يبدأ\nبقرار محسوب.", fontSize = 38.sp, lineHeight = 43.sp, fontWeight = FontWeight.Black)
+    Text("بيتك يبدأ\nبقرار محسوب.", fontSize = 38.sp, lineHeight = 43.sp, fontWeight = FontWeight.Bold)
     Spacer(Modifier.height(10.dp))
     Text(
         "ابنِ مخططًا من الصفر أو ارفع مخططًا من أي مكتب. HAI يقرأه، يناقشك، ويعرض أثر كل تعديل قبل اعتماده.",
@@ -147,9 +147,9 @@ fun Home(nav: NavHostController) = Page {
         color = Color(0xFF62645F)
     )
     Spacer(Modifier.height(28.dp))
-    ActionCard(Icons.Rounded.Architecture, "ابنِ مشروعك", "مشروع جديد أو تعديل مخطط قائم", true) { nav.navigate("build") }
+    ActionCard(Icons.Outlined.Architecture, "ابنِ مشروعك", "مشروع جديد أو تعديل مخطط قائم", true) { nav.navigate("build") }
     Spacer(Modifier.height(14.dp))
-    ActionCard(Icons.Rounded.ViewInAr, "حوّل مشروعك إلى 3D", "محفوظ للمرحلة التالية بدون تشتيت محرك 2D", false) { }
+    ActionCard(Icons.Outlined.ViewInAr, "حوّل مشروعك إلى 3D", "محفوظ للمرحلة التالية بدون تشتيت محرك 2D", false) { }
     Spacer(Modifier.weight(1f))
     InfoStrip("مبدأ HAI", "لا تعديل بصمت • لا تخمين عند الشك • العناصر المقفلة لا تُمس • الاعتماد بيدك")
     Spacer(Modifier.height(14.dp))
@@ -161,7 +161,7 @@ private fun ActionCard(icon: ImageVector, title: String, subtitle: String, enabl
         onClick = onClick,
         enabled = enabled,
         modifier = Modifier.fillMaxWidth().height(140.dp),
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = if (enabled) Paper else Color(0xFFF0EDE6))
     ) {
         Row(Modifier.fillMaxSize().padding(22.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -174,7 +174,7 @@ private fun ActionCard(icon: ImageVector, title: String, subtitle: String, enabl
                 Spacer(Modifier.height(6.dp))
                 Text(subtitle, color = Color.Gray, fontSize = 13.sp, lineHeight = 19.sp)
             }
-            Icon(Icons.Rounded.ArrowBackIosNew, null, modifier = Modifier.size(17.dp), tint = Color.Gray)
+            Icon(Icons.Outlined.ArrowBackIosNew, null, modifier = Modifier.size(17.dp), tint = Color.Gray)
         }
     }
 }
@@ -183,16 +183,16 @@ private fun ActionCard(icon: ImageVector, title: String, subtitle: String, enabl
 fun BuildChoice(nav: NavHostController) = Page {
     BrandTop(nav)
     Spacer(Modifier.height(18.dp))
-    Text("كيف نبدأ؟", fontSize = 31.sp, fontWeight = FontWeight.Black)
+    Text("كيف نبدأ؟", fontSize = 31.sp, fontWeight = FontWeight.Bold)
     Text(
         "HAI يتعامل مع الحالتين بنفس المحرك المعماري؛ الاختلاف فقط في مصدر المخطط.",
         color = Color.Gray,
         lineHeight = 21.sp,
         modifier = Modifier.padding(top = 8.dp, bottom = 25.dp)
     )
-    ActionCard(Icons.Rounded.NoteAdd, "بناء من جديد", "أسئلة منظمة عن الأرض، الاحتياجات والأولويات", true) { nav.navigate("new") }
+    ActionCard(Icons.Outlined.NoteAdd, "بناء من جديد", "أسئلة منظمة عن الأرض، الاحتياجات والأولويات", true) { nav.navigate("new") }
     Spacer(Modifier.height(14.dp))
-    ActionCard(Icons.Rounded.UploadFile, "تعديل مشروع سابق", "صورة أو PDF حتى لو لم ينفذه منزلي HAI", true) { nav.navigate("import") }
+    ActionCard(Icons.Outlined.UploadFile, "تعديل مشروع سابق", "صورة أو PDF حتى لو لم ينفذه منزلي HAI", true) { nav.navigate("import") }
 }
 
 @Composable
@@ -212,7 +212,7 @@ fun ImportPlan(nav: NavHostController, source: Uri?, setSource: (Uri) -> Unit, s
 
     Page {
         BrandTop(nav)
-        Text("أعطني المخطط", fontSize = 31.sp, fontWeight = FontWeight.Black)
+        Text("أعطني المخطط", fontSize = 31.sp, fontWeight = FontWeight.Bold)
         Text(
             "HAI يحاول تحويل الملف إلى نموذج هندسي قابل للتحرير: غرف، جدران، أبواب ونوافذ، مع درجة ثقة لكل عنصر.",
             color = Color.Gray,
@@ -222,11 +222,11 @@ fun ImportPlan(nav: NavHostController, source: Uri?, setSource: (Uri) -> Unit, s
         Card(
             onClick = { picker.launch(arrayOf("image/*", "application/pdf")) },
             modifier = Modifier.fillMaxWidth().height(178.dp),
-            shape = RoundedCornerShape(26.dp),
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = Paper)
         ) {
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Icon(if (source == null) Icons.Rounded.CloudUpload else Icons.Rounded.TaskAlt, null, tint = Bronze, modifier = Modifier.size(42.dp))
+                Icon(if (source == null) Icons.Outlined.CloudUpload else Icons.Outlined.TaskAlt, null, tint = Bronze, modifier = Modifier.size(42.dp))
                 Spacer(Modifier.height(11.dp))
                 Text(if (source == null) "اختر المخطط من الجوال" else "الملف جاهز", fontWeight = FontWeight.Bold)
                 Text(if (source == null) "PDF • JPG • PNG" else "اضغط لتغييره", color = Color.Gray, fontSize = 12.sp)
@@ -252,7 +252,7 @@ fun ImportPlan(nav: NavHostController, source: Uri?, setSource: (Uri) -> Unit, s
             modifier = Modifier.fillMaxWidth().height(58.dp),
             shape = RoundedCornerShape(18.dp)
         ) {
-            if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White) else Icon(Icons.Rounded.AutoAwesome, null)
+            if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White) else Icon(Icons.Outlined.AutoAwesome, null)
             Spacer(Modifier.width(8.dp))
             Text(if (busy) "HAI يفهم المخطط…" else "ابدأ التحليل", fontWeight = FontWeight.Bold)
         }
@@ -264,10 +264,10 @@ fun ImportPlan(nav: NavHostController, source: Uri?, setSource: (Uri) -> Unit, s
 private fun PipelineStep(number: String, title: String, subtitle: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(34.dp).background(Mist, RoundedCornerShape(11.dp)), contentAlignment = Alignment.Center) {
-            Text(number, color = Bronze, fontSize = 11.sp, fontWeight = FontWeight.Black)
+            Text(number, color = Bronze, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.width(10.dp))
-        Column { Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold); Text(subtitle, color = Color.Gray, fontSize = 11.sp) }
+        Column { Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold); Text(subtitle, color = Color.Gray, fontSize = 12.sp) }
     }
 }
 
@@ -294,7 +294,7 @@ fun NewProject(nav: NavHostController, setPlan: (FloorPlan) -> Unit) {
         BrandTop(nav)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("جلسة التصميم الأولى", fontSize = 29.sp, fontWeight = FontWeight.Black)
+                Text("جلسة التصميم الأولى", fontSize = 29.sp, fontWeight = FontWeight.Bold)
                 Text("سؤال ${step + 1} من 3", color = Color.Gray, fontSize = 12.sp)
             }
             CircularProgressIndicator(progress = { (step + 1) / 3f }, modifier = Modifier.size(40.dp), strokeWidth = 4.dp, color = Bronze, trackColor = Mist)
@@ -361,7 +361,7 @@ fun NewProject(nav: NavHostController, setPlan: (FloorPlan) -> Unit) {
                 modifier = Modifier.weight(1.4f).height(55.dp),
                 shape = RoundedCornerShape(17.dp)
             ) {
-                if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Icon(if (step == 2) Icons.Rounded.AutoAwesome else Icons.Rounded.ArrowBack, null)
+                if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Icon(if (step == 2) Icons.Outlined.AutoAwesome else Icons.Outlined.ArrowBack, null)
                 Spacer(Modifier.width(7.dp))
                 Text(if (step == 2) "صمّم الاقتراح الأول" else "التالي", fontWeight = FontWeight.Bold)
             }
@@ -371,7 +371,7 @@ fun NewProject(nav: NavHostController, setPlan: (FloorPlan) -> Unit) {
 
 @Composable
 private fun FormHeading(title: String, subtitle: String) {
-    Text(title, fontSize = 22.sp, fontWeight = FontWeight.Black)
+    Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold)
     Text(subtitle, color = Color.Gray, fontSize = 13.sp, lineHeight = 20.sp, modifier = Modifier.padding(top = 5.dp, bottom = 16.dp))
 }
 
@@ -389,7 +389,7 @@ private fun PrioritySwitch(text: String, checked: Boolean, onChange: (Boolean) -
 @Composable
 private fun InfoStrip(title: String, text: String) {
     Row(Modifier.fillMaxWidth().background(Mist, RoundedCornerShape(18.dp)).padding(14.dp)) {
-        Icon(Icons.Rounded.Lightbulb, null, tint = Bronze, modifier = Modifier.size(20.dp))
+        Icon(Icons.Outlined.Lightbulb, null, tint = Bronze, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(10.dp))
         Column {
             Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp)
@@ -425,8 +425,8 @@ fun Editor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan) -> Uni
         BrandTop(nav)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(plan.title, fontSize = 22.sp, fontWeight = FontWeight.Black)
-                Text("نسخة ${plan.revision} • ${plan.rooms.size} غرفة • ${plan.walls.size} جدار • ${plan.openings.size} فتحة", color = Color.Gray, fontSize = 11.sp)
+                Text(plan.title, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text("نسخة ${plan.revision} • ${plan.rooms.size} غرفة • ${plan.walls.size} جدار • ${plan.openings.size} فتحة", color = Color.Gray, fontSize = 12.sp)
             }
             if (history.isNotEmpty()) {
                 TextButton(onClick = {
@@ -436,7 +436,7 @@ fun Editor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan) -> Uni
                     selection = null
                     setPlan(previous.copy(revision = plan.revision + 1))
                     messages = messages + ArchitectMessage(false, "رجعت للنسخة السابقة.")
-                }) { Icon(Icons.Rounded.Undo, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("تراجع") }
+                }) { Icon(Icons.Outlined.Undo, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)); Text("تراجع") }
             }
         }
         ScoreBar(score)
@@ -450,7 +450,7 @@ fun Editor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan) -> Uni
             selected = selection,
             onSelect = { selection = it }
         )
-        if (pending != null) Text("معاينة اقتراح HAI — لم يُعتمد بعد", color = Bronze, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 5.dp))
+        if (pending != null) Text("معاينة اقتراح HAI — لم يُعتمد بعد", color = Bronze, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 5.dp))
         selection?.let { selected ->
             Spacer(Modifier.height(7.dp))
             ElementInspector(plan, selected) { updated ->
@@ -459,7 +459,7 @@ fun Editor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan) -> Uni
                 setPlan(updated.copy(revision = plan.revision + 1))
             }
         }
-        if (plan.uncertainties.isNotEmpty()) Text("⚠ ${plan.uncertainties.first()}", fontSize = 11.sp, color = Bronze, modifier = Modifier.padding(vertical = 5.dp))
+        if (plan.uncertainties.isNotEmpty()) Text("⚠ ${plan.uncertainties.first()}", fontSize = 12.sp, color = Bronze, modifier = Modifier.padding(vertical = 5.dp))
         pending?.let { proposal ->
             ProposalCard(
                 proposal = proposal,
@@ -477,11 +477,11 @@ fun Editor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan) -> Uni
         }
         HorizontalDivider(color = Mist, modifier = Modifier.padding(top = 7.dp))
         Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Rounded.Engineering, null, tint = Bronze, modifier = Modifier.size(19.dp))
+            Icon(Icons.Outlined.Engineering, null, tint = Bronze, modifier = Modifier.size(19.dp))
             Spacer(Modifier.width(6.dp))
-            Text("مهندس HAI", fontWeight = FontWeight.Black, fontSize = 16.sp)
+            Text("مهندس HAI", fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Spacer(Modifier.weight(1f))
-            Text("يفهم • يقترح • المحرك يتحقق", color = Color.Gray, fontSize = 10.sp)
+            Text("يفهم • يقترح • المحرك يتحقق", color = Color.Gray, fontSize = 12.sp)
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) { messages.takeLast(6).forEach { Bubble(it) } }
         Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.Bottom) {
@@ -513,7 +513,7 @@ fun Editor(nav: NavHostController, plan: FloorPlan?, setPlan: (FloorPlan) -> Uni
                 },
                 modifier = Modifier.size(52.dp)
             ) {
-                if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Icon(Icons.Rounded.ArrowUpward, null)
+                if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Icon(Icons.Outlined.ArrowUpward, null)
             }
         }
     }
@@ -532,7 +532,7 @@ private fun StructuralBar(report: StructuralGeometryEngine.Report) {
 @Composable
 private fun StructurePill(label: String, value: Int, suffix: String = "") {
     Surface(color = Mist, shape = RoundedCornerShape(50.dp)) {
-        Text("$label  $value$suffix", modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+        Text("$label  $value$suffix", modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -551,9 +551,9 @@ private fun ScoreBar(score: PlanScore) {
 private fun ScorePill(label: String, value: Int) {
     Surface(color = Paper, shape = RoundedCornerShape(50.dp)) {
         Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(label, fontSize = 10.sp, color = Color.Gray)
+            Text(label, fontSize = 12.sp, color = Color.Gray)
             Spacer(Modifier.width(5.dp))
-            Text("$value", fontSize = 11.sp, fontWeight = FontWeight.Black, color = if (value >= 75) Sage else Bronze)
+            Text("$value", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (value >= 75) Sage else Bronze)
         }
     }
 }
@@ -603,12 +603,12 @@ private fun ElementInspector(plan: FloorPlan, selection: PlanSelection, onUpdate
     Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = Paper), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(38.dp).background(if (locked) Bronze.copy(alpha = .14f) else Mist, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                Icon(if (locked) Icons.Rounded.Lock else Icons.Rounded.TouchApp, null, tint = if (locked) Bronze else Deep, modifier = Modifier.size(19.dp))
+                Icon(if (locked) Icons.Outlined.Lock else Icons.Outlined.TouchApp, null, tint = if (locked) Bronze else Deep, modifier = Modifier.size(19.dp))
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontWeight = FontWeight.Black, fontSize = 13.sp)
-                Text("$subtitle • ثقة $confidence%", color = Color.Gray, fontSize = 10.5.sp)
+                Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("$subtitle • ثقة $confidence%", color = Color.Gray, fontSize = 12.sp)
             }
             FilledTonalButton(
                 onClick = {
@@ -622,9 +622,9 @@ private fun ElementInspector(plan: FloorPlan, selection: PlanSelection, onUpdate
                 },
                 shape = RoundedCornerShape(13.dp)
             ) {
-                Icon(if (locked) Icons.Rounded.LockOpen else Icons.Rounded.Lock, null, modifier = Modifier.size(16.dp))
+                Icon(if (locked) Icons.Outlined.LockOpen else Icons.Outlined.Lock, null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(5.dp))
-                Text(if (locked) "فتح" else "قفل", fontSize = 11.sp)
+                Text(if (locked) "فتح" else "قفل", fontSize = 12.sp)
             }
         }
     }
@@ -635,25 +635,25 @@ private fun ProposalCard(proposal: PlanProposal, validation: ValidationReport, o
     Card(modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Paper)) {
         Column(Modifier.padding(13.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(if (validation.valid) Icons.Rounded.FactCheck else Icons.Rounded.ReportProblem, null, tint = if (validation.valid) Sage else Bronze, modifier = Modifier.size(20.dp))
+                Icon(if (validation.valid) Icons.Outlined.FactCheck else Icons.Outlined.ReportProblem, null, tint = if (validation.valid) Sage else Bronze, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(7.dp))
-                Text(if (validation.valid) "اقتراح اجتاز فحص HAI" else "الاقتراح مرفوض هندسيًا", fontWeight = FontWeight.Black, fontSize = 13.sp)
+                Text(if (validation.valid) "اقتراح اجتاز فحص HAI" else "الاقتراح مرفوض هندسيًا", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 Spacer(Modifier.weight(1f))
-                Text("ثقة ${proposal.confidence}%", color = Color.Gray, fontSize = 10.sp)
+                Text("ثقة ${proposal.confidence}%", color = Color.Gray, fontSize = 12.sp)
             }
             proposal.changes.take(4).forEach { change ->
                 val areas = if (change.beforeAreaM2 != null || change.afterAreaM2 != null) {
                     " ${change.beforeAreaM2?.let { "%.1f".format(it) } ?: "؟"} ← ${change.afterAreaM2?.let { "%.1f".format(it) } ?: "؟"}م²"
                 } else ""
-                Text("• ${change.roomName.ifBlank { "عنصر" }}$areas — ${change.note}", fontSize = 11.sp, lineHeight = 17.sp, modifier = Modifier.padding(top = 4.dp))
+                Text("• ${change.roomName.ifBlank { "عنصر" }}$areas — ${change.note}", fontSize = 12.sp, lineHeight = 20.sp, modifier = Modifier.padding(top = 4.dp))
             }
-            validation.errors.take(2).forEach { Text("✕ $it", color = MaterialTheme.colorScheme.error, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp)) }
-            validation.warnings.take(2).forEach { Text("⚠ $it", color = Bronze, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp)) }
-            validation.after?.let { after -> Text("تقييم المخطط: ${validation.before.overall} ← ${after.overall}", fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp)) }
+            validation.errors.take(2).forEach { Text("✕ $it", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
+            validation.warnings.take(2).forEach { Text("⚠ $it", color = Bronze, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
+            validation.after?.let { after -> Text("تقييم المخطط: ${validation.before.overall} ← ${after.overall}", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp)) }
             Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onReject, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) { Text("ارفض") }
                 Button(onClick = onApply, enabled = validation.valid && proposal.updatedPlan != null, modifier = Modifier.weight(1.4f), shape = RoundedCornerShape(14.dp)) {
-                    Icon(Icons.Rounded.Done, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("اعتمد التعديل")
+                    Icon(Icons.Outlined.Done, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("اعتمد التعديل")
                 }
             }
         }
@@ -677,7 +677,7 @@ fun PlanCanvas(
     selected: PlanSelection? = null,
     onSelect: (PlanSelection?) -> Unit = {}
 ) {
-    Surface(modifier, color = Paper, shape = RoundedCornerShape(24.dp), tonalElevation = 1.dp) {
+    Surface(modifier, color = Paper, shape = RoundedCornerShape(16.dp), tonalElevation = 1.dp) {
         BoxWithConstraints(Modifier.fillMaxSize().padding(12.dp)) {
             Canvas(
                 Modifier.fillMaxSize().pointerInput(plan, selected) {
@@ -765,15 +765,15 @@ fun PlanCanvas(
                 val centerY = ((r.y + r.height / 2f).coerceIn(4f, 96f) / 100f)
                 Text(
                     r.name + if (r.areaM2 > 0) "\n${"%.1f".format(r.areaM2)}م²" else "",
-                    fontSize = 8.2.sp,
-                    lineHeight = 9.5.sp,
+                    fontSize = 12.sp,
+                    lineHeight = 20.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.offset(x = (availableW * centerX - 34f).dp, y = (availableH * centerY - 12f).dp).width(68.dp)
                 )
             }
             if (plan.walls.isNotEmpty() || plan.openings.isNotEmpty()) {
                 Surface(color = Paper.copy(alpha = .92f), shape = RoundedCornerShape(50.dp), modifier = Modifier.align(Alignment.BottomStart)) {
-                    Text("اضغط غرفة / جدار / باب", modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp), fontSize = 9.5.sp, color = Color.Gray)
+                    Text("اضغط غرفة / جدار / باب", modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp), fontSize = 12.sp, color = Color.Gray)
                 }
             }
         }
@@ -800,7 +800,7 @@ fun AiSettings(nav: NavHostController) {
     var saved by remember { mutableStateOf(false) }
     Page {
         BrandTop(nav, settings = false)
-        Text("اتصال HAI", fontSize = 31.sp, fontWeight = FontWeight.Black)
+        Text("اتصال HAI", fontSize = 31.sp, fontWeight = FontWeight.Bold)
         Text("اختر مزود OpenAI-compatible. لا يوجد مفتاح API مخزن في GitHub.", color = Color.Gray, modifier = Modifier.padding(top = 8.dp, bottom = 18.dp))
         OutlinedTextField(endpoint, { endpoint = it }, Modifier.fillMaxWidth(), label = { Text("API endpoint") }, singleLine = true)
         Spacer(Modifier.height(10.dp))
@@ -812,7 +812,7 @@ fun AiSettings(nav: NavHostController) {
             onClick = { settings.endpoint = endpoint.trim(); settings.model = model.trim(); settings.apiKey = key.trim(); saved = true },
             modifier = Modifier.fillMaxWidth().height(56.dp),
             shape = RoundedCornerShape(18.dp)
-        ) { Icon(Icons.Rounded.Save, null); Spacer(Modifier.width(8.dp)); Text("حفظ الاتصال") }
+        ) { Icon(Icons.Outlined.Save, null); Spacer(Modifier.width(8.dp)); Text("حفظ الاتصال") }
         if (saved) Text("تم حفظ إعدادات الاتصال", color = Sage, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp))
         Spacer(Modifier.height(18.dp))
         InfoStrip("أمان النسخة الحالية", "للنشر العام يجب نقل مفاتيح الخدمة إلى خادم وسيط أو تخزين آمن. إعداد الجهاز مناسب للاختبار والتطوير.")

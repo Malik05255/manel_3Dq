@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -87,14 +87,14 @@ private fun ProductionApp() {
 
     MaterialTheme(
         colorScheme = lightColorScheme(
-            primary = Color(0xFF4F40B8),
+            primary = StudioColors.Primary,
             onPrimary = Color.White,
-            secondary = Color(0xFFE28B5A),
-            background = Color(0xFFF8F6F2),
-            surface = Color(0xFFFFFEFC),
-            surfaceVariant = Color(0xFFF0ECE6),
-            onBackground = Color(0xFF181A18),
-            onSurface = Color(0xFF181A18)
+            secondary = StudioColors.Warning,
+            background = StudioColors.Canvas,
+            surface = StudioColors.Paper,
+            surfaceVariant = StudioColors.Line,
+            onBackground = StudioColors.Ink,
+            onSurface = StudioColors.Ink
         )
     ) {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
@@ -205,7 +205,7 @@ private fun ProductionApp() {
 
 @Composable
 private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int) {
-    Surface(Modifier.fillMaxSize(), color = Color(0xFFF8F6F2)) {
+    Surface(Modifier.fillMaxSize(), color = StudioColors.Canvas) {
         Column(
             Modifier
                 .fillMaxSize()
@@ -218,21 +218,21 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
-                    color = Color(0xFF6353D9).copy(alpha = 0.10f),
+                    color = StudioColors.Primary.copy(alpha = 0.10f),
                     shape = RoundedCornerShape(18.dp)
                 ) {
                     Text(
                         "HAI",
                         modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
-                        color = Color(0xFF4F40B8),
-                        fontWeight = FontWeight.Black
+                        color = StudioColors.Primary,
+                        fontWeight = FontWeight.Bold
                     )
                 }
                 Spacer(Modifier.width(10.dp))
-                Text("منزلي", fontSize = 21.sp, fontWeight = FontWeight.Black)
+                Text("منزلي", fontSize = 21.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { nav.navigate("settings") }) {
-                    Icon(Icons.Rounded.Tune, "الإعدادات")
+                    Icon(Icons.Outlined.Tune, "الإعدادات")
                 }
             }
 
@@ -242,8 +242,8 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
                 "صمّم بيتك.",
                 fontSize = 38.sp,
                 lineHeight = 42.sp,
-                fontWeight = FontWeight.Black,
-                color = Color(0xFF181A18)
+                fontWeight = FontWeight.Bold,
+                color = StudioColors.Ink
             )
 
             Spacer(Modifier.height(24.dp))
@@ -251,7 +251,7 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
             if (plan != null) {
                 val type = SaudiProjectTypeEngine.infer(plan)
                 ElevatedCard(
-                    shape = RoundedCornerShape(30.dp),
+                    shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
                     elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -261,25 +261,25 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
                             Box(
                                 Modifier
                                     .size(46.dp)
-                                    .background(Color(0xFFE28B5A).copy(alpha = 0.12f), CircleShape),
+                                    .background(StudioColors.Warning.copy(alpha = 0.12f), CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Rounded.HomeWork, null, tint = Color(0xFFE28B5A))
+                                Icon(Icons.Outlined.HomeWork, null, tint = StudioColors.Warning)
                             }
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(plan.title, fontSize = 18.sp, fontWeight = FontWeight.Black, maxLines = 1)
-                                Text(type.label, color = Color(0xFF8B857D), fontSize = 11.sp)
+                                Text(plan.title, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                Text(type.label, color = StudioColors.Muted, fontSize = 12.sp)
                             }
                         }
                         Spacer(Modifier.height(16.dp))
                         Button(
                             onClick = { nav.navigate("editor") },
                             shape = RoundedCornerShape(20.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F40B8)),
+                            colors = ButtonDefaults.buttonColors(containerColor = StudioColors.Primary),
                             modifier = Modifier.fillMaxWidth().height(54.dp)
                         ) {
-                            Text("أكمل", fontWeight = FontWeight.Black, fontSize = 16.sp)
+                            Text("أكمل", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         }
                     }
                 }
@@ -287,16 +287,16 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
                 Spacer(Modifier.height(14.dp))
 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    HomeAction(Icons.Rounded.ViewInAr, "3D", Color(0xFF6353D9), Modifier.weight(1f)) { nav.navigate("3d") }
-                    HomeAction(Icons.Rounded.DirectionsWalk, "جولة", Color(0xFFE28B5A), Modifier.weight(1f)) { nav.navigate("walkthrough") }
+                    HomeAction(Icons.Outlined.ViewInAr, "3D", StudioColors.Primary, Modifier.weight(1f)) { nav.navigate("3d") }
+                    HomeAction(Icons.Outlined.DirectionsWalk, "جولة", StudioColors.Warning, Modifier.weight(1f)) { nav.navigate("walkthrough") }
                 }
 
                 Spacer(Modifier.height(10.dp))
 
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    HomeAction(Icons.Rounded.FactCheck, "مراجعة", Color(0xFF4C8A78), Modifier.weight(1f)) { nav.navigate("saudi-audit") }
-                    HomeAction(Icons.Rounded.Layers, "الأدوار", Color(0xFF6353D9), Modifier.weight(1f)) { nav.navigate("floors") }
-                    HomeAction(Icons.Rounded.IosShare, "تصدير", Color(0xFFE28B5A), Modifier.weight(1f)) { nav.navigate("export") }
+                    HomeAction(Icons.Outlined.FactCheck, "مراجعة", StudioColors.Success, Modifier.weight(1f)) { nav.navigate("saudi-audit") }
+                    HomeAction(Icons.Outlined.Layers, "الأدوار", StudioColors.Primary, Modifier.weight(1f)) { nav.navigate("floors") }
+                    HomeAction(Icons.Outlined.IosShare, "تصدير", StudioColors.Warning, Modifier.weight(1f)) { nav.navigate("export") }
                 }
 
                 Spacer(Modifier.height(18.dp))
@@ -304,23 +304,23 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
 
             Button(
                 onClick = { nav.navigate("build") },
-                shape = RoundedCornerShape(23.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF181A18)),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = StudioColors.Ink),
                 modifier = Modifier.fillMaxWidth().height(60.dp)
             ) {
-                Icon(Icons.Rounded.AddHomeWork, null)
+                Icon(Icons.Outlined.AddHomeWork, null)
                 Spacer(Modifier.width(8.dp))
-                Text("مشروع جديد", fontWeight = FontWeight.Black, fontSize = 17.sp)
+                Text("مشروع جديد", fontWeight = FontWeight.Bold, fontSize = 17.sp)
             }
 
             Spacer(Modifier.height(10.dp))
 
             OutlinedButton(
                 onClick = { nav.navigate("import3d-type") },
-                shape = RoundedCornerShape(23.dp),
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth().height(58.dp)
             ) {
-                Icon(Icons.Rounded.UploadFile, null)
+                Icon(Icons.Outlined.UploadFile, null)
                 Spacer(Modifier.width(8.dp))
                 Text("استيراد مخطط", fontWeight = FontWeight.Bold)
             }
@@ -331,7 +331,7 @@ private fun ProductionHome(nav: NavHostController, plan: FloorPlan?, count: Int)
                 onClick = { nav.navigate("projects") },
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             ) {
-                Text("مشاريعي  $count", color = Color(0xFF6F6A64), fontWeight = FontWeight.Bold)
+                Text("مشاريعي  $count", color = StudioColors.Muted, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -348,7 +348,7 @@ private fun HomeAction(
     ElevatedCard(
         onClick = onClick,
         modifier = modifier.height(92.dp),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = Color.White),
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = 1.dp)
     ) {
@@ -366,7 +366,7 @@ private fun HomeAction(
                 Icon(icon, null, tint = accent, modifier = Modifier.size(21.dp))
             }
             Spacer(Modifier.height(7.dp))
-            Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
     }
 }
