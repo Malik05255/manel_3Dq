@@ -37,9 +37,23 @@ def test_pbr_asset_status_accepts_supported_extensions(monkeypatch, tmp_path: Pa
 def test_blender_status_exposes_pbr_completeness(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("PBR_ASSET_DIR", str(tmp_path))
     monkeypatch.setenv("BLENDER_BIN", "/usr/bin/blender")
+    monkeypatch.delenv("REQUIRE_COMPLETE_PBR", raising=False)
 
     status = blender_renderer.blender_status()
 
     assert status["renderer"] == "blender-pbr-v3"
+    assert status["ready"] is True
     assert status["pbr_assets_complete"] is False
     assert status["pbr_complete_material_sets"] == 0
+
+
+def test_blender_status_can_require_complete_pbr(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("PBR_ASSET_DIR", str(tmp_path))
+    monkeypatch.setenv("BLENDER_BIN", "/usr/bin/blender")
+    monkeypatch.setenv("REQUIRE_COMPLETE_PBR", "true")
+
+    status = blender_renderer.blender_status()
+
+    assert status["require_complete_pbr"] is True
+    assert status["ready"] is False
+    assert status["pbr_assets_complete"] is False
