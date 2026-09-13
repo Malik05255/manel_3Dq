@@ -33,6 +33,7 @@ import com.manzili.hai.data.HaiSettings
 import com.manzili.hai.data.ProjectPlanStore
 import com.manzili.hai.data.ProjectSourceStore
 import com.manzili.hai.engine.MultiFloorGeometryEngine
+import com.manzili.hai.engine.PlanNumberEvidenceEngine
 import com.manzili.hai.engine.PlanVerificationEngine
 import com.manzili.hai.engine.ProjectMemoryEngine
 import com.manzili.hai.engine.SaudiProjectTypeEngine
@@ -50,17 +51,19 @@ internal fun Hai360App() {
     var source by remember { mutableStateOf(sourceStore.load(store.activeProjectId())) }
     var pending by remember { mutableStateOf<FloorPlan?>(null) }
     var pendingType by remember { mutableStateOf<SaudiProjectTypeEngine.Type?>(null) }
+    var creatingNew by remember { mutableStateOf(false) }
 
     fun openProject(id: String) {
         plan = store.open(id)?.let(::normalizeHai360Plan)
         source = sourceStore.load(id)
         pending = null
         pendingType = null
+        creatingNew = false
     }
 
     fun persist(next: FloorPlan, importedSource: Uri?) {
         val ready = normalizeHai360Plan(next)
-        val id = if (pending != null || store.activeProjectId() == null) {
+        val id = if (creatingNew || store.activeProjectId() == null) {
             store.createProject(ready)
         } else {
             store.save(ready)
@@ -71,12 +74,33 @@ internal fun Hai360App() {
         source = importedSource
         pending = null
         pendingType = null
+        creatingNew = false
     }
 
     Hai360Theme {
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
             NavHost(nav, startDestination = "home") {
-                composable("home") { Hai360HomeScreen(nav, plan, store.listProjects().size) }
+                composable("home") {
+                    Hai360HomeScreen(
+                        nav = nav,
+                        plan = plan,
+                        projectCount = store.listProjects().size,
+                        onImport = {
+                            creatingNew = true
+                            pending = null
+                            pendingType = null
+                            source = null
+                            nav.navigate("import")
+                        },
+                        onNew = {
+                            creatingNew = true
+                            pending = null
+                            pendingType = null
+                            source = null
+                            nav.navigate("new")
+                        }
+                    )
+                }
                 composable("import") {
                     Hai360ImportScreen(
                         initialSource = null,
@@ -85,6 +109,7 @@ internal fun Hai360App() {
                         onAnalyzed = { analyzed, type ->
                             pending = analyzed
                             pendingType = type
+                            creatingNew = true
                             nav.navigate("studio")
                         }
                     )
@@ -96,6 +121,7 @@ internal fun Hai360App() {
                             pending = SaudiProjectTypeEngine.apply(generated, type)
                             pendingType = type
                             source = null
+                            creatingNew = true
                             nav.navigate("studio")
                         }
                     )
@@ -109,6 +135,10 @@ internal fun Hai360App() {
                             source = source,
                             initialPlan = current,
                             onBack = { nav.popBackStack() },
+                            onEdit = { editedBase ->
+                                pending = editedBase
+                                nav.navigate("editor")
+                            },
                             onConfirm = { confirmed ->
                                 val typed = pendingType?.let { SaudiProjectTypeEngine.apply(confirmed, it) } ?: confirmed
                                 persist(typed, source)
@@ -117,8 +147,27 @@ internal fun Hai360App() {
                         )
                     }
                 }
+                composable("editor") {
+                    val current = pending ?: plan
+                    if (current == null) {
+                        LaunchedEffect(Unit) { nav.popBackStack() }
+                    } else {
+                        Hai360EditorScreen(
+                            source = source,
+                            initialPlan = current,
+                            onCancel = { nav.popBackStack() },
+                            onDone = {
+                                pending = it
+                                nav.popBackStack()
+                            }
+                        )
+                    }
+                }
                 composable("3d") {
                     plan?.let { Production3DScreenV3(nav, it) } ?: LaunchedEffect(Unit) { nav.popBackStack() }
+                }
+                composable("walkthrough") {
+                    plan?.let { WalkthroughScreen(nav, it) } ?: LaunchedEffect(Unit) { nav.popBackStack() }
                 }
                 composable("library") {
                     Hai360LibraryScreen(nav, store) { id ->
@@ -131,6 +180,9 @@ internal fun Hai360App() {
                     CloudSyncScreen(nav, store) { opened ->
                         plan = opened?.let(::normalizeHai360Plan)
                         source = sourceStore.load(store.activeProjectId())
+                        pending = null
+                        pendingType = null
+                        creatingNew = false
                     }
                 }
             }
@@ -146,91 +198,166 @@ private fun normalizeHai360Plan(input: FloorPlan): FloorPlan {
 }
 
 @Composable
-private fun Hai360HomeScreen(nav: NavHostController, plan: FloorPlan?, projectCount: Int) {
+private fun Hai360HomeScreen(
+    nav: NavHostController,
+    plan: FloorPlan?,
+    projectCount: Int,
+    onImport: () -> Unit,
+    onNew: () -> Unit
+) {
     val report = plan?.let { PlanVerificationEngine.inspect(it) }
-    ArchitecturalBackdrop(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 18.dp)) {
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(color = H360Cyan, shape = CircleShape, modifier = Modifier.size(40.dp)) {
-                    Box(contentAlignment = Alignment.Center) { Text("H", color = H360Ink, fontWeight = FontWeight.Black, fontSize = 18.sp) }
-                }
-                Spacer(Modifier.width(10.dp))
-                Column {
-                    Text("منزلي", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Black)
-                    Text("HAI ARCHITECTURAL STUDIO", color = Color.White.copy(alpha = .38f), fontSize = 7.5.sp, letterSpacing = 1.2.sp)
-                }
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = { nav.navigate("library") }) {
-                    BadgedBox(badge = { if (projectCount > 0) Badge(containerColor = H360Cyan, contentColor = H360Ink) { Text(projectCount.toString()) } }) {
-                        Icon(Icons.Rounded.FolderOpen, "المشاريع", tint = Color.White)
-                    }
-                }
-                IconButton(onClick = { nav.navigate("settings") }) { Icon(Icons.Rounded.Tune, "الإعدادات", tint = Color.White) }
-            }
-
-            Spacer(Modifier.height(34.dp))
-            Text("حوّل الورقة\nإلى مساحة.", color = Color.White, fontSize = 43.sp, lineHeight = 46.sp, fontWeight = FontWeight.Black)
-            Spacer(Modifier.height(10.dp))
-            Text("HAI يقرأ المخطط، يبني هندسته، ويترك القرار النهائي لك.", color = Color.White.copy(alpha = .52f), fontSize = 12.5.sp, lineHeight = 18.sp)
-            Spacer(Modifier.height(25.dp))
-
-            Surface(
-                color = H360Cyan,
-                contentColor = H360Ink,
-                shape = RoundedCornerShape(28.dp),
-                modifier = Modifier.fillMaxWidth().height(78.dp).clickable { nav.navigate("import") }
+    Scaffold(
+        containerColor = H360Ivory,
+        bottomBar = { HomeNavigation(nav, projectCount) }
+    ) { pad ->
+        ArchitecturalBackdrop(Modifier.fillMaxSize().padding(pad)) {
+            Column(
+                Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 18.dp).verticalScroll(rememberScrollState())
             ) {
-                Row(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(44.dp).background(H360Ink, CircleShape), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.UploadFile, null, tint = Color.White, modifier = Modifier.size(21.dp))
-                    }
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("عندي مخطط", fontSize = 18.sp, fontWeight = FontWeight.Black)
-                        Text("PDF أو صورة → نموذج قابل للتحرير", fontSize = 9.5.sp, color = H360Ink.copy(alpha = .58f))
-                    }
-                    Icon(Icons.Rounded.ArrowBack, null)
-                }
-            }
+                Spacer(Modifier.height(10.dp))
+                HomeBrand()
+                Spacer(Modifier.height(24.dp))
 
-            Spacer(Modifier.height(10.dp))
-            Surface(
-                color = Color.White.copy(alpha = .075f),
-                contentColor = Color.White,
-                shape = RoundedCornerShape(24.dp),
-                modifier = Modifier.fillMaxWidth().height(62.dp).clickable { nav.navigate("new") }
-            ) {
-                Row(Modifier.fillMaxSize().padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.AddHomeWork, null, tint = Color.White.copy(alpha = .82f))
-                    Spacer(Modifier.width(12.dp))
-                    Text("ابدأ بيتًا من الصفر", fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                    Text("NEW", color = H360Cyan, fontSize = 8.sp, fontWeight = FontWeight.Black)
+                if (plan != null) {
+                    ActiveProjectCard(
+                        plan = plan,
+                        report = report,
+                        onReview = { nav.navigate("studio") },
+                        on3d = { nav.navigate("3d") }
+                    )
+                    Spacer(Modifier.height(18.dp))
                 }
-            }
 
-            plan?.let { current ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    LaunchTile(
+                        title = "استيراد",
+                        icon = Icons.Rounded.DocumentScanner,
+                        background = H360Cyan,
+                        modifier = Modifier.weight(1f),
+                        onClick = onImport
+                    )
+                    LaunchTile(
+                        title = "مشروع جديد",
+                        icon = Icons.Rounded.AddHomeWork,
+                        background = H360Lilac,
+                        modifier = Modifier.weight(1f),
+                        onClick = onNew
+                    )
+                }
+
+                if (plan == null) {
+                    Spacer(Modifier.height(18.dp))
+                    EmptyProjectCanvas()
+                }
+
+                Spacer(Modifier.height(22.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CompactShortcut("المشاريع", Icons.Rounded.FolderOpen, H360Peach, Modifier.weight(1f)) { nav.navigate("library") }
+                    CompactShortcut("السحابة", Icons.Rounded.CloudSync, H360Mint, Modifier.weight(1f)) { nav.navigate("cloud") }
+                    CompactShortcut("الإعدادات", Icons.Rounded.Tune, H360Sky, Modifier.weight(1f)) { nav.navigate("settings") }
+                }
                 Spacer(Modifier.height(20.dp))
-                CurrentProjectStrip(current, report, { nav.navigate("studio") }, { nav.navigate("3d") })
             }
+        }
+    }
+}
 
-            Spacer(Modifier.weight(1f))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(7.dp).background(if (report?.blocking == true) H360Amber else H360Success, CircleShape))
-                Spacer(Modifier.width(7.dp))
-                Text(
-                    when {
-                        plan == null -> "جاهز لمشروعك الأول"
-                        report?.blocking == true -> "المشروع الحالي يحتاج مراجعة"
-                        else -> "المشروع الحالي صالح للانتقال إلى 3D"
-                    },
-                    color = Color.White.copy(alpha = .45f), fontSize = 9.5.sp
-                )
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = { nav.navigate("cloud") }) {
-                    Icon(Icons.Rounded.CloudSync, null, tint = Color.White.copy(alpha = .55f), modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("السحابة", color = Color.White.copy(alpha = .55f), fontSize = 9.5.sp)
+@Composable
+private fun HomeBrand() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Surface(color = H360CyanDeep, shape = RoundedCornerShape(16.dp), modifier = Modifier.size(46.dp), shadowElevation = 6.dp) {
+            Box(contentAlignment = Alignment.Center) { Text("H", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black) }
+        }
+        Spacer(Modifier.width(11.dp))
+        Column {
+            Text("منزلي HAI", color = H360Ink, fontSize = 22.sp, fontWeight = FontWeight.Black)
+            Text("ANDROID", color = H360Muted, fontSize = 8.sp, fontWeight = FontWeight.Black, letterSpacing = 1.4.sp)
+        }
+    }
+}
+
+@Composable
+private fun LaunchTile(
+    title: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    background: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Surface(
+        color = background,
+        shape = RoundedCornerShape(28.dp),
+        shadowElevation = 3.dp,
+        border = BorderStroke(1.dp, H360Line.copy(alpha = .7f)),
+        modifier = modifier.height(132.dp).clickable(onClick = onClick)
+    ) {
+        Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Surface(color = Color.White.copy(alpha = .85f), shape = CircleShape, modifier = Modifier.size(44.dp)) {
+                Box(contentAlignment = Alignment.Center) { Icon(icon, null, tint = H360Ink, modifier = Modifier.size(22.dp)) }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, color = H360Ink, fontSize = 16.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+                Icon(Icons.Rounded.ArrowBack, null, tint = H360Ink, modifier = Modifier.size(18.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActiveProjectCard(
+    plan: FloorPlan,
+    report: PlanVerificationEngine.Report?,
+    onReview: () -> Unit,
+    on3d: () -> Unit
+) {
+    val numericCount = PlanNumberEvidenceEngine.numericLabels(plan.dimensions).size
+    Surface(
+        color = H360Paper,
+        shape = RoundedCornerShape(30.dp),
+        shadowElevation = 5.dp,
+        border = BorderStroke(1.dp, H360Line),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                MiniPlanGlyph(plan, Modifier.size(86.dp))
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(plan.title, color = H360Ink, fontSize = 18.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(9.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        StatusPill("${report?.readingConfidence ?: 0}%", if ((report?.readingConfidence ?: 0) >= 90) H360Mint else H360Peach)
+                        StatusPill("${plan.rooms.size} غرف", H360Sky)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        StatusPill("${plan.walls.size} جدار", H360Lilac)
+                        StatusPill("$numericCount رقم", H360Cyan)
+                    }
+                }
+            }
+            Spacer(Modifier.height(15.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                Button(
+                    onClick = onReview,
+                    colors = ButtonDefaults.buttonColors(containerColor = H360CyanDeep, contentColor = Color.White),
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier.weight(1f).height(48.dp)
+                ) {
+                    Icon(Icons.Rounded.Architecture, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("المخطط", fontWeight = FontWeight.Black)
+                }
+                OutlinedButton(
+                    onClick = on3d,
+                    enabled = report?.blocking != true,
+                    border = BorderStroke(1.dp, H360Line),
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier.weight(1f).height(48.dp)
+                ) {
+                    Icon(Icons.Rounded.ViewInAr, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("3D", fontWeight = FontWeight.Black)
                 }
             }
         }
@@ -238,78 +365,101 @@ private fun Hai360HomeScreen(nav: NavHostController, plan: FloorPlan?, projectCo
 }
 
 @Composable
-private fun CurrentProjectStrip(plan: FloorPlan, report: PlanVerificationEngine.Report?, onStudio: () -> Unit, on3d: () -> Unit) {
-    Surface(color = Color.White.copy(alpha = .075f), shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                MiniPlanGlyph(plan, Modifier.size(58.dp))
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(plan.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${plan.rooms.size} غرف • ${plan.walls.size} جدار • ثقة ${report?.readingConfidence ?: 0}%", color = Color.White.copy(alpha = .42f), fontSize = 9.sp)
-                }
-                Text(if (report?.blocking == true) "راجع" else "جاهز", color = if (report?.blocking == true) H360Amber else H360Success, fontSize = 9.sp, fontWeight = FontWeight.Black)
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onStudio, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = H360Ink), shape = RoundedCornerShape(17.dp), modifier = Modifier.weight(1f).height(46.dp)) {
-                    Icon(Icons.Rounded.Architecture, null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("الاستوديو", fontWeight = FontWeight.Black, fontSize = 10.5.sp)
-                }
-                val threeDEnabled = report?.blocking != true
-                OutlinedButton(
-                    onClick = on3d,
-                    enabled = threeDEnabled,
-                    border = BorderStroke(1.dp, if (threeDEnabled) Color.White.copy(alpha = .35f) else Color.White.copy(alpha = .10f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White, disabledContentColor = Color.White.copy(alpha = .25f)),
-                    shape = RoundedCornerShape(17.dp),
-                    modifier = Modifier.weight(1f).height(46.dp)
-                ) {
-                    Icon(Icons.Rounded.ViewInAr, null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("3D", fontWeight = FontWeight.Black, fontSize = 10.5.sp)
-                }
-            }
-        }
+private fun StatusPill(text: String, color: Color) {
+    Surface(color = color, shape = RoundedCornerShape(50.dp)) {
+        Text(text, color = H360Ink, fontSize = 9.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp))
     }
 }
 
 @Composable
 private fun MiniPlanGlyph(plan: FloorPlan, modifier: Modifier) {
-    Surface(color = H360InkSoft, shape = RoundedCornerShape(18.dp), modifier = modifier) {
-        Canvas(Modifier.fillMaxSize().padding(8.dp)) {
+    Surface(color = Color(0xFFF3F6FA), shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, H360Line), modifier = modifier) {
+        Canvas(Modifier.fillMaxSize().padding(10.dp)) {
             fun p(x: Float, y: Float) = Offset(size.width * x / 100f, size.height * y / 100f)
-            plan.walls.take(30).forEach { drawLine(H360Cyan.copy(alpha = .9f), p(it.start.x, it.start.y), p(it.end.x, it.end.y), 1.5f) }
-            if (plan.walls.isEmpty()) {
-                drawLine(H360Cyan.copy(alpha = .6f), Offset(4f, size.height * .25f), Offset(size.width - 4f, size.height * .25f), 1.5f)
-                drawLine(H360Cyan.copy(alpha = .6f), Offset(size.width * .35f, 4f), Offset(size.width * .35f, size.height - 4f), 1.5f)
+            plan.rooms.take(24).forEach { room ->
+                drawRect(H360CyanDeep.copy(alpha = .06f), p(room.x, room.y), androidx.compose.ui.geometry.Size(size.width * room.width / 100f, size.height * room.height / 100f))
+            }
+            plan.walls.take(70).forEach { drawLine(H360CyanDeep.copy(alpha = .92f), p(it.start.x, it.start.y), p(it.end.x, it.end.y), 2f) }
+        }
+    }
+}
+
+@Composable
+private fun EmptyProjectCanvas() {
+    Surface(color = H360Paper.copy(alpha = .82f), shape = RoundedCornerShape(30.dp), border = BorderStroke(1.dp, H360Line), modifier = Modifier.fillMaxWidth().height(230.dp)) {
+        Box(Modifier.fillMaxSize()) {
+            BlueprintGrid(Modifier.matchParentSize(), step = 28f)
+            Surface(color = H360Cyan, shape = CircleShape, modifier = Modifier.align(Alignment.Center).size(76.dp)) {
+                Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Architecture, null, tint = H360CyanDeep, modifier = Modifier.size(32.dp)) }
             }
         }
+    }
+}
+
+@Composable
+private fun CompactShortcut(
+    title: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    color: Color,
+    modifier: Modifier,
+    onClick: () -> Unit
+) {
+    Surface(color = color, shape = RoundedCornerShape(20.dp), modifier = modifier.height(86.dp).clickable(onClick = onClick), border = BorderStroke(1.dp, H360Line.copy(alpha = .6f))) {
+        Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Icon(icon, null, tint = H360Ink, modifier = Modifier.size(20.dp))
+            Text(title, color = H360Ink, fontSize = 10.sp, fontWeight = FontWeight.Black, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun HomeNavigation(nav: NavHostController, projectCount: Int) {
+    NavigationBar(containerColor = H360Paper, tonalElevation = 0.dp) {
+        NavigationBarItem(true, { nav.navigate("home") }, { Icon(Icons.Rounded.Home, null) }, label = { Text("الرئيسية") })
+        NavigationBarItem(false, { nav.navigate("library") }, {
+            BadgedBox(badge = { if (projectCount > 0) Badge { Text(projectCount.toString()) } }) { Icon(Icons.Rounded.FolderOpen, null) }
+        }, label = { Text("المشاريع") })
+        NavigationBarItem(false, { nav.navigate("cloud") }, { Icon(Icons.Rounded.CloudSync, null) }, label = { Text("السحابة") })
+        NavigationBarItem(false, { nav.navigate("settings") }, { Icon(Icons.Rounded.Tune, null) }, label = { Text("الإعدادات") })
     }
 }
 
 @Composable
 private fun Hai360LibraryScreen(nav: NavHostController, store: ProjectPlanStore, onOpen: (String) -> Unit) {
     val projects = remember { store.listProjects() }
-    Surface(Modifier.fillMaxSize(), color = H360Ivory) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp)) {
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                H360IconButton(Icons.Rounded.ArrowForward, "رجوع") { nav.popBackStack() }
-                Spacer(Modifier.width(12.dp)); H360SectionLabel("ARCHIVE", "مشاريعك")
-            }
-            Spacer(Modifier.height(20.dp))
+    Scaffold(containerColor = H360Ivory, topBar = { SimpleTopBar("المشاريع") { nav.popBackStack() } }) { pad ->
+        Column(Modifier.fillMaxSize().padding(pad).padding(horizontal = 16.dp)) {
             if (projects.isEmpty()) {
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { Text("لا توجد مشاريع بعد", color = H360Muted, fontWeight = FontWeight.Bold) }
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Surface(color = H360Cyan, shape = CircleShape, modifier = Modifier.size(72.dp)) {
+                        Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.FolderOpen, null, tint = H360CyanDeep, modifier = Modifier.size(30.dp)) }
+                    }
+                }
             } else {
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    projects.forEachIndexed { index, p ->
-                        Surface(color = if (p.active) H360Ink else H360Paper, contentColor = if (p.active) Color.White else H360Ink, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth().clickable { onOpen(p.id) }) {
-                            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Surface(color = if (p.active) H360Cyan else H360Ivory, shape = CircleShape, modifier = Modifier.size(42.dp)) { Box(contentAlignment = Alignment.Center) { Text((index + 1).toString().padStart(2, '0'), color = H360Ink, fontWeight = FontWeight.Black) } }
-                                Spacer(Modifier.width(12.dp))
-                                Column(Modifier.weight(1f)) { Text(p.title, fontWeight = FontWeight.Black, fontSize = 14.sp); Text("${p.roomCount} غرف • مراجعة ${p.revision}", color = LocalContentColor.current.copy(alpha = .55f), fontSize = 9.5.sp) }
-                                Icon(Icons.Rounded.ArrowBack, null, tint = LocalContentColor.current.copy(alpha = .55f))
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Spacer(Modifier.height(6.dp))
+                    projects.forEach { p ->
+                        Surface(
+                            color = H360Paper,
+                            shape = RoundedCornerShape(22.dp),
+                            border = BorderStroke(1.dp, if (p.active) H360CyanDeep.copy(alpha = .35f) else H360Line),
+                            shadowElevation = if (p.active) 3.dp else 1.dp,
+                            modifier = Modifier.fillMaxWidth().clickable { onOpen(p.id) }
+                        ) {
+                            Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Surface(color = if (p.active) H360Cyan else H360Sky, shape = CircleShape, modifier = Modifier.size(42.dp)) {
+                                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.HomeWork, null, tint = H360CyanDeep, modifier = Modifier.size(20.dp)) }
+                                }
+                                Spacer(Modifier.width(11.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(p.title, color = H360Ink, fontWeight = FontWeight.Black, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("${p.roomCount} غرف  ·  v${p.revision}", color = H360Muted, fontSize = 9.sp)
+                                }
+                                Icon(Icons.Rounded.ArrowBack, null, tint = H360Muted, modifier = Modifier.size(18.dp))
                             }
                         }
                     }
+                    Spacer(Modifier.height(12.dp))
                 }
             }
         }
@@ -328,40 +478,52 @@ private fun Hai360SettingsScreen(nav: NavHostController) {
     var model by remember { mutableStateOf(settings.model) }
     var saved by remember { mutableStateOf(false) }
 
-    Surface(Modifier.fillMaxSize(), color = H360Ivory) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp)) {
+    Scaffold(containerColor = H360Ivory, topBar = { SimpleTopBar("HAI") { nav.popBackStack() } }) { pad ->
+        Column(Modifier.fillMaxSize().padding(pad).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())) {
             Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) { H360IconButton(Icons.Rounded.ArrowForward, "رجوع") { nav.popBackStack() }; Spacer(Modifier.width(12.dp)); H360SectionLabel("SYSTEM", "اتصال HAI") }
-            Spacer(Modifier.height(18.dp))
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                Surface(color = H360Ink, contentColor = Color.White, shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth()) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Surface(color = H360Cyan, shape = CircleShape, modifier = Modifier.size(42.dp)) { Box(contentAlignment = Alignment.Center) { Text("H", color = H360Ink, fontWeight = FontWeight.Black) } }
-                        Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(if (backendMode) "مسار الخادم" else "اتصال مباشر", fontWeight = FontWeight.Black); Text(if (settings.configured) "الإعداد الحالي قابل للاستخدام" else "يحتاج بيانات اتصال", color = Color.White.copy(alpha = .5f), fontSize = 9.5.sp) }
-                        Switch(backendMode, { backendMode = it; saved = false })
+            Surface(color = H360Paper, shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, H360Line), modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(color = H360Cyan, shape = CircleShape, modifier = Modifier.size(42.dp)) {
+                        Box(contentAlignment = Alignment.Center) { Text("H", color = H360CyanDeep, fontWeight = FontWeight.Black) }
                     }
-                }
-                Spacer(Modifier.height(14.dp))
-                OutlinedTextField(model, { model = it; saved = false }, label = { Text("الموديل") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                Spacer(Modifier.height(10.dp))
-                if (backendMode) {
-                    OutlinedTextField(backendUrl, { backendUrl = it; saved = false }, label = { Text("Backend URL") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                    Spacer(Modifier.height(8.dp)); OutlinedTextField(backendToken, { backendToken = it; saved = false }, label = { Text("Service token") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                } else {
-                    OutlinedTextField(directEndpoint, { directEndpoint = it; saved = false }, label = { Text("Endpoint") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                    Spacer(Modifier.height(8.dp)); OutlinedTextField(directKey, { directKey = it; saved = false }, label = { Text("API key") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                }
-                Spacer(Modifier.height(16.dp))
-                H360PrimaryButton(if (saved) "تم الحفظ" else "حفظ الاتصال", Modifier.fillMaxWidth(), icon = if (saved) Icons.Rounded.Check else Icons.Rounded.Save) {
-                    settings.backendMode = backendMode
-                    settings.backendBaseUrl = backendUrl
-                    settings.backendServiceToken = backendToken
-                    settings.directEndpoint = directEndpoint
-                    settings.directApiKey = directKey
-                    settings.model = model
-                    saved = true
+                    Spacer(Modifier.width(11.dp))
+                    Text(if (backendMode) "الخادم" else "مباشر", color = H360Ink, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+                    Switch(checked = backendMode, onCheckedChange = { backendMode = it; saved = false })
                 }
             }
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(model, { model = it; saved = false }, label = { Text("الموديل") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            Spacer(Modifier.height(9.dp))
+            if (backendMode) {
+                OutlinedTextField(backendUrl, { backendUrl = it; saved = false }, label = { Text("Backend URL") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Spacer(Modifier.height(9.dp))
+                OutlinedTextField(backendToken, { backendToken = it; saved = false }, label = { Text("Token") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            } else {
+                OutlinedTextField(directEndpoint, { directEndpoint = it; saved = false }, label = { Text("Endpoint") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Spacer(Modifier.height(9.dp))
+                OutlinedTextField(directKey, { directKey = it; saved = false }, label = { Text("API key") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            }
+            Spacer(Modifier.height(14.dp))
+            H360PrimaryButton(if (saved) "تم" else "حفظ", Modifier.fillMaxWidth(), icon = if (saved) Icons.Rounded.Check else Icons.Rounded.Save) {
+                settings.backendMode = backendMode
+                settings.backendBaseUrl = backendUrl
+                settings.backendServiceToken = backendToken
+                settings.directEndpoint = directEndpoint
+                settings.directApiKey = directKey
+                settings.model = model
+                saved = true
+            }
+            Spacer(Modifier.height(18.dp))
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SimpleTopBar(title: String, onBack: () -> Unit) {
+    TopAppBar(
+        title = { Text(title, color = H360Ink, fontSize = 22.sp, fontWeight = FontWeight.Black) },
+        navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowForward, "رجوع", tint = H360Ink) } },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = H360Ivory)
+    )
 }

@@ -17,7 +17,7 @@ object PbrSceneFramingEngine {
 
     fun frame(scene: Semantic3DEngine.Scene): Frame {
         val vertices = scene.meshes.flatMap { it.vertices }
-        if (vertices.isEmpty()) return Frame(0f, 1f, 0f, 8f, 7f, 12f, 10f)
+        if (vertices.isEmpty()) return Frame(0f, 1f, 0f, 10f, 5f, 14f, 10f)
 
         // Match GltfPlanExporter coordinate conversion: (semantic x, semantic z, -semantic y).
         val xs = vertices.map { it.x }
@@ -31,13 +31,18 @@ object PbrSceneFramingEngine {
         val tz = ((minZ + maxZ) / 2.0).toFloat()
         val dx = maxX - minX; val dy = maxY - minY; val dz = maxZ - minZ
         val span = max(max(dx, dy), dz).coerceAtLeast(1.0).toFloat()
-        val distance = (sqrt(dx * dx + dz * dz).coerceAtLeast(span.toDouble()) * 1.25).toFloat()
+        val footprintDiagonal = sqrt(dx * dx + dz * dz).coerceAtLeast(span.toDouble())
+
+        // Portrait phones need a much wider architectural establishing shot than the old framing.
+        // Keep the eye near facade level so the roof does not dominate the screen.
+        val distance = (footprintDiagonal * 1.85).toFloat()
+        val eyeLift = max(3.0, dy * 1.4 + span * 0.10).toFloat()
         return Frame(
             targetX = tx,
             targetY = ty,
             targetZ = tz,
-            cameraX = tx + distance * 0.62f,
-            cameraY = maxY.toFloat() + span * 0.55f,
+            cameraX = tx + distance * 0.55f,
+            cameraY = ty + eyeLift,
             cameraZ = tz + distance,
             span = span
         )

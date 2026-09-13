@@ -2,7 +2,7 @@ name: CodeQL Security
 
 on:
   push:
-    branches: [ main, 'codex/**' ]
+    branches: [ main, 'codex/**', 'android-light-rebuild' ]
   pull_request:
     branches: [ main ]
   schedule:
@@ -25,7 +25,7 @@ jobs:
           - language: python
             build-mode: none
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Java
         if: matrix.language == 'java-kotlin'
@@ -36,7 +36,7 @@ jobs:
 
       - name: Set up Gradle
         if: matrix.language == 'java-kotlin'
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Generate Gradle wrapper
         if: matrix.language == 'java-kotlin'
@@ -60,7 +60,7 @@ jobs:
           output: codeql-results/${{ matrix.language }}
 
       - name: Preserve SARIF report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: codeql-${{ matrix.language }}-sarif
           path: codeql-results/${{ matrix.language }}

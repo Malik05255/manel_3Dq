@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "renderer": "blender-pbr-v3",
+  "policy": "Only assets with confirmed redistribution or deployment rights may be placed in this directory.",
+  "resolutionTarget": "2K minimum, 4K preferred for hero exterior materials",
+  "materialSets": {
+    "plaster": ["basecolor", "roughness", "normal"],
+    "concrete": ["basecolor", "roughness", "normal"],
+    "wood": ["basecolor", "roughness", "normal"],
+    "metal": ["basecolor", "roughness", "normal"],
+    "limestone": ["basecolor", "roughness", "normal"],
+    "sand": ["basecolor", "roughness", "normal"],
+    "paving": ["basecolor", "roughness", "normal"],
+    "soil": ["basecolor", "roughness", "normal"]
+  },
+  "allowedExtensions": ["jpg", "jpeg", "png", "webp"],
+  "filenamePattern": "<material>_<map>.<extension>",
+  "requiredLicenseMetadata": ["source", "license", "authorOrProvider", "redistributionAllowed"]
+}

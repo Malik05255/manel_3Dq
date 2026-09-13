@@ -62,11 +62,20 @@ object FloorplanParserEngine {
             }
         }
 
+        val originalSize = current.size
+        val matchedOriginal = mutableSetOf<Int>()
+        val independentNetwork = rasterWalls.count { it.confidence >= 68 && wallLength(it) >= 2.5f } >= 4
+
         rasterWalls.forEach { raster ->
             val matchIndex = current.indexOfFirst { similarLine(it, raster) }
             if (matchIndex >= 0) {
                 val old = current[matchIndex]
-                current[matchIndex] = old.copy(confidence = max(old.confidence, min(96, raster.confidence + 16)))
+                val consensusKind = if (old.kind.contains("consensus", true)) old.kind else "consensus-${old.kind}"
+                current[matchIndex] = old.copy(
+                    confidence = max(old.confidence, min(96, raster.confidence + 16)),
+                    kind = consensusKind
+                )
+                if (matchIndex < originalSize) matchedOriginal += matchIndex
             } else {
                 val support = boundarySupport(plan, raster)
                 if (support >= 2 && raster.confidence >= 60) {
@@ -77,6 +86,21 @@ object FloorplanParserEngine {
                 }
             }
         }
+
+        if (independentNetwork && originalSize > 0) {
+            for (index in 0 until originalSize) {
+                if (index in matchedOriginal) continue
+                val wall = current[index]
+                val alreadyIndependent = wall.kind.contains("raster", true) || wall.kind.contains("remote", true) || wall.kind.contains("consensus", true)
+                if (!alreadyIndependent && wall.confidence > 64) {
+                    current[index] = wall.copy(confidence = 64)
+                }
+            }
+            if (matchedOriginal.size < maxOf(1, originalSize / 3)) {
+                uncertainties += "شبكة الجدران المستقلة لا تتفق بما يكفي مع قراءة Vision؛ خُفضت ثقة الجدران غير المدعومة بدل اعتمادها تلقائيًا."
+            }
+        }
+
         return current.distinctBy { signature(it) }
     }
 
