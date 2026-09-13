@@ -2,7 +2,7 @@ name: CodeQL Security
 
 on:
   push:
-    branches: [ main, 'codex/**' ]
+    branches: [ main, 'codex/**', 'android-light-rebuild' ]
   pull_request:
     branches: [ main ]
   schedule:
@@ -25,7 +25,7 @@ jobs:
           - language: python
             build-mode: none
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Java
         if: matrix.language == 'java-kotlin'
