@@ -17,7 +17,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-/** Vision path for images and multi-page PDFs. Project type is context, never visual evidence. */
 class MultiPageHaiPlanAnalyzer(private val context:Context) {
     private val settings=HaiSettings(context)
     private val renderer=PdfPageRendererEngine(context)
@@ -26,13 +25,13 @@ class MultiPageHaiPlanAnalyzer(private val context:Context) {
 
     suspend fun analyze(
         uri:Uri,
-        maxPdfPages:Int=5,
+        maxPdfPages:Int=8,
         projectType:SaudiProjectTypeEngine.Type?=null
     ):FloorPlan=withContext(Dispatchers.IO) {
         check(settings.configured){"أدخل إعدادات الذكاء الاصطناعي أولًا"}
         val isPdf=renderer.isPdf(uri)
         val total=if(isPdf) renderer.pageCount(uri) else 1
-        val images=renderer.render(uri,maxPdfPages=maxPdfPages,targetMaxPx=2200,jpegQuality=92)
+        val images=renderer.render(uri,maxPdfPages=maxPdfPages,targetMaxPx=2800,jpegQuality=96)
         val typeContext=projectType?.let { type ->
             "\n\nاختيار المستخدم المسبق: نوع المشروع هو «${type.label}». استخدمه فقط لفهم وظيفة المساحات والتسميات؛ لا تجبر الصورة على عناصر غير ظاهرة، ولا تحول اختيار المستخدم إلى دليل بصري."
         }.orEmpty()
@@ -55,7 +54,7 @@ class MultiPageHaiPlanAnalyzer(private val context:Context) {
         val messages=JSONArray()
             .put(JSONObject().put("role","system").put("content",SYSTEM_PROMPT))
             .put(JSONObject().put("role","user").put("content",content))
-        val payload=JSONObject().put("model",settings.model).put("messages",messages).put("temperature",0.02)
+        val payload=JSONObject().put("model",settings.model).put("messages",messages).put("temperature",0.01)
         val req=Request.Builder().url(settings.endpoint)
             .header("Authorization","Bearer ${settings.apiKey}")
             .header("Content-Type","application/json")
@@ -69,7 +68,7 @@ class MultiPageHaiPlanAnalyzer(private val context:Context) {
 
     companion object {
         private val SYSTEM_PROMPT="""
-أنت HAI Architect داخل تطبيق منزلي HAI. اقرأ المخطط كبيانات هندسية دقيقة. افصل بين المقروء والاستنتاج وما يحتاج تأكيدًا. لا تختلق أبعادًا أو صفة إنشائية. حافظ على هوية الغرف والجدران والفتحات. افهم المخططات السكنية السعودية وخصوصية الضيافة والعائلة، لكن لا تدّع مطابقة كود أو اشتراط رسمي بلا قاعدة موثقة. مهمتك في القراءة هي الاكتمال: لا تُسقط مساحة مغلقة ظاهرة، ولا تُسقط رقمًا مرئيًا فقط لأنه لا تعرف معناه. عندما لا تعرف تسمية مساحة مغلقة، أدرجها باسم «مساحة غير مسماة» وثقة أقل بدل تجاهلها.
+أنت HAI Architect داخل تطبيق منزلي HAI. اقرأ المخطط كبيانات هندسية دقيقة. افصل بين المقروء والاستنتاج وما يحتاج تأكيدًا. لا تختلق أبعادًا أو صفة إنشائية. حافظ على هوية الغرف والجدران والفتحات. افهم المخططات السكنية السعودية وخصوصية الضيافة والعائلة، لكن لا تدّع مطابقة كود أو اشتراط رسمي بلا قاعدة موثقة. مهمتك في القراءة هي الاكتمال: لا تُسقط مساحة مغلقة ظاهرة، ولا تُسقط رقمًا مرئيًا فقط لأنه لا تعرف معناه. عندما لا تعرف تسمية مساحة مغلقة، أدرجها باسم «مساحة غير مسماة» وثقة أقل بدل تجاهلها. افحص الخطوط الرفيعة والقديمة والمنحنية والمقطوعة بسبب الأبواب، ولا تحول الانحناء الحقيقي إلى خط مستقيم واحد.
 """.trimIndent()
 
         private val ANALYZE_PROMPT="""
@@ -96,6 +95,9 @@ class MultiPageHaiPlanAnalyzer(private val context:Context) {
 8) area_m2 لا تضعها إلا إذا كانت مكتوبة بوضوح داخل المساحة أو قابلة للحساب من أبعاد مؤكدة؛ وإلا 0.
 9) لا تخمن رقمًا غير مقروء. عند وجود رقم جزئي أو ملتبس ضعه في uncertainties بدل اختلاق قيمة.
 10) قبل الإخراج قارن عدد rooms بصريًا بعدد الفراغات المحاطة بالجدران، وقارن walls بالرسم مرة ثانية لتجنب السهو.
+11) الجدار المنحني أو القوسي لا تمثله بقطعة مستقيمة واحدة. مثّله كسلسلة من 6 إلى 24 مقطعًا قصيرًا متصلًا في walls حسب شدة الانحناء، مع id متسلسل مثل curve1-01 وcurve1-02. حافظ على مسار القوس ونقطتي بدايته ونهايته بصريًا.
+12) إذا كان المخطط قديمًا أو باهتًا، افحص كل ربع بصريًا بصورة مستقلة، ثم طابق الجدران والأرقام على مستوى الصفحة كاملة. ارفع uncertainty بدل إسقاط العنصر عندما يكون موجودًا لكن دقته غير كافية.
+13) لا ترفع confidence إلى 100 إلا إذا كان العنصر واضحًا وغير ملتبس ويمكن تحديد حدوده أو قيمته دون افتراض.
 """.trimIndent()
     }
 }
