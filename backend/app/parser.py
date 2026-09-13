@@ -114,13 +114,72 @@ def _extract_lines(mask: np.ndarray, confidence: int) -> list[dict[str, Any]]:
     return out
 
 
-def _recover_sparse_walls(image: np.ndarray, walls: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+def _extract_enclosed_rooms(wall_mask: np.ndarray, confidence: int) -> list[dict[str, Any]]:
+    h, w = wall_mask.shape[:2]
+    if h < 16 or w < 16:
+        return []
+    k = max(3, int(round(min(w, h) / 220.0)))
+    if k % 2 == 0:
+        k += 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
+    sealed = cv2.morphologyEx(wall_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    sealed = cv2.dilate(sealed, kernel, iterations=1)
+    free = cv2.bitwise_not(sealed)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(free, connectivity=8)
+    total = float(w * h)
+    min_area = max(220.0, total * 0.0025)
+    max_area = total * 0.42
+    rooms: list[dict[str, Any]] = []
+
+    for label in range(1, count):
+        x, y, rw, rh, area = map(int, stats[label])
+        if area < min_area or area > max_area:
+            continue
+        if x <= 1 or y <= 1 or x + rw >= w - 1 or y + rh >= h - 1:
+            continue
+        component = np.zeros((h, w), dtype=np.uint8)
+        component[labels == label] = 255
+        contours, _ = cv2.findContours(component, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            continue
+        contour = max(contours, key=cv2.contourArea)
+        perimeter = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, max(1.5, perimeter * 0.018), True)
+        points = approx.reshape(-1, 2) if len(approx) >= 3 else contour.reshape(-1, 2)
+        if len(points) < 3:
+            continue
+        if len(points) > 16:
+            rect = cv2.boxPoints(cv2.minAreaRect(contour)).astype(np.int32)
+            points = rect
+        polygon = [
+            {"x": float(px) / max(w, 1) * 100.0, "y": float(py) / max(h, 1) * 100.0}
+            for px, py in points
+        ]
+        rooms.append({
+            "id": f"remote-room-{len(rooms)}",
+            "name": f"مساحة مكتشفة {len(rooms) + 1}",
+            "type": "unknown",
+            "x": x / max(w, 1) * 100.0,
+            "y": y / max(h, 1) * 100.0,
+            "width": rw / max(w, 1) * 100.0,
+            "height": rh / max(h, 1) * 100.0,
+            "area_m2": 0.0,
+            "confidence": confidence,
+            "polygon": polygon,
+        })
+        if len(rooms) >= 60:
+            break
+    return rooms
+
+
+def _recover_sparse_walls(image: np.ndarray, walls: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool, np.ndarray | None]:
     if len(walls) >= 3:
-        return walls, False
-    recovered = _extract_lines(_fallback_wall_mask(image), confidence=68)
+        return walls, False, None
+    fallback_mask = _fallback_wall_mask(image)
+    recovered = _extract_lines(fallback_mask, confidence=68)
     if len(recovered) >= 3 and len(recovered) > len(walls):
-        return recovered, True
-    return walls, False
+        return recovered, True, fallback_mask
+    return walls, False, None
 
 
 def _extract_openings(mask: np.ndarray, kind: str, confidence: int) -> list[dict[str, Any]]:
@@ -187,10 +246,12 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
     openings: list[dict[str, Any]] = []
     coverage: dict[str, float] = {}
     warnings: list[str] = []
+    room_mask: np.ndarray | None = None
 
     if runtime is not None:
         prediction = runtime.predict(image)
         wall_mask = ((prediction == 1) * 255).astype(np.uint8)
+        room_mask = wall_mask
         door_mask = ((prediction == 2) * 255).astype(np.uint8)
         window_mask = ((prediction == 3) * 255).astype(np.uint8)
         walls = _extract_lines(wall_mask, confidence=90)
@@ -204,12 +265,14 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
         session = _onnx_session()
         mask = _mask_from_onnx(image, session) if session is not None else None
         if mask is not None:
+            room_mask = mask
             walls = _extract_lines(mask, confidence=82)
             model_used = "onnx"
             model_meta = {"name": "configured-onnx", "license": "operator-supplied"}
             base_confidence = 80
         else:
             mask = _fallback_wall_mask(image)
+            room_mask = mask
             walls = _extract_lines(mask, confidence=68)
             model_used = "opencv-fallback"
             model_meta = model_status()
@@ -217,11 +280,16 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
             warnings.append("Real segmentation weights are not available; deterministic OpenCV evidence was used.")
 
     if model_used != "opencv-fallback":
-        walls, recovered = _recover_sparse_walls(image, walls)
+        walls, recovered, recovered_mask = _recover_sparse_walls(image, walls)
         if recovered:
+            room_mask = recovered_mask
             model_used = f"{model_used}+opencv-recovery"
             base_confidence = min(base_confidence, 68)
             warnings.append("Segmentation returned insufficient wall geometry; deterministic OpenCV recovery supplied reviewable wall evidence.")
+
+    rooms = _extract_enclosed_rooms(room_mask, confidence=max(60, base_confidence - 8)) if room_mask is not None and len(walls) >= 3 else []
+    if walls and not rooms:
+        warnings.append("Walls were detected but no closed room regions were reliable enough; review the wall overlay before 3D.")
 
     ocr_lines = _ocr(image)
     confidence = min(97, base_confidence + min(len(walls), 14) // 3 + (2 if ocr_lines else 0)) if walls else 0
@@ -231,6 +299,7 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
         "arabic_ocr": "easyocr" if _easy_reader() is not None else "unavailable",
         "confidence": confidence,
         "walls": walls,
+        "rooms": rooms,
         "openings": openings,
         "ocr_lines": ocr_lines,
         "class_coverage": coverage,
