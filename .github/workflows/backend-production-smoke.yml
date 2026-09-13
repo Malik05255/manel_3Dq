@@ -23,11 +23,10 @@ jobs:
       BACKEND_URL: ${{ secrets.MANZILI_PROD_BACKEND_URL || 'https://manzili-hai-deep-parser.onrender.com' }}
       BACKEND_TOKEN: ${{ secrets.MANZILI_PROD_API_TOKEN }}
     steps:
-      - name: Require production authentication secret
+      - name: Validate production endpoint
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$BACKEND_TOKEN" || (echo 'MANZILI_PROD_API_TOKEN is missing' >&2; exit 1)
           case "$BACKEND_URL" in
             https://*) ;;
             *) echo 'Production backend must use HTTPS' >&2; exit 1 ;;
@@ -39,6 +38,7 @@ jobs:
           set -euo pipefail
           for attempt in $(seq 1 30); do
             if BODY="$(curl --fail --silent --show-error --max-time 45 "${BACKEND_URL%/}/health" 2>/dev/null)"; then
+              echo "health=$BODY"
               if python -c 'import json,sys; d=json.loads(sys.argv[1]); required=("ai_configured","service_auth_configured","supabase_configured","deep_parser_ready"); missing=[k for k in required if d.get(k) is not True]; assert d.get("version")=="0.62.0", d; assert not missing, f"production services not configured: {missing}; health={d}"' "$BODY"; then
                 echo "production config ok"
                 exit 0
@@ -55,7 +55,14 @@ jobs:
         run: |
           set -euo pipefail
           BODY="$(curl --fail --silent --show-error --max-time 45 "${BACKEND_URL%/}/readyz")"
+          echo "readyz=$BODY"
           python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("ok") is True and d.get("deep_parser_ready") is True, d; assert d.get("version")=="0.62.0", d; print("readyz ok", d.get("version"))' "$BODY"
+
+      - name: Require production authentication secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$BACKEND_TOKEN" || (echo 'MANZILI_PROD_API_TOKEN is missing from GitHub Actions secrets' >&2; exit 1)
 
       - name: Verify authenticated parser readiness
         shell: bash
