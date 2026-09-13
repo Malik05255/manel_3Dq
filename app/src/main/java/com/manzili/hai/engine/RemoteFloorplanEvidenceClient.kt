@@ -48,7 +48,11 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
 
     private val settings = HaiSettings(context)
     private val renderer = PdfPageRendererEngine(context)
-    private val http = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(180, TimeUnit.SECONDS).build()
+    private val http = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(300, TimeUnit.SECONDS)
+        .callTimeout(330, TimeUnit.SECONDS)
+        .build()
 
     val available: Boolean get() = settings.backendConfigured
 
@@ -80,7 +84,12 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         require(available) { "Backend غير مفعّل" }
         val state=readiness()
         require(state.ready) { "Deep Parser غير جاهز: ${state.detail.ifBlank { state.preferredPath }}" }
-        val images = renderer.render(uri, maxPdfPages = maxPdfPages.coerceIn(1,12), targetMaxPx = 1800, jpegQuality = 88)
+        val images = renderer.render(
+            uri,
+            maxPdfPages = maxPdfPages.coerceIn(1,12),
+            targetMaxPx = 2600,
+            jpegQuality = 94
+        )
         val pages = images.map { image -> requestPage(image.pageIndex, image.base64Jpeg) }
         Result(pages)
     }
@@ -152,6 +161,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
                 val o = openingsJson.optJSONObject(i) ?: continue
                 val type = o.optString("type").lowercase()
                 if (type != "door" && type != "window") continue
+                val rawWallId = o.optString("wallId").takeIf { it.isNotBlank() }
                 add(Opening(
                     id = prefix + o.optString("id", "remote-opening-$i"),
                     type = type,
@@ -159,6 +169,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
                     y = o.optDouble("y").toFloat().coerceIn(0f, 100f),
                     width = o.optDouble("width", 1.0).toFloat().coerceIn(.2f, 20f),
                     rotationDeg = o.optDouble("rotation_deg", 0.0).toFloat(),
+                    wallId = rawWallId?.let { prefix + it },
                     confidence = o.optInt("confidence", 75).coerceIn(0, 100)
                 ))
             }
