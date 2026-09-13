@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/backend-production-smoke.yml'
       - 'render.yaml'
+      - 'backend/app/**'
   workflow_run:
     workflows: [ 'Backend Build' ]
     types: [ completed ]
@@ -23,6 +24,7 @@ jobs:
       BACKEND_URL: ${{ secrets.MANZILI_PROD_BACKEND_URL || 'https://manzili-hai-deep-parser.onrender.com' }}
       BACKEND_TOKEN: ${{ secrets.MANZILI_PROD_API_TOKEN }}
       CONFIG_ATTEMPTS: ${{ github.event_name == 'workflow_run' && '30' || '1' }}
+      EXPECTED_GIT_COMMIT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
     steps:
       - name: Validate production endpoint
         shell: bash
@@ -33,18 +35,18 @@ jobs:
             *) echo 'Production backend must use HTTPS' >&2; exit 1 ;;
           esac
 
-      - name: Wait for core production readiness
+      - name: Wait for exact production deployment and core readiness
         shell: bash
         run: |
           set -euo pipefail
           for attempt in $(seq 1 "$CONFIG_ATTEMPTS"); do
             if BODY="$(curl --fail --silent --show-error --max-time 45 "${BACKEND_URL%/}/health" 2>/dev/null)"; then
               echo "health=$BODY"
-              if python -c 'import json,sys; d=json.loads(sys.argv[1]); required=("service_auth_configured","supabase_configured","deep_parser_ready"); missing=[k for k in required if d.get(k) is not True]; assert d.get("version")=="0.62.0", d; assert not missing, f"core production services not configured: {missing}; health={d}"' "$BODY"; then
+              if python -c 'import json,sys; d=json.loads(sys.argv[1]); expected=sys.argv[2]; required=("service_auth_configured","supabase_configured","deep_parser_ready"); missing=[k for k in required if d.get(k) is not True]; assert d.get("version")=="0.62.0", d; assert not missing, f"core production services not configured: {missing}; health={d}"; assert not expected or d.get("git_commit")==expected, f"production commit mismatch: expected={expected} actual={d.get('"'"'git_commit'"'"')}"' "$BODY" "$EXPECTED_GIT_COMMIT"; then
                 if ! python -c 'import json,sys; d=json.loads(sys.argv[1]); raise SystemExit(0 if d.get("ai_configured") is True else 1)' "$BODY"; then
                   echo '::warning::Server AI provider is not configured; HAI/vision is degraded while Deep Parser remains available.'
                 fi
-                echo "core production readiness ok"
+                echo "exact production deployment and core readiness ok"
                 exit 0
               fi
             fi
@@ -53,7 +55,7 @@ jobs:
               sleep 20
             fi
           done
-          echo 'Core production configuration is incomplete or unavailable' >&2
+          echo 'Production did not reach the expected commit or core readiness' >&2
           exit 1
 
       - name: Verify public readiness
@@ -62,7 +64,7 @@ jobs:
           set -euo pipefail
           BODY="$(curl --fail --silent --show-error --max-time 45 "${BACKEND_URL%/}/readyz")"
           echo "readyz=$BODY"
-          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("ok") is True and d.get("deep_parser_ready") is True, d; assert d.get("version")=="0.62.0", d; print("readyz ok", d.get("version"))' "$BODY"
+          python -c 'import json,sys; d=json.loads(sys.argv[1]); expected=sys.argv[2]; assert d.get("ok") is True and d.get("deep_parser_ready") is True, d; assert d.get("version")=="0.62.0", d; assert not expected or d.get("git_commit")==expected, d; print("readyz ok", d.get("version"), d.get("git_commit"))' "$BODY" "$EXPECTED_GIT_COMMIT"
 
       - name: Verify authenticated parser readiness when test credential is available
         shell: bash
