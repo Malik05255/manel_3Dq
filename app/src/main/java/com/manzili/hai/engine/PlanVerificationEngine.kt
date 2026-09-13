@@ -53,10 +53,17 @@ object PlanVerificationEngine {
 
         val values = normalized.rooms.map { it.confidence } + normalized.walls.map { it.confidence } + normalized.openings.map { it.confidence }
         val elementConfidence = if (values.isEmpty()) 35 else values.average().toInt()
+        val numericCount = PlanNumberEvidenceEngine.numericLabels(normalized.dimensions).size
         val roomCoveragePenalty = if (normalized.rooms.isEmpty() && normalized.walls.size >= 4) 24 else 0
         val geometryPenalty = polygonReport.errors.size * 20
         val uncertaintyPenalty = normalized.uncertainties.size * 3
-        val reading = (elementConfidence - roomCoveragePenalty - uncertaintyPenalty - geometryPenalty).coerceIn(0, 100)
+        val completenessBonus =
+            (if (normalized.rooms.isNotEmpty()) 5 else 0) +
+            (if (normalized.walls.size >= 4) 3 else 0) +
+            (if (normalized.openings.isNotEmpty()) 2 else 0) +
+            (if (numericCount >= 3) 4 else if (numericCount > 0) 2 else 0) +
+            (if (scale >= 80) 4 else if (scale >= 65) 2 else 0)
+        val reading = (elementConfidence + completenessBonus - roomCoveragePenalty - uncertaintyPenalty - geometryPenalty).coerceIn(0, 100)
         val plan = normalized.copy(scaleConfidence = scale)
         val confirmed = plan.dimensions.count {
             !it.axis.startsWith("label-") && !it.id.startsWith("num-") && it.confidence >= 70
