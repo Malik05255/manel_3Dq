@@ -1,14 +1,17 @@
 services:
   - type: web
     name: manzili-hai-deep-parser
-    runtime: docker
-    dockerfilePath: ./backend/Dockerfile.ml
-    dockerContext: ./backend
+    runtime: python
+    buildCommand: >-
+      pip install -r backend/requirements-ml-cpu.txt &&
+      FLOORPLAN_SAFETENSORS_MODEL=/opt/render/project/src/backend/models/floorplan/best.safetensors
+      python backend/scripts/fetch_floorplan_model.py
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /readyz
     autoDeployTrigger: commit
     envVars:
       - key: FLOORPLAN_SAFETENSORS_MODEL
-        value: /opt/manzili/models/floorplan/best.safetensors
+        value: /opt/render/project/src/backend/models/floorplan/best.safetensors
       - key: FLOORPLAN_DEVICE
         value: cpu
       - key: FLOORPLAN_TORCH_THREADS

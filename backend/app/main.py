@@ -41,6 +41,10 @@ def _supabase_config() -> tuple[str, str]:
     )
 
 
+def _deployed_git_commit() -> str | None:
+    return os.getenv("RENDER_GIT_COMMIT", "").strip() or None
+
+
 async def _supabase_user(token: str) -> dict[str, Any]:
     supabase_url, publishable = _supabase_config()
     if not supabase_url or not publishable:
@@ -89,6 +93,7 @@ async def health() -> dict[str, Any]:
     return {
         "ok": True,
         "version": app.version,
+        "git_commit": _deployed_git_commit(),
         "ai_configured": bool(os.getenv("AI_API_KEY")),
         "service_auth_configured": bool(os.getenv("MANZILI_API_TOKEN")),
         "supabase_configured": bool(supabase_url and publishable),
@@ -103,7 +108,13 @@ async def readiness() -> dict[str, Any]:
     floorplan = model_status()
     if not floorplan.get("configured"):
         raise HTTPException(503, "Deep Parser model weights are not loaded")
-    return {"ok": True, "version": app.version, "deep_parser_ready": True, "model": floorplan}
+    return {
+        "ok": True,
+        "version": app.version,
+        "git_commit": _deployed_git_commit(),
+        "deep_parser_ready": True,
+        "model": floorplan,
+    }
 
 
 @app.get("/v1/parser/status")

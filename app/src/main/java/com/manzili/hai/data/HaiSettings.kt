@@ -3,6 +3,7 @@ package com.manzili.hai.data
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.manzili.hai.BuildConfig
 
 /** Connection settings. Production backend is the default path; secrets remain encrypted on-device. */
 class HaiSettings(context: Context) {
@@ -30,6 +31,20 @@ class HaiSettings(context: Context) {
             val target = if (looksLikeJwt(old)) KEY_SUPABASE_ACCESS_TOKEN else KEY_BACKEND_SERVICE_TOKEN
             secure.edit().putString(target, old).apply()
         }
+
+        // Supabase project URL and publishable key are public client configuration. Fill only
+        // blank values so existing installations with an intentional custom project are preserved.
+        val cloudEdits = legacy.edit()
+        var cloudChanged = false
+        if (legacy.getString("supabaseUrl", "").isNullOrBlank()) {
+            cloudEdits.putString("supabaseUrl", BuildConfig.SUPABASE_URL)
+            cloudChanged = true
+        }
+        if (legacy.getString("supabasePublishableKey", "").isNullOrBlank()) {
+            cloudEdits.putString("supabasePublishableKey", BuildConfig.SUPABASE_PUBLISHABLE_KEY)
+            cloudChanged = true
+        }
+        if (cloudChanged) cloudEdits.apply()
     }
 
     var directEndpoint: String
@@ -73,11 +88,11 @@ class HaiSettings(context: Context) {
         set(v) { backendServiceToken = v }
 
     var supabaseUrl: String
-        get() = legacy.getString("supabaseUrl", "")!!
+        get() = legacy.getString("supabaseUrl", BuildConfig.SUPABASE_URL)!!
         set(v) = legacy.edit().putString("supabaseUrl", v.trim().trimEnd('/')).apply()
 
     var supabasePublishableKey: String
-        get() = legacy.getString("supabasePublishableKey", "")!!
+        get() = legacy.getString("supabasePublishableKey", BuildConfig.SUPABASE_PUBLISHABLE_KEY)!!
         set(v) = legacy.edit().putString("supabasePublishableKey", v.trim()).apply()
 
     var refreshToken: String
