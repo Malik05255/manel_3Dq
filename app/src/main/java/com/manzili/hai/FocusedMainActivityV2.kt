@@ -25,6 +25,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.manzili.hai.data.ProjectPlanStore
+import com.manzili.hai.data.ProjectSourceStore
 import com.manzili.hai.engine.MultiFloorGeometryEngine
 import com.manzili.hai.engine.PlanVerificationEngine
 import com.manzili.hai.engine.ProjectMemoryEngine
@@ -44,6 +45,7 @@ private fun FocusedAppV2() {
     val nav = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
     val store = remember { ProjectPlanStore(context) }
+    val sourceStore = remember { ProjectSourceStore(context) }
     var plan by remember {
         mutableStateOf(
             store.load()?.let {
@@ -54,19 +56,20 @@ private fun FocusedAppV2() {
         )
     }
     var pending by remember { mutableStateOf<FloorPlan?>(null) }
-    var source by remember { mutableStateOf<Uri?>(null) }
+    var source by remember { mutableStateOf(sourceStore.load(store.activeProjectId())) }
     var selectedType by remember { mutableStateOf<SaudiProjectTypeEngine.Type?>(null) }
     var rulesEnabled by remember { mutableStateOf(plan?.saudiRulesEnabled ?: false) }
 
-    fun createProject(next: FloorPlan) {
+    fun createProject(next: FloorPlan): String {
         val requested = next.copy(saudiRulesEnabled = next.saudiRulesEnabled || rulesEnabled)
         val verified = SaudiResidentialEngine.normalize(PlanVerificationEngine.inspect(requested).plan)
         val ready = MultiFloorGeometryEngine.persistActive(
             MultiFloorGeometryEngine.normalize(ProjectMemoryEngine.reconcile(verified))
         )
-        store.createProject(ready)
+        val id = store.createProject(ready)
         plan = ready
         rulesEnabled = ready.saudiRulesEnabled
+        return id
     }
 
     fun updateProject(next: FloorPlan, allowRulesChange: Boolean = false) {
@@ -81,6 +84,16 @@ private fun FocusedAppV2() {
         store.save(ready)
         plan = ready
         rulesEnabled = ready.saudiRulesEnabled
+    }
+
+    fun setOpenedPlan(opened: FloorPlan?) {
+        plan = opened?.let {
+            MultiFloorGeometryEngine.normalize(
+                SaudiResidentialEngine.normalize(PlanVerificationEngine.inspect(it).plan)
+            )
+        }
+        source = sourceStore.load(store.activeProjectId())
+        rulesEnabled = plan?.saudiRulesEnabled ?: false
     }
 
     fun toggleRules(enabled: Boolean) {
@@ -103,7 +116,11 @@ private fun FocusedAppV2() {
                 composable("home") { FocusedHomeV2(nav, plan, store.listProjects().size) }
 
                 composable("import-type") {
-                    LaunchedEffect(Unit) { rulesEnabled = false }
+                    LaunchedEffect(Unit) {
+                        rulesEnabled = false
+                        source = null
+                        pending = null
+                    }
                     SaudiProjectTypeScreen(nav, "نوع المشروع", "") { type ->
                         selectedType = type
                         nav.navigate("import")
@@ -123,14 +140,18 @@ private fun FocusedAppV2() {
                 composable("verify") {
                     ImportedProjectWorkspaceScreen(nav, source, pending) { confirmed ->
                         val type = selectedType ?: SaudiProjectTypeEngine.infer(confirmed)
-                        createProject(SaudiProjectTypeEngine.apply(confirmed, type))
+                        val id = createProject(SaudiProjectTypeEngine.apply(confirmed, type))
+                        sourceStore.save(id, source)
                         pending = null
                         nav.navigate("editor") { popUpTo("home") }
                     }
                 }
 
                 composable("new") {
-                    LaunchedEffect(Unit) { rulesEnabled = false }
+                    LaunchedEffect(Unit) {
+                        rulesEnabled = false
+                        source = null
+                    }
                     SaudiProjectTypeScreen(nav, "نوع المشروع", "") { type ->
                         selectedType = type
                         nav.navigate("new-brief")
@@ -168,14 +189,11 @@ private fun FocusedAppV2() {
                 }
 
                 composable("projects") {
-                    ProjectLibraryScreen(nav, store) { opened ->
-                        plan = opened?.let {
-                            MultiFloorGeometryEngine.normalize(
-                                SaudiResidentialEngine.normalize(PlanVerificationEngine.inspect(it).plan)
-                            )
-                        }
-                        rulesEnabled = plan?.saudiRulesEnabled ?: false
-                    }
+                    ProjectLibraryScreen(nav, store, ::setOpenedPlan)
+                }
+
+                composable("cloud") {
+                    CloudSyncScreen(nav, store, ::setOpenedPlan)
                 }
 
                 composable("settings") { ProductionAiSettings(nav) }
@@ -205,6 +223,9 @@ private fun FocusedHomeV2(nav: NavHostController, plan: FloorPlan?, projectCount
                 Spacer(Modifier.width(10.dp))
                 Text("منزلي", fontSize = 21.sp, fontWeight = FontWeight.Black)
                 Spacer(Modifier.weight(1f))
+                IconButton(onClick = { nav.navigate("cloud") }) {
+                    Icon(Icons.Rounded.CloudSync, "السحابة")
+                }
                 IconButton(onClick = { nav.navigate("settings") }) {
                     Icon(Icons.Rounded.Tune, "الإعدادات")
                 }
