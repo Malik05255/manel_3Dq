@@ -5,9 +5,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Done
+import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Done
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -48,19 +48,19 @@ fun SaudiNewBuildScreen(nav: NavHostController, onChoose: (FloorPlan) -> Unit) {
     var candidates by remember { mutableStateOf<List<NewBuildSolver.Candidate>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F4EE)) {
+    Surface(Modifier.fillMaxSize(), color = StudioColors.Canvas) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 18.dp)) {
             Row(Modifier.fillMaxWidth()) {
-                IconButton(onClick = { if (candidates.isNotEmpty()) candidates=emptyList() else if(step>0) step-- else nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward,"رجوع") }
+                IconButton(onClick = { if (candidates.isNotEmpty()) candidates=emptyList() else if(step>0) step-- else nav.popBackStack() }) { Icon(Icons.Outlined.ArrowForward,"رجوع") }
                 Column(Modifier.weight(1f)) {
-                    Text("مهندس الفيلا السعودية", fontSize=23.sp, fontWeight=FontWeight.Black)
-                    Text(if(candidates.isEmpty()) "جلسة تصميم ${step+1} من 3 • الأرض → الأسرة → أسلوب المعيشة" else "أفضل 3 حلول بعد البحث الهندسي السعودي", color=Color.Gray, fontSize=10.sp)
+                    Text("مهندس الفيلا السعودية", fontSize=23.sp, fontWeight=FontWeight.Bold)
+                    Text(if(candidates.isEmpty()) "جلسة تصميم ${step+1} من 3 • الأرض → الأسرة → أسلوب المعيشة" else "أفضل 3 حلول بعد البحث الهندسي السعودي", color=Color.Gray, fontSize=12.sp)
                 }
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 if(candidates.isEmpty()) {
                     val ctx=SaudiResidentialEngine.context(city)
-                    AssistChip(onClick={}, label={Text("${ctx.regionLabel} • ${ctx.defaultStyle.label}", fontSize=9.sp)})
+                    AssistChip(onClick={}, label={Text("${ctx.regionLabel} • ${ctx.defaultStyle.label}", fontSize=12.sp)})
                     when(step) {
                         0 -> {
                             H("الأرض والشارع","لا أفترض ارتدادًا بلديًا. نثبت فقط ما تعرفه عن الأرض والشارع.")
@@ -69,7 +69,7 @@ fun SaudiNewBuildScreen(nav: NavHostController, onChoose: (FloorPlan) -> Unit) {
                                 OutlinedTextField(width,{width=it.numeric()},label={Text("عرض الأرض م")},modifier=Modifier.weight(1f),singleLine=true)
                                 OutlinedTextField(depth,{depth=it.numeric()},label={Text("طول الأرض م")},modifier=Modifier.weight(1f),singleLine=true)
                             }
-                            Text("جهة الشارع الرئيسي",fontWeight=FontWeight.Bold,fontSize=11.sp,modifier=Modifier.padding(top=10.dp))
+                            Text("جهة الشارع الرئيسي",fontWeight=FontWeight.Bold,fontSize=12.sp,modifier=Modifier.padding(top=10.dp))
                             Row(horizontalArrangement=Arrangement.spacedBy(5.dp)) { listOf("شمال","شرق","جنوب","غرب").forEach { s->FilterChip(selected=streetSide==s,onClick={streetSide=s},label={Text(s)}) } }
                             Row(horizontalArrangement=Arrangement.spacedBy(7.dp)) {
                                 OutlinedTextField(streetWidth,{streetWidth=it.numeric()},label={Text("عرض الشارع م (إن كان معروفًا)")},modifier=Modifier.weight(1f),singleLine=true)
@@ -88,12 +88,12 @@ fun SaudiNewBuildScreen(nav: NavHostController, onChoose: (FloorPlan) -> Unit) {
                             H("الحياة اليومية والهوية","نحوّل تفضيلاتك إلى قواعد تصميم، لا إلى زخرفة فقط.")
                             Toggle("حوش/فناء عائلي خاص",courtyard){courtyard=it}; Toggle("مدخل عائلة منفصل",familyEntry){familyEntry=it}; Toggle("مسار خدمة مستقل",serviceEntry){serviceEntry=it}
                             S("الخصوصية",privacy){privacy=it}; S("سهولة الحركة",circulation){circulation=it}; S("الإضاءة الطبيعية",daylight){daylight=it}
-                            Text("هوية الواجهة/3D",fontWeight=FontWeight.Bold,fontSize=11.sp)
+                            Text("هوية الواجهة/3D",fontWeight=FontWeight.Bold,fontSize=12.sp)
                             listOf("سعودي معاصر","نجدي معاصر","حجازي معاصر","عسيري معاصر","نيوكلاسيك سعودي").forEach { s-> FilterChip(selected=style==s,onClick={style=s},label={Text(s)},modifier=Modifier.padding(end=4.dp)) }
                             OutlinedTextField(notes,{notes=it},label={Text("تعليماتك الخاصة")},modifier=Modifier.fillMaxWidth(),minLines=2)
                         }
                     }
-                    error?.let { Text(it,color=MaterialTheme.colorScheme.error,fontSize=10.sp) }
+                    error?.let { Text(it,color=MaterialTheme.colorScheme.error,fontSize=12.sp) }
                     Spacer(Modifier.height(14.dp))
                     Button(onClick={
                         if(step<2){step++;return@Button}
@@ -107,10 +107,10 @@ fun SaudiNewBuildScreen(nav: NavHostController, onChoose: (FloorPlan) -> Unit) {
                                 c.copy(plan=p,overall=(c.overall*.62+audit.score*.38).toInt().coerceIn(0,100),rationale="${c.rationale} ${audit.notes.firstOrNull().orEmpty()}")
                             }.sortedByDescending { it.overall }
                         }.onSuccess { candidates=it;error=null }.onFailure { error=it.message?:"تعذر توليد البدائل" }
-                    },modifier=Modifier.fillMaxWidth().height(56.dp),shape=RoundedCornerShape(17.dp)) { Icon(Icons.Rounded.AutoAwesome,null);Spacer(Modifier.width(6.dp));Text(if(step<2)"التالي" else "ابحث عن أفضل 3 فلل سعودية",fontWeight=FontWeight.Bold) }
+                    },modifier=Modifier.fillMaxWidth().height(56.dp),shape=RoundedCornerShape(17.dp)) { Icon(Icons.Outlined.AutoAwesome,null);Spacer(Modifier.width(6.dp));Text(if(step<2)"التالي" else "ابحث عن أفضل 3 فلل سعودية",fontWeight=FontWeight.Bold) }
                 } else {
                     candidates.forEachIndexed { i,c-> Card(colors=CardDefaults.cardColors(containerColor=Color.White),shape=RoundedCornerShape(20.dp),modifier=Modifier.fillMaxWidth().padding(bottom=11.dp)) {
-                        Column(Modifier.padding(12.dp)) { Row { Text("${i+1}. ${c.title}",fontWeight=FontWeight.Black,modifier=Modifier.weight(1f));Text("${c.overall}/100",fontWeight=FontWeight.Black) };Text(c.rationale,color=Color.Gray,fontSize=10.sp);Text(c.metrics.joinToString(" • "),fontSize=9.sp,modifier=Modifier.padding(vertical=5.dp));PlanCanvas(c.plan,Modifier.fillMaxWidth().height(200.dp),previewMode=true,onSelect={});Button(onClick={onChoose(c.plan)},modifier=Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Done,null);Spacer(Modifier.width(5.dp));Text("اعتمد هذه الفيلا") } }
+                        Column(Modifier.padding(12.dp)) { Row { Text("${i+1}. ${c.title}",fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));Text("${c.overall}/100",fontWeight=FontWeight.Bold) };Text(c.rationale,color=Color.Gray,fontSize=12.sp);Text(c.metrics.joinToString(" • "),fontSize=12.sp,modifier=Modifier.padding(vertical=5.dp));PlanCanvas(c.plan,Modifier.fillMaxWidth().height(200.dp),previewMode=true,onSelect={});Button(onClick={onChoose(c.plan)},modifier=Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Done,null);Spacer(Modifier.width(5.dp));Text("اعتمد هذه الفيلا") } }
                     } }
                     OutlinedButton(onClick={candidates=emptyList();step=0},modifier=Modifier.fillMaxWidth()){Text("عدّل جلسة التصميم")}
                 }
@@ -119,9 +119,9 @@ fun SaudiNewBuildScreen(nav: NavHostController, onChoose: (FloorPlan) -> Unit) {
     }
 }
 
-@Composable private fun H(t:String,s:String){Text(t,fontSize=20.sp,fontWeight=FontWeight.Black,modifier=Modifier.padding(top=10.dp));Text(s,color=Color.Gray,fontSize=11.sp,lineHeight=16.sp,modifier=Modifier.padding(bottom=12.dp))}
+@Composable private fun H(t:String,s:String){Text(t,fontSize=20.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(top=10.dp));Text(s,color=Color.Gray,fontSize=12.sp,lineHeight=20.sp,modifier=Modifier.padding(bottom=12.dp))}
 @Composable private fun Toggle(t:String,v:Boolean,on:(Boolean)->Unit){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text(t,fontSize=12.sp,modifier=Modifier.padding(top=13.dp));Switch(v,on)}}
-@Composable private fun Counter(t:String,v:Int,min:Int,max:Int,on:(Int)->Unit){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("$t: $v",fontWeight=FontWeight.Bold,fontSize=11.sp,modifier=Modifier.padding(top=14.dp));Row{TextButton(onClick={on((v-1).coerceAtLeast(min))}){Text("−")};TextButton(onClick={on((v+1).coerceAtMost(max))}){Text("+")}}}}
-@Composable private fun S(t:String,v:Float,on:(Float)->Unit){Text("$t: ${v.toInt()}/100",fontWeight=FontWeight.Bold,fontSize=11.sp);Slider(v,on,valueRange=50f..100f)}
+@Composable private fun Counter(t:String,v:Int,min:Int,max:Int,on:(Int)->Unit){Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){Text("$t: $v",fontWeight=FontWeight.Bold,fontSize=12.sp,modifier=Modifier.padding(top=14.dp));Row{TextButton(onClick={on((v-1).coerceAtLeast(min))}){Text("−")};TextButton(onClick={on((v+1).coerceAtMost(max))}){Text("+")}}}}
+@Composable private fun S(t:String,v:Float,on:(Float)->Unit){Text("$t: ${v.toInt()}/100",fontWeight=FontWeight.Bold,fontSize=12.sp);Slider(v,on,valueRange=50f..100f)}
 private fun String.numeric()=filter { it.isDigit()||it=='.'||it=='٫' }.replace('٫','.')
 private fun String.numericSigned()=filter { it.isDigit()||it=='.'||it=='-' }.trim()

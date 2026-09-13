@@ -8,10 +8,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.DirectionsWalk
-import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.ViewInAr
+import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.DirectionsWalk
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.ViewInAr
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -44,27 +44,27 @@ fun Production3DScreenV2(nav:NavHostController,plan:FloorPlan?) {
     Surface(Modifier.fillMaxSize(),color=Color(0xFFF5F2EC)){
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal=16.dp)){
             Row(verticalAlignment=Alignment.CenterVertically){
-                IconButton(onClick={nav.popBackStack()}){Icon(Icons.Rounded.ArrowForward,"رجوع")}
-                Box(Modifier.size(42.dp).background(Color(0xFF27312C),RoundedCornerShape(13.dp)),contentAlignment=Alignment.Center){Icon(Icons.Rounded.ViewInAr,null,tint=Color.White)}
-                Spacer(Modifier.width(9.dp));Column(Modifier.weight(1f)){Text("3D سعودي واقعي",fontWeight=FontWeight.Black,fontSize=20.sp);Text("خامات • شمس • ظل • واجهة • Geometry V3",color=Color.Gray,fontSize=9.5.sp)}
-                IconButton(onClick={nav.navigate("walkthrough")}){Icon(Icons.Rounded.DirectionsWalk,"جولة داخلية")}
+                IconButton(onClick={nav.popBackStack()}){Icon(Icons.Outlined.ArrowForward,"رجوع")}
+                Box(Modifier.size(42.dp).background(StudioColors.Ink,RoundedCornerShape(13.dp)),contentAlignment=Alignment.Center){Icon(Icons.Outlined.ViewInAr,null,tint=Color.White)}
+                Spacer(Modifier.width(9.dp));Column(Modifier.weight(1f)){Text("3D سعودي واقعي",fontWeight=FontWeight.Bold,fontSize=20.sp);Text("خامات • شمس • ظل • واجهة • Geometry V3",color=Color.Gray,fontSize=12.sp)}
+                IconButton(onClick={nav.navigate("walkthrough")}){Icon(Icons.Outlined.DirectionsWalk,"جولة داخلية")}
             }
             if(scene==null||profile==null||plan==null){Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){Text("افتح مشروعًا أولًا")};return@Column}
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                SaudiVisualRenderEngine.Quality.entries.forEach { q->FilterChip(selected=quality==q,onClick={quality=q},label={Text(q.label,fontSize=9.sp)}) }
-                AssistChip(onClick={},label={Text(profile.facade.style,fontSize=9.sp)},leadingIcon={Icon(Icons.Rounded.Tune,null,Modifier.size(14.dp))})
-                AssistChip(onClick={},label={Text("شمس ${profile.sun.elevationDeg.toInt()}°",fontSize=9.sp)})
+                SaudiVisualRenderEngine.Quality.entries.forEach { q->FilterChip(selected=quality==q,onClick={quality=q},label={Text(q.label,fontSize=12.sp)}) }
+                AssistChip(onClick={},label={Text(profile.facade.style,fontSize=12.sp)},leadingIcon={Icon(Icons.Outlined.Tune,null,Modifier.size(14.dp))})
+                AssistChip(onClick={},label={Text("شمس ${profile.sun.elevationDeg.toInt()}°",fontSize=12.sp)})
             }
             Spacer(Modifier.height(7.dp))
-            Card(shape=RoundedCornerShape(24.dp),colors=CardDefaults.cardColors(containerColor=Color(0xFFFFFEFA)),modifier=Modifier.fillMaxWidth().weight(1f)){
+            Card(shape=RoundedCornerShape(16.dp),colors=CardDefaults.cardColors(containerColor=StudioColors.Paper),modifier=Modifier.fillMaxWidth().weight(1f)){
                 RenderCanvas(scene,profile,yaw,pitch,zoom,{dx,dy,scale,rotation->yaw+=rotation+dx*.1f;pitch=(pitch+dy*.08f).coerceIn(8f,78f);zoom=(zoom*scale).coerceIn(.45f,5f)},Modifier.fillMaxSize())
             }
             Spacer(Modifier.height(7.dp))
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(5.dp)){
-                profile.facade.features.forEach { AssistChip(onClick={},label={Text(it,fontSize=8.5.sp)}) }
+                profile.facade.features.forEach { AssistChip(onClick={},label={Text(it,fontSize=12.sp)}) }
             }
-            Text("${scene.meshes.size} عنصر 3D • ${profile.materials.size} خامات منطقية • جودة ${quality.label}",fontSize=9.5.sp,color=Color.Gray,modifier=Modifier.padding(vertical=5.dp))
-            Surface(color=Color(0xFFECE7DC),shape=RoundedCornerShape(13.dp),modifier=Modifier.fillMaxWidth().padding(bottom=8.dp)){Text(profile.warnings.first(),fontSize=9.2.sp,lineHeight=14.sp,modifier=Modifier.padding(9.dp))}
+            Text("${scene.meshes.size} عنصر 3D • ${profile.materials.size} خامات منطقية • جودة ${quality.label}",fontSize=12.sp,color=Color.Gray,modifier=Modifier.padding(vertical=5.dp))
+            Surface(color=Color(0xFFECE7DC),shape=RoundedCornerShape(13.dp),modifier=Modifier.fillMaxWidth().padding(bottom=8.dp)){Text(profile.warnings.first(),fontSize=12.sp,lineHeight=20.sp,modifier=Modifier.padding(9.dp))}
         }
     }
 }
@@ -88,5 +88,5 @@ private fun RenderCanvas(scene:Semantic3DEngine.Scene,profile:SaudiVisualRenderE
 
 private fun kindColor(kind:String,profile:SaudiVisualRenderEngine.Profile)=when(kind){
     "wall"->if(profile.facade.style.contains("نجدي"))Color(0xFFD8C9B4) else Color(0xFFE6DDD0)
-    "slab"->Color(0xFFB5B7B4);"roof"->Color(0xFF8A8177);"door"->Color(0xFF72513D);"window"->Color(0xFF78AEC1).copy(alpha=.82f);"structural"->Color(0xFF9A7447);"saudi-parapet"->Color(0xFFD4C9B8);else->Color(0xFFD8D5CF)
+    "slab"->Color(0xFFB5B7B4);"roof"->Color(0xFF8A8177);"door"->Color(0xFF72513D);"window"->Color(0xFF78AEC1).copy(alpha=.82f);"structural"->StudioColors.Primary;"saudi-parapet"->Color(0xFFD4C9B8);else->Color(0xFFD8D5CF)
 }

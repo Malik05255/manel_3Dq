@@ -6,10 +6,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.PictureAsPdf
-import androidx.compose.material.icons.rounded.SaveAlt
-import androidx.compose.material.icons.rounded.ViewInAr
+import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.PictureAsPdf
+import androidx.compose.material.icons.outlined.SaveAlt
+import androidx.compose.material.icons.outlined.ViewInAr
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -62,10 +62,10 @@ fun QuickExportScreen(nav: NavHostController, plan: FloorPlan?) {
                 .padding(18.dp)
         ) {
             Row {
-                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
+                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Outlined.ArrowForward, "رجوع") }
                 Column {
-                    Text("التصدير الهندسي", fontSize = 22.sp, fontWeight = FontWeight.Black)
-                    Text("2D CAD + 3D GLB/glTF + IFC4 BIM", color = MaterialTheme.colorScheme.secondary, fontSize = 10.sp)
+                    Text("التصدير الهندسي", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text("2D CAD + 3D GLB/glTF + IFC4 BIM", color = MaterialTheme.colorScheme.secondary, fontSize = 12.sp)
                 }
             }
             Spacer(Modifier.height(18.dp))
@@ -81,27 +81,27 @@ fun QuickExportScreen(nav: NavHostController, plan: FloorPlan?) {
                     if (plan.widthM != null && plan.heightM != null)
                         "${"%.2f".format(plan.widthM)}م × ${"%.2f".format(plan.heightM)}م • ثقة المقياس ${plan.scaleConfidence}%"
                     else "المقياس غير مؤكد؛ مخرجات 3D تبقى نسبية وIFC المتري معطّل.",
-                    fontSize = 11.sp
+                    fontSize = 12.sp
                 )
                 Spacer(Modifier.height(14.dp))
                 Button(onClick = { pdf.launch("manzili-plan.pdf") }, modifier = Modifier.fillMaxWidth().height(50.dp)) {
-                    Icon(Icons.Rounded.PictureAsPdf, null); Spacer(Modifier.width(6.dp)); Text("تصدير PDF")
+                    Icon(Icons.Outlined.PictureAsPdf, null); Spacer(Modifier.width(6.dp)); Text("تصدير PDF")
                 }
                 Spacer(Modifier.height(7.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     OutlinedButton(onClick = { svg.launch("manzili-plan.svg") }, modifier = Modifier.weight(1f).height(50.dp)) {
-                        Icon(Icons.Rounded.SaveAlt, null); Spacer(Modifier.width(4.dp)); Text("SVG")
+                        Icon(Icons.Outlined.SaveAlt, null); Spacer(Modifier.width(4.dp)); Text("SVG")
                     }
                     OutlinedButton(onClick = { dxf.launch("manzili-plan.dxf") }, modifier = Modifier.weight(1f).height(50.dp)) {
-                        Icon(Icons.Rounded.SaveAlt, null); Spacer(Modifier.width(4.dp)); Text("DXF CAD")
+                        Icon(Icons.Outlined.SaveAlt, null); Spacer(Modifier.width(4.dp)); Text("DXF CAD")
                     }
                 }
                 Spacer(Modifier.height(9.dp))
-                Text("3D قابل للنقل", fontWeight = FontWeight.Black, fontSize = 12.sp)
-                Text("GLB ملف واحد عملي للمشاركة والعرض. glTF نصي ومناسب للتطوير والويب.", fontSize = 9.sp, color = MaterialTheme.colorScheme.secondary)
+                Text("3D قابل للنقل", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text("GLB ملف واحد عملي للمشاركة والعرض. glTF نصي ومناسب للتطوير والويب.", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
                 Spacer(Modifier.height(7.dp))
                 Button(onClick = { glb.launch("manzili-semantic-3d.glb") }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                    Icon(Icons.Rounded.ViewInAr, null); Spacer(Modifier.width(6.dp)); Text("تصدير GLB ثلاثي الأبعاد")
+                    Icon(Icons.Outlined.ViewInAr, null); Spacer(Modifier.width(6.dp)); Text("تصدير GLB ثلاثي الأبعاد")
                 }
                 Spacer(Modifier.height(7.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -114,7 +114,7 @@ fun QuickExportScreen(nav: NavHostController, plan: FloorPlan?) {
                     enabled = ifcReady,
                     modifier = Modifier.fillMaxWidth().height(50.dp)
                 ) {
-                    Icon(Icons.Rounded.ViewInAr, null)
+                    Icon(Icons.Outlined.ViewInAr, null)
                     Spacer(Modifier.width(6.dp))
                     Text(
                         when {
@@ -132,7 +132,7 @@ fun QuickExportScreen(nav: NavHostController, plan: FloorPlan?) {
                             missingVertical > 0 -> "افتح شاشة 3D واضغط الفتحات التي تحمل «ارتفاع؟» وأكد القياسات المعروفة. القيم الافتراضية للمعاينة لا تدخل IFC."
                             else -> "راجع بيانات المشروع قبل تصدير BIM."
                         },
-                        fontSize = 9.sp,
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier.padding(top = 5.dp)
                     )
@@ -142,7 +142,7 @@ fun QuickExportScreen(nav: NavHostController, plan: FloorPlan?) {
             Spacer(Modifier.height(18.dp))
             Text(
                 "GLB/glTF/OBJ تُبنى من نفس الجدران والفتحات والأسقف والعناصر الهندسية. التصدير الهندسي لا يعني اعتمادًا إنشائيًا أو بلديًا.",
-                fontSize = 9.sp,
+                fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.secondary
             )
             Spacer(Modifier.height(12.dp))

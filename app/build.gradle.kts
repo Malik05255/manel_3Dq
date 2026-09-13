@@ -15,10 +15,11 @@ android {
 
     defaultConfig {
         applicationId = "com.manzili.hai"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 62
-        versionName = "0.62.0"
+        versionCode = 63
+        versionName = "0.63.0"
         buildConfigField("String", "SUPABASE_URL", "\"https://abavsspydbpkudhswmzp.supabase.co\"")
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_iuZnOH7ye1WITm-xc44TiQ_CNb2d2qB\"")
     }
@@ -72,6 +73,12 @@ dependencies {
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("io.github.sceneview:sceneview:2.2.1")
 
+    androidTestImplementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test:runner:1.6.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     debugImplementation("androidx.compose.ui:ui-tooling")

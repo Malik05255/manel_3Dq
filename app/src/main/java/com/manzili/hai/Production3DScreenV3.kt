@@ -5,9 +5,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.DirectionsWalk
-import androidx.compose.material.icons.rounded.ViewInAr
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.outlined.DirectionsWalk
+import androidx.compose.material.icons.outlined.ViewInAr
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -42,10 +42,10 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("المجسم", fontWeight = FontWeight.Black) },
+                    title = { Text("المجسم", fontWeight = FontWeight.Bold) },
                     navigationIcon = {
                         IconButton(onClick = { nav.popBackStack() }) {
-                            Icon(Icons.Rounded.ArrowBack, "رجوع")
+                            Icon(Icons.Outlined.ArrowForward, "رجوع")
                         }
                     }
                 )
@@ -57,7 +57,7 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                     .padding(pad),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Rounded.ViewInAr, null, tint = Color(0xFFB0AAA2), modifier = Modifier.size(48.dp))
+                Icon(Icons.Outlined.ViewInAr, null, tint = Color(0xFFB0AAA2), modifier = Modifier.size(48.dp))
             }
         }
         return
@@ -113,23 +113,35 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
     val renderError = modelLoad?.exceptionOrNull()
 
     Scaffold(
-        containerColor = Color(0xFFF8F6F2),
+        containerColor = StudioColors.Canvas,
+        bottomBar = {
+            Surface(color = StudioColors.Paper) {
+                Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(onClick = { nav.navigate("editor") }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Outlined.Edit, null, Modifier.size(20.dp)); Spacer(Modifier.width(6.dp)); Text("المخطط")
+                    }
+                    Button(onClick = { nav.navigate("walkthrough") }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Outlined.DirectionsWalk, null, Modifier.size(20.dp)); Spacer(Modifier.width(6.dp)); Text("جولة داخلية")
+                    }
+                }
+            }
+        },
         topBar = {
             TopAppBar(
-                title = { Text("المجسم", fontSize = 26.sp, fontWeight = FontWeight.Black) },
+                title = { Text("المجسم", fontSize = 20.sp, fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = { nav.popBackStack() }) {
-                        Icon(Icons.Rounded.ArrowBack, "رجوع")
+                        Icon(Icons.Outlined.ArrowForward, "رجوع")
                     }
                 },
                 actions = {
                     Surface(
                         shape = CircleShape,
-                        color = Color(0xFF6353D9).copy(alpha = 0.10f),
+                        color = StudioColors.Primary.copy(alpha = 0.10f),
                         modifier = Modifier.padding(end = 10.dp)
                     ) {
                         IconButton(onClick = { nav.navigate("walkthrough") }) {
-                            Icon(Icons.Rounded.DirectionsWalk, "جولة", tint = Color(0xFF4F40B8))
+                            Icon(Icons.Outlined.DirectionsWalk, "جولة", tint = StudioColors.Primary)
                         }
                     }
                 }
@@ -164,7 +176,7 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                         CircularProgressIndicator(
                             Modifier.size(26.dp),
                             strokeWidth = 2.5.dp,
-                            color = Color(0xFF6353D9)
+                            color = StudioColors.Primary
                         )
                     }
                 }
@@ -173,21 +185,21 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                     Modifier
                         .align(Alignment.Center)
                         .padding(24.dp),
-                    shape = RoundedCornerShape(28.dp),
+                    shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White)
                 ) {
                     Column(
                         Modifier.padding(22.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(Icons.Rounded.ViewInAr, null, tint = Color(0xFFE28B5A), modifier = Modifier.size(36.dp))
+                        Icon(Icons.Outlined.ViewInAr, null, tint = StudioColors.Warning, modifier = Modifier.size(36.dp))
                         Spacer(Modifier.height(12.dp))
-                        Text("تعذر العرض", fontWeight = FontWeight.Black, fontSize = 18.sp)
+                        Text("تعذر العرض", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         Spacer(Modifier.height(14.dp))
                         Button(
                             onClick = { compatibilityMode = true },
                             shape = RoundedCornerShape(18.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F40B8))
+                            colors = ButtonDefaults.buttonColors(containerColor = StudioColors.Primary)
                         ) {
                             Text("عرض بديل")
                         }

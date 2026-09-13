@@ -17,11 +17,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -46,13 +47,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.hypot
 
-private val PXBg = Color(0xFFF7F5F1)
-private val PXCard = Color(0xFFFFFEFC)
-private val PXInk = Color(0xFF171816)
-private val PXMuted = Color(0xFF817C75)
-private val PXViolet = Color(0xFF5E4BDD)
-private val PXOrange = Color(0xFFE18A58)
-private val PXGreen = Color(0xFF4C8A78)
+private val PXBg = StudioColors.Canvas
+private val PXCard = StudioColors.Paper
+private val PXInk = StudioColors.Ink
+private val PXMuted = StudioColors.Muted
+private val PXViolet = StudioColors.Primary
+private val PXOrange = StudioColors.Warning
+private val PXGreen = StudioColors.Success
 private val PXLine = Color(0xFF34363A)
 
 private enum class ProcessingStage { REVIEW, EDIT }
@@ -135,7 +136,12 @@ fun ImportedProjectWorkspaceScreen(
                 ProcessingTopBar(
                     stage = stage,
                     blocking = report.blocking,
-                    onBack = { nav.popBackStack() }
+                    onBack = { nav.popBackStack() },
+                    onStage = {
+                        stage = it
+                        haiMessage = null
+                        if (it == ProcessingStage.REVIEW) haiProposal = null
+                    }
                 )
             },
             bottomBar = {
@@ -196,11 +202,11 @@ fun ImportedProjectWorkspaceScreen(
                     Modifier.padding(start = 12.dp, end = 6.dp, top = 9.dp, bottom = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Rounded.AutoAwesome, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Outlined.AutoAwesome, null, tint = Color.White, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text(text, color = Color.White, fontSize = 10.5.sp, lineHeight = 15.sp, modifier = Modifier.weight(1f))
+                    Text(text, color = Color.White, fontSize = 12.sp, lineHeight = 20.sp, modifier = Modifier.weight(1f))
                     IconButton(onClick = { haiMessage = null }, modifier = Modifier.size(30.dp)) {
-                        Icon(Icons.Rounded.Close, "إغلاق", tint = Color.White, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Outlined.Close, "إغلاق", tint = Color.White, modifier = Modifier.size(16.dp))
                     }
                 }
             }
@@ -215,40 +221,16 @@ fun ImportedProjectWorkspaceScreen(
 }
 
 @Composable
-private fun ProcessingTopBar(stage: ProcessingStage, blocking: Boolean, onBack: () -> Unit) {
-    Surface(color = PXBg) {
-        Row(
-            Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    if (stage == ProcessingStage.REVIEW) "مراجعة المخطط" else "محرر المخطط",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Black,
-                    color = PXInk
-                )
-                Text(
-                    if (stage == ProcessingStage.REVIEW)
-                        "افهم ما قرأه النظام، صحح عند الحاجة، أو استدع HAI"
-                    else
-                        "عدّل العناصر فعليًا ثم راجع اقتراح HAI قبل تطبيقه",
-                    color = PXMuted,
-                    fontSize = 10.sp
-                )
+private fun ProcessingTopBar(stage: ProcessingStage, blocking: Boolean, onBack: () -> Unit, onStage: (ProcessingStage) -> Unit) {
+    Surface(color = PXCard) {
+        Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp)) {
+            StudioHeader("تجهيز المخطط", onBack) {
+                Icon(if (blocking) Icons.Outlined.PendingActions else Icons.Outlined.CheckCircle,
+                    if (blocking) "يحتاج مراجعة" else "جاهز", tint = if (blocking) PXOrange else PXGreen)
             }
-            Surface(
-                color = if (blocking) PXOrange.copy(alpha = .12f) else PXGreen.copy(alpha = .12f),
-                shape = RoundedCornerShape(18.dp)
-            ) {
-                Text(
-                    if (blocking) "يحتاج مراجعة" else "جاهز",
-                    color = if (blocking) PXOrange else PXGreen,
-                    fontSize = 9.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
-                )
+            Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StageButton(Modifier.weight(1f), Icons.Outlined.FactCheck, "١  مراجعة", stage == ProcessingStage.REVIEW) { onStage(ProcessingStage.REVIEW) }
+                StageButton(Modifier.weight(1f), Icons.Outlined.Edit, "٢  تعديل", stage == ProcessingStage.EDIT) { onStage(ProcessingStage.EDIT) }
             }
         }
     }
@@ -263,21 +245,8 @@ private fun ProcessingBottomBar(
 ) {
     Surface(color = PXCard, shadowElevation = 10.dp) {
         Column(Modifier.navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                StageButton(
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Rounded.FactCheck,
-                    label = "مراجعة",
-                    selected = stage == ProcessingStage.REVIEW
-                ) { onStage(ProcessingStage.REVIEW) }
-                StageButton(
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Rounded.Edit,
-                    label = "تعديل",
-                    selected = stage == ProcessingStage.EDIT
-                ) { onStage(ProcessingStage.EDIT) }
-            }
-            Spacer(Modifier.height(8.dp))
+            if (!canConfirm) Text("أكمل البيانات المطلوبة لاعتماد المخطط", style = MaterialTheme.typography.bodySmall,
+                color = StudioColors.Muted, modifier = Modifier.padding(bottom = 6.dp))
             Button(
                 enabled = canConfirm,
                 onClick = onConfirm,
@@ -285,9 +254,9 @@ private fun ProcessingBottomBar(
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth().height(50.dp)
             ) {
-                Icon(Icons.Rounded.Verified, null, Modifier.size(18.dp))
+                Icon(Icons.Outlined.Verified, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("اعتماد المشروع", fontWeight = FontWeight.Black)
+                Text("اعتماد ومتابعة", fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -309,7 +278,7 @@ private fun StageButton(
         Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = if (selected) PXViolet else PXMuted, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(5.dp))
-            Text(label, color = if (selected) PXViolet else PXMuted, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+            Text(label, color = if (selected) PXViolet else PXMuted, fontWeight = FontWeight.Bold, fontSize = 12.sp)
         }
     }
 }
@@ -332,10 +301,11 @@ private fun ReviewStage(
     }
 
     Column(
-        modifier.padding(horizontal = 12.dp).verticalScroll(rememberScrollState())
+        modifier.imePadding().padding(horizontal = 16.dp).verticalScroll(rememberScrollState())
     ) {
         Spacer(Modifier.height(4.dp))
-        SourcePlanCard(source = source, base = plan, preview = null, height = 330.dp)
+        StudioSection("المخطط الأصلي")
+        SourcePlanCard(source = source, base = plan, preview = null, height = 260.dp)
 
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -352,11 +322,11 @@ private fun ReviewStage(
         ) {
             Column(Modifier.padding(13.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Straighten, null, tint = PXViolet)
+                    Icon(Icons.Outlined.Straighten, null, tint = PXViolet)
                     Spacer(Modifier.width(7.dp))
-                    Text("أبعاد المبنى", fontWeight = FontWeight.Black, fontSize = 13.sp)
+                    Text("أبعاد المبنى", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     Spacer(Modifier.weight(1f))
-                    Text("يمكنك إدخالها يدويًا أو استدع HAI", color = PXMuted, fontSize = 8.8.sp)
+
                 }
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -389,7 +359,7 @@ private fun ReviewStage(
                     shape = RoundedCornerShape(15.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("تأكيد الأبعاد يدويًا")
+                    Text("حفظ الأبعاد")
                 }
             }
         }
@@ -402,13 +372,13 @@ private fun ReviewStage(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Verified, null, tint = PXGreen)
+                    Icon(Icons.Outlined.Verified, null, tint = PXGreen)
                     Spacer(Modifier.width(8.dp))
-                    Text("لا توجد مشكلة حاجزة. يمكنك التعديل أو اعتماد المشروع.", color = PXGreen, fontWeight = FontWeight.Bold, fontSize = 10.5.sp)
+                    Text("المخطط جاهز للاعتماد", color = PXGreen, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
             }
         } else {
-            Text("ما يحتاج انتباه", fontWeight = FontWeight.Black, fontSize = 13.sp)
+            Text("المطلوب إكماله", fontWeight = FontWeight.Bold, fontSize = 13.sp)
             Spacer(Modifier.height(6.dp))
             report.issues.take(8).forEach { issue ->
                 Surface(
@@ -418,15 +388,15 @@ private fun ReviewStage(
                 ) {
                     Row(Modifier.padding(11.dp), verticalAlignment = Alignment.Top) {
                         Icon(
-                            if (issue.level == "error") Icons.Rounded.ErrorOutline else Icons.Rounded.Info,
+                            if (issue.level == "error") Icons.Outlined.ErrorOutline else Icons.Outlined.Info,
                             null,
                             tint = if (issue.level == "error") PXOrange else PXViolet,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(Modifier.width(8.dp))
                         Column {
-                            Text(issue.title, fontWeight = FontWeight.Bold, fontSize = 10.5.sp)
-                            if (issue.detail.isNotBlank()) Text(issue.detail, color = PXMuted, fontSize = 9.sp, lineHeight = 13.sp)
+                            Text(issue.title, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            if (issue.detail.isNotBlank()) Text(issue.detail, color = PXMuted, fontSize = 12.sp, lineHeight = 20.sp)
                         }
                     }
                 }
@@ -439,9 +409,9 @@ private fun ReviewStage(
             shape = RoundedCornerShape(18.dp),
             modifier = Modifier.fillMaxWidth().height(50.dp)
         ) {
-            Icon(Icons.Rounded.Edit, null, Modifier.size(17.dp))
+            Icon(Icons.Outlined.Edit, null, Modifier.size(17.dp))
             Spacer(Modifier.width(6.dp))
-            Text("فتح المحرر", fontWeight = FontWeight.Black)
+            Text("فتح المحرر", fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(18.dp))
     }
@@ -451,8 +421,8 @@ private fun ReviewStage(
 private fun ReviewMetric(modifier: Modifier, label: String, value: String) {
     Surface(color = PXCard, shape = RoundedCornerShape(16.dp), modifier = modifier) {
         Column(Modifier.padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(value, color = PXViolet, fontWeight = FontWeight.Black, fontSize = 15.sp)
-            Text(label, color = PXMuted, fontSize = 8.5.sp)
+            Text(value, color = PXViolet, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text(label, color = PXMuted, fontSize = 12.sp)
         }
     }
 }
@@ -659,15 +629,14 @@ private fun EditorStage(
         selection = null
     }
 
-    Column(modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+    Column(modifier.imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("تحرير مباشر", fontSize = 17.sp, fontWeight = FontWeight.Black, color = PXInk)
-                Text("المخطط الأصلي خلفية مرجعية • كل أدوات التعديل تعمل على الطبقة الهندسية", color = PXMuted, fontSize = 9.sp)
+                Text("لوحة الرسم", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = PXInk)
             }
-            IconButton(onClick = { zoom = (zoom - .15f).coerceAtLeast(.7f) }) { Icon(Icons.Rounded.ZoomOut, "تصغير العرض") }
-            Text("${(zoom * 100).toInt()}%", fontSize = 9.sp, color = PXMuted)
-            IconButton(onClick = { zoom = (zoom + .15f).coerceAtMost(2.2f) }) { Icon(Icons.Rounded.ZoomIn, "تكبير العرض") }
+            IconButton(onClick = { zoom = (zoom - .15f).coerceAtLeast(.7f) }) { Icon(Icons.Outlined.ZoomOut, "تصغير العرض") }
+            Text("${(zoom * 100).toInt()}%", fontSize = 12.sp, color = PXMuted)
+            IconButton(onClick = { zoom = (zoom + .15f).coerceAtMost(2.2f) }) { Icon(Icons.Outlined.ZoomIn, "تكبير العرض") }
         }
 
         EditorToolBar(
@@ -683,16 +652,16 @@ private fun EditorStage(
         )
 
         if (tool == EditorTool.ADD_WALL && firstWallPoint != null) {
-            Text("اضغط النقطة الثانية لإنشاء الجدار", color = PXViolet, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
+            Text("اضغط النقطة الثانية لإنشاء الجدار", color = PXViolet, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
         }
 
         Spacer(Modifier.height(5.dp))
         Card(
             colors = CardDefaults.cardColors(containerColor = Color.White),
             shape = RoundedCornerShape(22.dp),
-            modifier = Modifier.fillMaxWidth().weight(1f)
+            modifier = Modifier.fillMaxWidth().height(380.dp)
         ) {
-            Box(Modifier.fillMaxSize().graphicsLayer(scaleX = zoom, scaleY = zoom)) {
+            Box(Modifier.fillMaxSize().testTag("workspace-canvas").graphicsLayer(scaleX = zoom, scaleY = zoom)) {
                 SourceBackdrop(source)
                 InteractivePlanCanvas(
                     base = plan,
@@ -707,7 +676,7 @@ private fun EditorStage(
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
                     ) {
-                        Text("اقتراح HAI بالبنفسجي — لم يُطبق", color = Color.White, fontWeight = FontWeight.Black, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                        Text("معاينة اقتراح HAI", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
                     }
                 }
             }
@@ -744,9 +713,9 @@ private fun EditorStage(
         } ?: run {
             Surface(color = PXCard, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.AutoAwesome, null, tint = PXViolet, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Outlined.AutoAwesome, null, tint = PXViolet, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(7.dp))
-                    Text("استدع HAI في أي لحظة ليعطي رأيه أو اعتراضه أو تعديلًا يمكن معاينته قبل التطبيق.", color = PXMuted, fontSize = 9.5.sp, lineHeight = 13.sp)
+                    Text("اضغط HAI لمراجعة التصميم.", color = PXMuted, fontSize = 12.sp, lineHeight = 20.sp)
                 }
             }
         }
@@ -766,13 +735,13 @@ private fun EditorToolBar(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        ToolChip(Icons.Rounded.TouchApp, "تحديد", tool == EditorTool.SELECT) { onTool(EditorTool.SELECT) }
-        ToolChip(Icons.Rounded.AddHome, "غرفة", tool == EditorTool.ADD_ROOM) { onTool(EditorTool.ADD_ROOM) }
-        ToolChip(Icons.Rounded.HorizontalRule, "جدار", tool == EditorTool.ADD_WALL) { onTool(EditorTool.ADD_WALL) }
-        ToolChip(Icons.Rounded.DoorFront, "باب", tool == EditorTool.ADD_DOOR) { onTool(EditorTool.ADD_DOOR) }
-        ToolChip(Icons.Rounded.Window, "نافذة", tool == EditorTool.ADD_WINDOW) { onTool(EditorTool.ADD_WINDOW) }
-        AssistChip(onClick = onUndo, enabled = canUndo, label = { Text("تراجع", fontSize = 9.sp) }, leadingIcon = { Icon(Icons.Rounded.Undo, null, Modifier.size(15.dp)) })
-        AssistChip(onClick = onRedo, enabled = canRedo, label = { Text("إعادة", fontSize = 9.sp) }, leadingIcon = { Icon(Icons.Rounded.Redo, null, Modifier.size(15.dp)) })
+        ToolChip(Icons.Outlined.TouchApp, "تحديد", tool == EditorTool.SELECT) { onTool(EditorTool.SELECT) }
+        ToolChip(Icons.Outlined.AddHome, "غرفة", tool == EditorTool.ADD_ROOM) { onTool(EditorTool.ADD_ROOM) }
+        ToolChip(Icons.Outlined.HorizontalRule, "جدار", tool == EditorTool.ADD_WALL) { onTool(EditorTool.ADD_WALL) }
+        ToolChip(Icons.Outlined.DoorFront, "باب", tool == EditorTool.ADD_DOOR) { onTool(EditorTool.ADD_DOOR) }
+        ToolChip(Icons.Outlined.Window, "نافذة", tool == EditorTool.ADD_WINDOW) { onTool(EditorTool.ADD_WINDOW) }
+        AssistChip(onClick = onUndo, enabled = canUndo, label = { Text("تراجع", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Outlined.Undo, null, Modifier.size(15.dp)) })
+        AssistChip(onClick = onRedo, enabled = canRedo, label = { Text("إعادة", fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Outlined.Redo, null, Modifier.size(15.dp)) })
     }
 }
 
@@ -781,7 +750,7 @@ private fun ToolChip(icon: ImageVector, label: String, selected: Boolean, onClic
     FilterChip(
         selected = selected,
         onClick = onClick,
-        label = { Text(label, fontSize = 9.sp) },
+        label = { Text(label, fontSize = 12.sp) },
         leadingIcon = { Icon(icon, null, Modifier.size(15.dp)) }
     )
 }
@@ -805,19 +774,19 @@ private fun SelectionInspector(
     Surface(color = PXCard, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Tune, null, tint = PXViolet, modifier = Modifier.size(18.dp))
+                Icon(Icons.Outlined.Tune, null, tint = PXViolet, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(7.dp))
                 Text(
                     room?.let { "غرفة • ${it.name}" }
                         ?: wall?.let { "جدار • ${it.thicknessCm?.toInt() ?: 15} سم" }
                         ?: opening?.let { if (it.type.contains("window", true)) "نافذة" else "باب" }
                         ?: "عنصر",
-                    fontWeight = FontWeight.Black,
-                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
                     modifier = Modifier.weight(1f)
                 )
-                TextButton(onClick = onToggleLock) { Text("قفل/فتح", fontSize = 9.sp) }
-                IconButton(onClick = onDelete, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.Delete, "حذف", tint = PXOrange, modifier = Modifier.size(18.dp)) }
+                TextButton(onClick = onToggleLock) { Text("قفل/فتح", fontSize = 12.sp) }
+                IconButton(onClick = onDelete, modifier = Modifier.size(34.dp)) { Icon(Icons.Outlined.Delete, "حذف", tint = PXOrange, modifier = Modifier.size(18.dp)) }
             }
 
             if (room != null) {
@@ -836,17 +805,17 @@ private fun SelectionInspector(
             }
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                MiniAction(Modifier.weight(1f), Icons.Rounded.ArrowForward, "يمين") { onMove(1.5f, 0f) }
-                MiniAction(Modifier.weight(1f), Icons.Rounded.ArrowBack, "يسار") { onMove(-1.5f, 0f) }
-                MiniAction(Modifier.weight(1f), Icons.Rounded.ArrowUpward, "أعلى") { onMove(0f, -1.5f) }
-                MiniAction(Modifier.weight(1f), Icons.Rounded.ArrowDownward, "أسفل") { onMove(0f, 1.5f) }
+                MiniAction(Modifier.weight(1f), Icons.Outlined.ArrowForward, "يمين") { onMove(1.5f, 0f) }
+                MiniAction(Modifier.weight(1f), Icons.Outlined.ArrowBack, "يسار") { onMove(-1.5f, 0f) }
+                MiniAction(Modifier.weight(1f), Icons.Outlined.ArrowUpward, "أعلى") { onMove(0f, -1.5f) }
+                MiniAction(Modifier.weight(1f), Icons.Outlined.ArrowDownward, "أسفل") { onMove(0f, 1.5f) }
             }
             Spacer(Modifier.height(5.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                MiniAction(Modifier.weight(1f), Icons.Rounded.Add, if (wall != null) "سماكة +" else "تكبير") { onResize(1.10f) }
-                MiniAction(Modifier.weight(1f), Icons.Rounded.Remove, if (wall != null) "سماكة -" else "تصغير") { onResize(.90f) }
+                MiniAction(Modifier.weight(1f), Icons.Outlined.Add, if (wall != null) "سماكة +" else "تكبير") { onResize(1.10f) }
+                MiniAction(Modifier.weight(1f), Icons.Outlined.Remove, if (wall != null) "سماكة -" else "تصغير") { onResize(.90f) }
                 if (opening != null) {
-                    MiniAction(Modifier.weight(1f), Icons.Rounded.RotateRight, "تدوير") { onRotate() }
+                    MiniAction(Modifier.weight(1f), Icons.Outlined.RotateRight, "تدوير") { onRotate() }
                 }
             }
         }
@@ -863,7 +832,7 @@ private fun MiniAction(modifier: Modifier, icon: ImageVector, label: String, onC
     ) {
         Icon(icon, null, Modifier.size(14.dp))
         Spacer(Modifier.width(2.dp))
-        Text(label, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+        Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -877,16 +846,16 @@ private fun HaiProposalCard(
     Surface(color = PXViolet.copy(alpha = .09f), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(11.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.AutoAwesome, null, tint = PXViolet)
+                Icon(Icons.Outlined.AutoAwesome, null, tint = PXViolet)
                 Spacer(Modifier.width(6.dp))
-                Text("رأي HAI", fontWeight = FontWeight.Black, fontSize = 12.sp)
+                Text("رأي HAI", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 Spacer(Modifier.weight(1f))
-                Text("${proposal.confidence}%", color = PXMuted, fontSize = 9.sp)
+                Text("${proposal.confidence}%", color = PXMuted, fontSize = 12.sp)
             }
             Spacer(Modifier.height(5.dp))
-            Text(proposal.message, color = PXInk, fontSize = 10.sp, lineHeight = 14.sp, maxLines = 6)
+            Text(proposal.message, color = PXInk, fontSize = 12.sp, lineHeight = 20.sp, maxLines = 6)
             validation?.errors?.firstOrNull()?.let {
-                Text("اعتراض هندسي: $it", color = PXOrange, fontSize = 9.sp, modifier = Modifier.padding(top = 4.dp))
+                Text("اعتراض هندسي: $it", color = PXOrange, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
             }
             Spacer(Modifier.height(7.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -895,7 +864,7 @@ private fun HaiProposalCard(
                     onClick = onApply,
                     enabled = proposal.updatedPlan != null && validation?.valid != false,
                     modifier = Modifier.weight(1f)
-                ) { Text("تطبيق", fontWeight = FontWeight.Black) }
+                ) { Text("تطبيق", fontWeight = FontWeight.Bold) }
             }
         }
     }
@@ -919,7 +888,7 @@ private fun SourcePlanCard(source: Uri?, base: FloorPlan, preview: FloorPlan?, h
 private fun SourceBackdrop(source: Uri?) {
     if (source == null) {
         Box(Modifier.fillMaxSize().background(Color.White), contentAlignment = Alignment.Center) {
-            Text("المخطط الأصلي غير متاح", color = PXMuted, fontSize = 10.sp)
+            Text("المخطط الأصلي غير متاح", color = PXMuted, fontSize = 12.sp)
         }
         return
     }

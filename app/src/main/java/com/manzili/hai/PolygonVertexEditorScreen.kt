@@ -7,9 +7,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.Done
-import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.Done
+import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -40,13 +40,13 @@ fun PolygonVertexEditorScreen(nav: NavHostController, plan: FloorPlan?, onApply:
     val shown = preview ?: base
     val selectedRoom = shown.rooms.firstOrNull { it.id == selectedId }
 
-    Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F4EE)) {
+    Surface(Modifier.fillMaxSize(), color = StudioColors.Canvas) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 18.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
+                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Outlined.ArrowForward, "رجوع") }
                 Column(Modifier.weight(1f)) {
-                    Text("تحرير Polygon", fontSize = 21.sp, fontWeight = FontWeight.Black)
-                    Text("تعديل رؤوس الغرف مباشرة • Snap 0.25%", color = Color.Gray, fontSize = 9.5.sp)
+                    Text("تحرير Polygon", fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                    Text("تعديل رؤوس الغرف مباشرة • Snap 0.25%", color = Color.Gray, fontSize = 12.sp)
                 }
             }
 
@@ -55,7 +55,7 @@ fun PolygonVertexEditorScreen(nav: NavHostController, plan: FloorPlan?, onApply:
                     FilterChip(
                         selected = selectedId == room.id,
                         onClick = { selectedId = room.id; preview = null; status = if (room.locked) "الغرفة مقفلة؛ لا يمكن تعديل مضلعها." else "اسحب نقطة من حدود «${room.name}»." },
-                        label = { Text(room.name, fontSize = 9.5.sp) },
+                        label = { Text(room.name, fontSize = 12.sp) },
                         enabled = !room.locked
                     )
                 }
@@ -105,29 +105,29 @@ fun PolygonVertexEditorScreen(nav: NavHostController, plan: FloorPlan?, onApply:
                             close()
                         }
                     }
-                    shown.footprint.takeIf { it.size >= 3 }?.let { drawPath(path(it), Color(0xFF9A7447), style = Stroke(width = 3f)) }
+                    shown.footprint.takeIf { it.size >= 3 }?.let { drawPath(path(it), StudioColors.Primary, style = Stroke(width = 3f)) }
                     shown.rooms.forEach { room ->
                         val selected = room.id == selectedId
-                        drawPath(path(room.polygon), if (selected) Color(0xFF27312C) else Color(0xFF9AA39D), style = Stroke(width = if (selected) 5f else 2f))
+                        drawPath(path(room.polygon), if (selected) StudioColors.Ink else Color(0xFF9AA39D), style = Stroke(width = if (selected) 5f else 2f))
                         if (selected) room.polygon.forEachIndexed { index, p ->
                             val center = Offset(p.x / 100f * size.width, p.y / 100f * size.height)
                             drawCircle(Color.White, radius = 10f, center = center)
-                            drawCircle(Color(0xFF9A7447), radius = 8f, center = center)
+                            drawCircle(StudioColors.Primary, radius = 8f, center = center)
                         }
                     }
                 }
             }
 
-            Text(status, fontSize = 10.5.sp, lineHeight = 15.sp, color = if (preview != null) Color(0xFF64756B) else Color.DarkGray, modifier = Modifier.padding(vertical = 9.dp))
+            Text(status, fontSize = 12.sp, lineHeight = 20.sp, color = if (preview != null) StudioColors.Muted else Color.DarkGray, modifier = Modifier.padding(vertical = 9.dp))
             selectedRoom?.let { room ->
-                Text("${room.name} • ${room.polygon.size} رؤوس${if (room.locked) " • مقفلة" else ""}", fontSize = 10.sp, color = Color.Gray)
+                Text("${room.name} • ${room.polygon.size} رؤوس${if (room.locked) " • مقفلة" else ""}", fontSize = 12.sp, color = Color.Gray)
             }
             Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { preview = null; status = "ألغيت المعاينة." }, enabled = preview != null, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
-                    Icon(Icons.Rounded.RestartAlt, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("إلغاء")
+                    Icon(Icons.Outlined.RestartAlt, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("إلغاء")
                 }
                 Button(onClick = { preview?.let { onApply(it.copy(revision = plan.revision + 1)); preview = null; status = "تم اعتماد المضلع كنسخة جديدة." } }, enabled = preview != null, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) {
-                    Icon(Icons.Rounded.Done, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("اعتماد")
+                    Icon(Icons.Outlined.Done, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("اعتماد")
                 }
             }
         }

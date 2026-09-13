@@ -13,12 +13,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.Description
-import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material.icons.rounded.HelpOutline
-import androidx.compose.material.icons.rounded.Straighten
-import androidx.compose.material.icons.rounded.Verified
+import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.HelpOutline
+import androidx.compose.material.icons.outlined.Straighten
+import androidx.compose.material.icons.outlined.Verified
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -39,12 +39,12 @@ import com.manzili.hai.model.FloorPlan
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private val VSSand = Color(0xFFF8F6F2)
-private val VSPaper = Color(0xFFFFFEFC)
-private val VSDeep = Color(0xFF181A18)
-private val VSViolet = Color(0xFF6353D9)
-private val VSOrange = Color(0xFFE28B5A)
-private val VSGreen = Color(0xFF4C8A78)
+private val VSSand = StudioColors.Canvas
+private val VSPaper = StudioColors.Paper
+private val VSDeep = StudioColors.Ink
+private val VSViolet = StudioColors.Primary
+private val VSOrange = StudioColors.Warning
+private val VSGreen = StudioColors.Success
 
 /**
  * Review is intentionally manual/contextual now. HAI is summoned by the floating button
@@ -61,7 +61,7 @@ fun PlanVerificationScreen(
     if (plan == null) {
         Surface(color = VSSand, modifier = Modifier.fillMaxSize()) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(Icons.Rounded.Description, null, tint = Color(0xFFB0AAA2), modifier = Modifier.size(46.dp))
+                Icon(Icons.Outlined.Description, null, tint = Color(0xFFB0AAA2), modifier = Modifier.size(46.dp))
             }
         }
         return
@@ -86,11 +86,11 @@ fun PlanVerificationScreen(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { nav.popBackStack() }) {
-                    Icon(Icons.Rounded.ArrowForward, "رجوع")
+                    Icon(Icons.Outlined.ArrowForward, "رجوع")
                 }
                 Column(Modifier.weight(1f)) {
-                    Text("راجع", fontSize = 28.sp, fontWeight = FontWeight.Black, color = VSDeep)
-                    Text("شاهد ما فهمه النظام، وصحّح فقط ما يحتاج تدخلك", color = Color.Gray, fontSize = 10.sp)
+                    Text("راجع", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = VSDeep)
+                    Text("شاهد ما فهمه النظام، وصحّح فقط ما يحتاج تدخلك", color = Color.Gray, fontSize = 12.sp)
                 }
                 Surface(
                     color = if (report.blocking) VSOrange.copy(alpha = .12f) else VSGreen.copy(alpha = .12f),
@@ -99,8 +99,8 @@ fun PlanVerificationScreen(
                     Text(
                         if (report.blocking) "يحتاج حل" else "جاهز",
                         color = if (report.blocking) VSOrange else VSGreen,
-                        fontWeight = FontWeight.Black,
-                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
                     )
                 }
@@ -119,11 +119,11 @@ fun PlanVerificationScreen(
 
                 Card(
                     colors = CardDefaults.cardColors(containerColor = VSPaper),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(Modifier.padding(14.dp)) {
-                        Text("أبعاد المبنى", fontWeight = FontWeight.Black, fontSize = 13.sp)
+                        Text("أبعاد المبنى", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         Spacer(Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(
@@ -155,7 +155,7 @@ fun PlanVerificationScreen(
                             shape = RoundedCornerShape(18.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Rounded.Straighten, null, Modifier.size(17.dp))
+                            Icon(Icons.Outlined.Straighten, null, Modifier.size(17.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("تأكيد يدوي")
                         }
@@ -164,7 +164,7 @@ fun PlanVerificationScreen(
 
                 if (report.issues.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
-                    Text("ما يحتاج انتباهك", fontWeight = FontWeight.Black, fontSize = 13.sp)
+                    Text("ما يحتاج انتباهك", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     Spacer(Modifier.height(7.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         report.issues.take(8).forEach { issue ->
@@ -178,16 +178,16 @@ fun PlanVerificationScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
-                                        if (issue.level == "error") Icons.Rounded.ErrorOutline else Icons.Rounded.HelpOutline,
+                                        if (issue.level == "error") Icons.Outlined.ErrorOutline else Icons.Outlined.HelpOutline,
                                         null,
                                         tint = if (issue.level == "error") VSOrange else VSViolet,
                                         modifier = Modifier.size(19.dp)
                                     )
                                     Spacer(Modifier.width(9.dp))
                                     Column {
-                                        Text(issue.title, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                        Text(issue.title, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                         if (issue.detail.isNotBlank()) {
-                                            Text(issue.detail, color = Color.Gray, fontSize = 9.5.sp, lineHeight = 13.sp)
+                                            Text(issue.detail, color = Color.Gray, fontSize = 12.sp, lineHeight = 20.sp)
                                         }
                                     }
                                 }
@@ -198,9 +198,9 @@ fun PlanVerificationScreen(
                     Spacer(Modifier.height(12.dp))
                     Surface(color = VSGreen.copy(alpha = .10f), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                         Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.Verified, null, tint = VSGreen)
+                            Icon(Icons.Outlined.Verified, null, tint = VSGreen)
                             Spacer(Modifier.width(8.dp))
-                            Text("لا توجد مشكلة حاجزة في المراجعة الحالية.", color = VSGreen, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            Text("لا توجد مشكلة حاجزة في المراجعة الحالية.", color = VSGreen, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                     }
                 }
@@ -215,7 +215,7 @@ fun PlanVerificationScreen(
                 shape = RoundedCornerShape(22.dp),
                 modifier = Modifier.fillMaxWidth().height(56.dp)
             ) {
-                Text("متابعة إلى التعديل", fontWeight = FontWeight.Black, fontSize = 15.sp)
+                Text("متابعة إلى التعديل", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
 
             Spacer(Modifier.height(8.dp))
@@ -233,7 +233,7 @@ private fun VerificationSourcePreview(source: Uri, plan: FloorPlan) {
 
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        shape = RoundedCornerShape(26.dp),
+        shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         if (image == null) {

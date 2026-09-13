@@ -4,9 +4,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.CloudDone
-import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.outlined.CloudDone
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -40,29 +40,39 @@ fun ProductionAiSettings(nav: NavHostController) {
     var directEndpoint by remember { mutableStateOf(settings.directEndpoint) }
     var directKey by remember { mutableStateOf(settings.directApiKey) }
     var model by remember { mutableStateOf(settings.model) }
+    var advanced by remember { mutableStateOf(false) }
     var saved by remember { mutableStateOf(false) }
     var probing by remember { mutableStateOf(false) }
     var probe by remember { mutableStateOf<BackendProbe?>(null) }
 
     Surface(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(18.dp)) {
-            Row {
-                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
-                Column {
-                    Text("اتصال HAI", fontSize = 23.sp, fontWeight = FontWeight.Black)
-                    Text("Backend آمن للإنتاج • Direct للتطوير", color = MaterialTheme.colorScheme.secondary, fontSize = 10.sp)
-                }
-            }
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(18.dp)) {
+            StudioHeader("الإعدادات", { nav.popBackStack() })
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                StudioSection("منزلي HAI", "استوديو التصميم المعماري")
+                Card(colors = CardDefaults.cardColors(containerColor = StudioColors.Canvas)) {
+                    Column(Modifier.fillMaxWidth().padding(18.dp)) {
+                        Text("المظهر", style = MaterialTheme.typography.titleMedium)
+                        Text("أبيض وكحلي · أيقونات خطية", color = StudioColors.Muted)
+                    }
+                }
+                TextButton(onClick = { nav.navigate("cloud") }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.CloudSync, null); Spacer(Modifier.width(8.dp)); Text("الحساب والمزامنة")
+                }
+                OutlinedButton(onClick = { advanced = !advanced }, modifier = Modifier.fillMaxWidth()) {
+                    Text("إعدادات الاتصال المتقدمة"); Spacer(Modifier.width(8.dp))
+                    Icon(if (advanced) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null)
+                }
+                if (advanced) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Column(Modifier.weight(1f)) {
-                        Text("استخدم Backend الآمن", fontWeight = FontWeight.Bold)
-                        Text("عند تفعيله لا يحتاج التطبيق مفتاح مزود AI.", fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary)
+                        Text("الاتصال عبر الخادم", fontWeight = FontWeight.Bold)
+                        Text("استخدام خدمة HAI المهيأة.", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
                     }
                     Switch(backendMode, { backendMode = it; probe = null })
                 }
                 Spacer(Modifier.height(12.dp))
-                OutlinedTextField(model, { model = it }, label = { Text("Model ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(model, { model = it }, label = { Text("اسم النموذج") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(10.dp))
                 if (backendMode) {
                     OutlinedTextField(
@@ -98,14 +108,14 @@ fun ProductionAiSettings(nav: NavHostController) {
                         modifier = Modifier.fillMaxWidth().height(48.dp)
                     ) {
                         if (probing) CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Rounded.CloudDone, null)
+                        else Icon(Icons.Outlined.CloudDone, null)
                         Spacer(Modifier.width(7.dp))
-                        Text(if (probing) "يفحص الخدمات…" else "اختبار Backend وHAI وDeep Parser")
+                        Text(if (probing) "يفحص الخدمات…" else "اختبار الاتصال")
                     }
                     probe?.let { result ->
                         Text(
                             result.message,
-                            fontSize = 10.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (result.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                             modifier = Modifier.padding(top = 7.dp)
@@ -130,7 +140,7 @@ fun ProductionAiSettings(nav: NavHostController) {
                     Spacer(Modifier.height(8.dp))
                     Text(
                         "جلسة Supabase مستقلة عن رمز الخدمة. تسجيل الدخول للسحابة لن يغيّر رمز Backend المحفوظ.",
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.secondary
                     )
                 } else {
@@ -153,11 +163,13 @@ fun ProductionAiSettings(nav: NavHostController) {
                     Spacer(Modifier.height(8.dp))
                     Text(
                         "Direct mode مناسب للتطوير فقط؛ المفتاح يُخزن مشفرًا لكنه يبقى موجودًا على جهاز العميل.",
-                        fontSize = 10.sp,
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.error
                     )
                 }
             }
+            }
+            if (advanced) {
             Button(
                 onClick = {
                     settings.backendMode = backendMode
@@ -172,12 +184,13 @@ fun ProductionAiSettings(nav: NavHostController) {
                 },
                 modifier = Modifier.fillMaxWidth().height(56.dp)
             ) {
-                Icon(Icons.Rounded.Save, null)
+                Icon(Icons.Outlined.Save, null)
                 Spacer(Modifier.width(7.dp))
                 Text("حفظ الاتصال")
             }
             if (saved) Text("تم الحفظ", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
             Spacer(Modifier.height(10.dp))
+            }
         }
     }
 }

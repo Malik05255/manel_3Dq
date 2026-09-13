@@ -8,7 +8,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,11 +24,11 @@ import com.manzili.hai.data.ProjectPlanStore
 import com.manzili.hai.engine.VersionComparisonEngine
 import com.manzili.hai.model.FloorPlan
 
-private val ToolSand = Color(0xFFF7F4EE)
-private val ToolPaper = Color(0xFFFFFEFA)
-private val ToolDeep = Color(0xFF27312C)
-private val ToolBronze = Color(0xFF9A7447)
-private val ToolMist = Color(0xFFE9E5DC)
+private val ToolSand = StudioColors.Canvas
+private val ToolPaper = StudioColors.Paper
+private val ToolDeep = StudioColors.Ink
+private val ToolBronze = StudioColors.Primary
+private val ToolMist = StudioColors.Line
 
 @Composable
 fun ProjectToolsScreen(
@@ -79,14 +79,14 @@ fun ProjectToolsScreen(
     Surface(color = ToolSand, modifier = Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 18.dp)) {
             Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
+                IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Outlined.ArrowForward, "رجوع") }
                 Box(Modifier.size(40.dp).background(ToolDeep, RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Handyman, null, tint = Color.White)
+                    Icon(Icons.Outlined.Handyman, null, tint = Color.White)
                 }
                 Spacer(Modifier.width(9.dp))
                 Column {
-                    Text("أدوات المشروع", fontWeight = FontWeight.Black, fontSize = 18.sp)
-                    Text("مقارنة • تصدير • استيراد • تحقق", color = Color.Gray, fontSize = 9.5.sp)
+                    Text("أدوات المشروع", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text("مقارنة • تصدير • استيراد • تحقق", color = Color.Gray, fontSize = 12.sp)
                 }
             }
 
@@ -96,13 +96,13 @@ fun ProjectToolsScreen(
                 } else {
                     Card(colors = CardDefaults.cardColors(containerColor = ToolDeep), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp)) {
-                            Text("مقارنة النسخ", color = Color.White, fontWeight = FontWeight.Black, fontSize = 15.sp)
-                            Text("النسخة الحالية V${plan.revision}", color = Color.White.copy(alpha = .65f), fontSize = 10.sp)
+                            Text("مقارنة النسخ", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text("النسخة الحالية V${plan.revision}", color = Color.White.copy(alpha = .65f), fontSize = 12.sp)
                             Spacer(Modifier.height(8.dp))
                             Box {
                                 OutlinedButton(onClick = { versionMenu = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)) {
                                     Text(selectedRevision?.let { "قارن مع V$it" } ?: "اختر نسخة سابقة")
-                                    Spacer(Modifier.width(5.dp)); Icon(Icons.Rounded.ArrowDropDown, null)
+                                    Spacer(Modifier.width(5.dp)); Icon(Icons.Outlined.ArrowDropDown, null)
                                 }
                                 DropdownMenu(expanded = versionMenu, onDismissRequest = { versionMenu = false }) {
                                     versions.filter { it.revision != plan.revision }.forEach { v ->
@@ -115,20 +115,20 @@ fun ProjectToolsScreen(
 
                     if (oldPlan != null && diff != null) {
                         Spacer(Modifier.height(10.dp))
-                        Text(diff.headline, fontWeight = FontWeight.Black, fontSize = 14.sp)
-                        Text("بصريًا", color = ToolBronze, fontWeight = FontWeight.Bold, fontSize = 10.sp, modifier = Modifier.padding(top = 6.dp, bottom = 5.dp))
-                        Text("V${oldPlan.revision}", fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                        Text(diff.headline, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text("بصريًا", color = ToolBronze, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp, bottom = 5.dp))
+                        Text("V${oldPlan.revision}", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         PlanCanvas(oldPlan, Modifier.fillMaxWidth().height(175.dp), previewMode = false, onSelect = {})
                         Spacer(Modifier.height(7.dp))
-                        Text("V${plan.revision}", fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                        Text("V${plan.revision}", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         PlanCanvas(plan, Modifier.fillMaxWidth().height(175.dp), previewMode = true, onSelect = {})
 
                         Spacer(Modifier.height(9.dp))
                         Card(colors = CardDefaults.cardColors(containerColor = ToolPaper), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(12.dp)) {
-                                Text("ملخص HAI للفروقات", fontWeight = FontWeight.Black, fontSize = 12.5.sp)
-                                if (diff.changes.isEmpty()) Text("لم أجد فرقًا هندسيًا ذا دلالة بين النسختين.", color = Color.Gray, fontSize = 10.sp, modifier = Modifier.padding(top = 5.dp))
-                                diff.changes.take(14).forEach { Text("• $it", fontSize = 10.sp, lineHeight = 15.sp, modifier = Modifier.padding(top = 4.dp)) }
+                                Text("ملخص HAI للفروقات", fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+                                if (diff.changes.isEmpty()) Text("لم أجد فرقًا هندسيًا ذا دلالة بين النسختين.", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(top = 5.dp))
+                                diff.changes.take(14).forEach { Text("• $it", fontSize = 12.sp, lineHeight = 20.sp, modifier = Modifier.padding(top = 4.dp)) }
                             }
                         }
                     }
@@ -137,11 +137,11 @@ fun ProjectToolsScreen(
                     Card(colors = CardDefaults.cardColors(containerColor = ToolPaper), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(13.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.Backup, null, tint = ToolBronze)
+                                Icon(Icons.Outlined.Backup, null, tint = ToolBronze)
                                 Spacer(Modifier.width(7.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text("نسخة HAI احتياطية", fontWeight = FontWeight.Black, fontSize = 12.5.sp)
-                                    Text("تشمل المخطط، القواعد، وسجل النسخ المحفوظ.", color = Color.Gray, fontSize = 9.sp)
+                                    Text("نسخة HAI احتياطية", fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+                                    Text("تشمل المخطط، القواعد، وسجل النسخ المحفوظ.", color = Color.Gray, fontSize = 12.sp)
                                 }
                             }
                             Button(onClick = {
@@ -151,7 +151,7 @@ fun ProjectToolsScreen(
                                     exportLauncher.launch("$safe.hai.json")
                                 } else status = "تعذر تجهيز أرشيف المشروع."
                             }, modifier = Modifier.fillMaxWidth().padding(top = 9.dp), shape = RoundedCornerShape(12.dp)) {
-                                Icon(Icons.Rounded.FileDownload, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("تصدير المشروع كاملًا")
+                                Icon(Icons.Outlined.FileDownload, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("تصدير المشروع كاملًا")
                             }
                         }
                     }
@@ -161,15 +161,15 @@ fun ProjectToolsScreen(
                 Card(colors = CardDefaults.cardColors(containerColor = ToolPaper), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(13.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.RestorePage, null, tint = ToolBronze)
+                            Icon(Icons.Outlined.RestorePage, null, tint = ToolBronze)
                             Spacer(Modifier.width(7.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("استيراد مشروع HAI", fontWeight = FontWeight.Black, fontSize = 12.5.sp)
-                                Text("يفحص نوع الملف وSHA-256 قبل إنشاء مشروع مستقل.", color = Color.Gray, fontSize = 9.sp)
+                                Text("استيراد مشروع HAI", fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+                                Text("يفحص نوع الملف وSHA-256 قبل إنشاء مشروع مستقل.", color = Color.Gray, fontSize = 12.sp)
                             }
                         }
                         OutlinedButton(onClick = { importLauncher.launch(arrayOf("application/json", "text/plain")) }, modifier = Modifier.fillMaxWidth().padding(top = 9.dp), shape = RoundedCornerShape(12.dp)) {
-                            Icon(Icons.Rounded.FileUpload, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("اختيار ملف .hai.json")
+                            Icon(Icons.Outlined.FileUpload, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("اختيار ملف .hai.json")
                         }
                     }
                 }
@@ -177,7 +177,7 @@ fun ProjectToolsScreen(
                 status?.let {
                     Spacer(Modifier.height(10.dp))
                     Surface(color = ToolMist, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-                        Text(it, fontSize = 10.5.sp, lineHeight = 16.sp, modifier = Modifier.padding(11.dp))
+                        Text(it, fontSize = 12.sp, lineHeight = 20.sp, modifier = Modifier.padding(11.dp))
                     }
                 }
                 Spacer(Modifier.height(16.dp))

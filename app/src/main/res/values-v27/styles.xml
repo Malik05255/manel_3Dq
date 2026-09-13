@@ -3,8 +3,9 @@
     <style name="Theme.ManziliHAI" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
         <item name="android:statusBarColor">#F2F5F9</item>
-        <item name="android:navigationBarColor">#142B45</item>
+        <item name="android:navigationBarColor">#F2F5F9</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
 </resources>

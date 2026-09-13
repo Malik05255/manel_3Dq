@@ -5,9 +5,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Done
+import androidx.compose.material.icons.outlined.ArrowForward
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Done
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -73,38 +73,38 @@ fun SaudiAdaptiveBuildScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val profile = SaudiProjectTypeEngine.profile(projectType)
 
-    Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F4EE)) {
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 18.dp)) {
+    Surface(Modifier.fillMaxSize(), color = StudioColors.Canvas) {
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(horizontal = 18.dp)) {
             Row(Modifier.fillMaxWidth()) {
-                IconButton(onClick = { if (candidates.isNotEmpty()) candidates = emptyList() else if (step > 0) step-- else nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
+                IconButton(onClick = { if (candidates.isNotEmpty()) candidates = emptyList() else if (step > 0) step-- else nav.popBackStack() }) { Icon(Icons.Outlined.ArrowForward, "رجوع") }
                 Column(Modifier.weight(1f)) {
-                    Text(projectType.label, fontSize = 22.sp, fontWeight = FontWeight.Black)
-                    Text(if (candidates.isEmpty()) "جلسة HAI المتكيفة ${step + 1} من 4" else "أفضل حلول ${projectType.label}", color = Color.Gray, fontSize = 10.sp)
+                    Text(projectType.label, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text(if (candidates.isEmpty()) "الخطوة ${step + 1} من 4" else "أفضل حلول ${projectType.label}", color = Color.Gray, fontSize = 12.sp)
                 }
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 if (candidates.isEmpty()) {
-                    AssistChip(onClick = {}, label = { Text(projectType.subtitle, fontSize = 9.sp) })
+                    LinearProgressIndicator(progress = (step + 1) / 4f, modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp))
                     when (step) {
                         0 -> {
-                            AdaptiveHeading("الأرض والموقع", "نبدأ من نوع المشروع، ثم الأرض والشارع والشمال والجيران.")
+                            AdaptiveHeading("الأرض والموقع", "أبعاد الأرض واتجاهها")
                             OutlinedTextField(city, { city = it }, label = { Text("المدينة") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                             Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                 OutlinedTextField(width, { width = it.numeric2() }, label = { Text("عرض الأرض م") }, modifier = Modifier.weight(1f), singleLine = true)
                                 OutlinedTextField(depth, { depth = it.numeric2() }, label = { Text("طول الأرض م") }, modifier = Modifier.weight(1f), singleLine = true)
                             }
-                            Text("جهة الشارع", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
+                            Text("جهة الشارع", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { listOf("شمال", "شرق", "جنوب", "غرب").forEach { s -> FilterChip(streetSide == s, { streetSide = s }, { Text(s) }) } }
                             Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                 OutlinedTextField(streetWidth, { streetWidth = it.numeric2() }, label = { Text("عرض الشارع م") }, modifier = Modifier.weight(1f), singleLine = true)
                                 OutlinedTextField(north, { north = it.numericSigned2() }, label = { Text("الشمال °") }, modifier = Modifier.weight(.65f), singleLine = true)
                             }
                             AdaptiveToggle("قطعة زاوية", cornerPlot) { cornerPlot = it }
-                            Text("انكشاف الجيران", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            Text("انكشاف الجيران", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             listOf("غير محدد", "جانبان", "ثلاث جهات", "خلفي قوي", "واجهة مفتوحة").forEach { v -> FilterChip(neighborExposure == v, { neighborExposure = v }, { Text(v) }, modifier = Modifier.padding(end = 4.dp)) }
                         }
                         1 -> {
-                            AdaptiveHeading("البرنامج الأساسي", profile.questions.take(2).joinToString(" • "))
+                            AdaptiveHeading("مساحات البيت", profile.questions.take(2).joinToString(" • "))
                             AdaptiveCounter("الأدوار", floors, 1, 4) { floors = it }
                             AdaptiveCounter(if (projectType.apartmentMode) "إجمالي غرف النوم التقريبي" else "غرف النوم", bedrooms, 1, 12) { bedrooms = it }
                             AdaptiveCounter("مواقف السيارات", parking, 0, 12) { parking = it }
@@ -138,12 +138,12 @@ fun SaudiAdaptiveBuildScreen(
                             AdaptivePriority("الخصوصية", privacy) { privacy = it }
                             AdaptivePriority("سهولة الحركة", circulation) { circulation = it }
                             AdaptivePriority("الإضاءة الطبيعية", daylight) { daylight = it }
-                            Text("الهوية المعمارية", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            Text("الهوية المعمارية", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             listOf("سعودي معاصر", "نجدي معاصر", "حجازي معاصر", "عسيري معاصر", "نيوكلاسيك سعودي").forEach { s -> FilterChip(style == s, { style = s }, { Text(s) }, modifier = Modifier.padding(end = 4.dp)) }
                             OutlinedTextField(notes, { notes = it }, label = { Text("أي شروط إضافية") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                         }
                     }
-                    error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 10.sp) }
+                    error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
                     Spacer(Modifier.height(14.dp))
                     Button(
                         enabled = !busy,
@@ -187,19 +187,19 @@ fun SaudiAdaptiveBuildScreen(
                         },
                         modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(17.dp)
                     ) {
-                        if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Rounded.AutoAwesome, null)
+                        if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.AutoAwesome, null)
                         Spacer(Modifier.width(7.dp)); Text(if (step < 3) "التالي" else if (busy) "HAI يصمم ويفحص…" else "ولّد أفضل 3 حلول", fontWeight = FontWeight.Bold)
                     }
                 } else {
-                    Text(searchInfo, fontSize = 10.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
+                    Text(searchInfo, fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(vertical = 8.dp))
                     candidates.forEachIndexed { index, c ->
                         Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
                             Column(Modifier.padding(12.dp)) {
-                                Row { Text("${index + 1}. ${c.title}", fontWeight = FontWeight.Black, modifier = Modifier.weight(1f)); Text("${c.overall}/100", fontWeight = FontWeight.Black) }
-                                Text(c.rationale, color = Color.Gray, fontSize = 10.sp)
-                                Text(c.metrics.joinToString(" • "), fontSize = 9.sp, modifier = Modifier.padding(vertical = 5.dp))
+                                Row { Text("${index + 1}. ${c.title}", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); Text("${c.overall}/100", fontWeight = FontWeight.Bold) }
+                                Text(c.rationale, color = Color.Gray, fontSize = 12.sp)
+                                Text(c.metrics.joinToString(" • "), fontSize = 12.sp, modifier = Modifier.padding(vertical = 5.dp))
                                 PlanCanvas(c.plan, Modifier.fillMaxWidth().height(200.dp), previewMode = true, onSelect = {})
-                                Button(onClick = { onChoose(c.plan) }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.Done, null); Spacer(Modifier.width(5.dp)); Text("اعتمد هذا المشروع") }
+                                Button(onClick = { onChoose(c.plan) }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Done, null); Spacer(Modifier.width(5.dp)); Text("اعتمد هذا المشروع") }
                             }
                         }
                     }
@@ -219,9 +219,9 @@ private fun specialLabel(type: SaudiProjectTypeEngine.Type): String = when (type
     else -> "تفصيل إضافي خاص بهذا النوع"
 }
 
-@Composable private fun AdaptiveHeading(t: String, s: String) { Text(t, fontSize = 20.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(top = 10.dp)); Text(s, color = Color.Gray, fontSize = 11.sp, lineHeight = 16.sp, modifier = Modifier.padding(bottom = 12.dp)) }
+@Composable private fun AdaptiveHeading(t: String, s: String) { Text(t, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp)); Text(s, color = Color.Gray, fontSize = 12.sp, lineHeight = 20.sp, modifier = Modifier.padding(bottom = 12.dp)) }
 @Composable private fun AdaptiveToggle(t: String, v: Boolean, on: (Boolean) -> Unit) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(t, fontSize = 12.sp, modifier = Modifier.padding(top = 13.dp)); Switch(v, on) } }
-@Composable private fun AdaptiveCounter(t: String, v: Int, min: Int, max: Int, on: (Int) -> Unit) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("$t: $v", fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.padding(top = 14.dp)); Row { TextButton(onClick = { on((v - 1).coerceAtLeast(min)) }) { Text("−") }; TextButton(onClick = { on((v + 1).coerceAtMost(max)) }) { Text("+") } } } }
-@Composable private fun AdaptivePriority(t: String, v: Float, on: (Float) -> Unit) { Text("$t: ${v.toInt()}/100", fontWeight = FontWeight.Bold, fontSize = 11.sp); Slider(v, on, valueRange = 50f..100f) }
+@Composable private fun AdaptiveCounter(t: String, v: Int, min: Int, max: Int, on: (Int) -> Unit) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("$t: $v", fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(top = 14.dp)); Row { TextButton(onClick = { on((v - 1).coerceAtLeast(min)) }) { Text("−") }; TextButton(onClick = { on((v + 1).coerceAtMost(max)) }) { Text("+") } } } }
+@Composable private fun AdaptivePriority(t: String, v: Float, on: (Float) -> Unit) { Text("$t: ${v.toInt()}/100", fontWeight = FontWeight.Bold, fontSize = 12.sp); Slider(v, on, valueRange = 50f..100f) }
 private fun String.numeric2() = filter { it.isDigit() || it == '.' || it == '٫' }.replace('٫', '.')
 private fun String.numericSigned2() = filter { it.isDigit() || it == '.' || it == '-' }.trim()

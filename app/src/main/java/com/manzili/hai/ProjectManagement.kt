@@ -6,7 +6,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,11 +23,11 @@ import com.manzili.hai.engine.ProjectMemoryEngine
 import com.manzili.hai.model.FloorPlan
 import com.manzili.hai.model.ProjectConstraint
 
-private val PMPaper = Color(0xFFFFFEFA)
-private val PMSand = Color(0xFFF7F4EE)
-private val PMDeep = Color(0xFF27312C)
-private val PMBronze = Color(0xFF9A7447)
-private val PMMist = Color(0xFFE9E5DC)
+private val PMPaper = StudioColors.Paper
+private val PMSand = StudioColors.Canvas
+private val PMDeep = StudioColors.Ink
+private val PMBronze = StudioColors.Primary
+private val PMMist = StudioColors.Line
 
 @Composable
 fun ProjectLibraryScreen(nav: NavHostController, store: ProjectPlanStore, onPlanChanged: (FloorPlan?) -> Unit) {
@@ -40,8 +40,8 @@ fun ProjectLibraryScreen(nav: NavHostController, store: ProjectPlanStore, onPlan
     fun refresh() { projects = store.listProjects() }
 
     PMPage {
-        PMTop(nav, "مشاريعي", "المخططات والنسخ المحفوظة على هذا الجهاز")
-        Text("${projects.size} مشروع محفوظ", color = Color.Gray, fontSize = 11.sp)
+        PMTop(nav, "مشاريعي", "")
+        Text("${projects.size} مشروع محفوظ", color = Color.Gray, fontSize = 12.sp)
         Spacer(Modifier.height(10.dp))
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             projects.forEach { project ->
@@ -49,14 +49,14 @@ fun ProjectLibraryScreen(nav: NavHostController, store: ProjectPlanStore, onPlan
                 Card(colors = CardDefaults.cardColors(containerColor = if (project.active) PMDeep else PMPaper), shape = RoundedCornerShape(20.dp)) {
                     Column(Modifier.padding(13.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.Architecture, null, tint = if (project.active) Color.White else PMDeep)
+                            Icon(Icons.Outlined.Architecture, null, tint = if (project.active) Color.White else PMDeep)
                             Spacer(Modifier.width(9.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(project.title, color = if (project.active) Color.White else Color.Black, fontWeight = FontWeight.Black, fontSize = 14.sp)
-                                Text("V${project.revision} • ${project.roomCount} غرفة • ${project.activeConstraints} قاعدة", color = if (project.active) Color.White.copy(alpha = .65f) else Color.Gray, fontSize = 9.5.sp)
+                                Text(project.title, color = if (project.active) Color.White else Color.Black, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("V${project.revision} • ${project.roomCount} غرفة • ${project.activeConstraints} قاعدة", color = if (project.active) Color.White.copy(alpha = .65f) else Color.Gray, fontSize = 12.sp)
                             }
                             IconButton(onClick = { expanded = if (open) null else project.id }) {
-                                Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, tint = if (project.active) Color.White else Color.Black)
+                                Icon(if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, tint = if (project.active) Color.White else Color.Black)
                             }
                         }
 
@@ -68,47 +68,47 @@ fun ProjectLibraryScreen(nav: NavHostController, store: ProjectPlanStore, onPlan
                             },
                             modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
                             colors = if (project.active) ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = PMDeep) else ButtonDefaults.buttonColors()
-                        ) { Text(if (project.active) "فتح المشروع" else "تبديل وفتح", fontSize = 10.sp) }
+                        ) { Text(if (project.active) "فتح المشروع" else "فتح المشروع", fontSize = 12.sp) }
 
                         Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             TextButton(onClick = { renameTarget = project; renameValue = project.title }, modifier = Modifier.weight(1f)) {
-                                Icon(Icons.Rounded.Edit, null, Modifier.size(14.dp)); Spacer(Modifier.width(3.dp)); Text("تسمية", fontSize = 9.sp, color = if (project.active) Color.White else PMDeep)
+                                Icon(Icons.Outlined.Edit, null, Modifier.size(14.dp)); Spacer(Modifier.width(3.dp)); Text("تسمية", fontSize = 12.sp, color = if (project.active) Color.White else PMDeep)
                             }
                             TextButton(onClick = {
                                 ops.duplicate(project.id)?.let { copied ->
                                     onPlanChanged(copied); refresh(); expanded = store.activeProjectId()
                                 }
                             }, modifier = Modifier.weight(1f)) {
-                                Icon(Icons.Rounded.ContentCopy, null, Modifier.size(14.dp)); Spacer(Modifier.width(3.dp)); Text("نسخ", fontSize = 9.sp, color = if (project.active) Color.White else PMDeep)
+                                Icon(Icons.Outlined.ContentCopy, null, Modifier.size(14.dp)); Spacer(Modifier.width(3.dp)); Text("نسخ", fontSize = 12.sp, color = if (project.active) Color.White else PMDeep)
                             }
                             TextButton(onClick = { deleteTarget = project }, modifier = Modifier.weight(1f)) {
-                                Icon(Icons.Rounded.DeleteOutline, null, Modifier.size(14.dp)); Spacer(Modifier.width(3.dp)); Text("حذف", fontSize = 9.sp, color = if (project.active) Color.White else PMBronze)
+                                Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(14.dp)); Spacer(Modifier.width(3.dp)); Text("حذف", fontSize = 12.sp, color = if (project.active) Color.White else PMBronze)
                             }
                         }
 
                         if (open) {
                             HorizontalDivider(color = if (project.active) Color.White.copy(alpha = .15f) else PMMist, modifier = Modifier.padding(vertical = 8.dp))
-                            Text("سجل النسخ", color = if (project.active) Color.White else Color.Black, fontWeight = FontWeight.Bold, fontSize = 10.5.sp)
-                            Text("الاستعادة تنشئ نسخة أحدث ولا تستبدل التاريخ.", color = if (project.active) Color.White.copy(alpha = .6f) else Color.Gray, fontSize = 8.5.sp)
+                            Text("سجل النسخ", color = if (project.active) Color.White else Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text("الاستعادة تنشئ نسخة أحدث ولا تستبدل التاريخ.", color = if (project.active) Color.White.copy(alpha = .6f) else Color.Gray, fontSize = 12.sp)
                             store.listVersions(project.id).take(8).forEach { version ->
                                 Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Surface(color = if (project.active) Color.White.copy(alpha = .1f) else PMMist, shape = RoundedCornerShape(9.dp)) {
-                                        Text("V${version.revision}", color = if (project.active) Color.White else Color.Black, fontWeight = FontWeight.Black, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp))
+                                        Text("V${version.revision}", color = if (project.active) Color.White else Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp))
                                     }
                                     Spacer(Modifier.width(8.dp))
-                                    Text("${version.activeConstraints} قاعدة", color = if (project.active) Color.White.copy(alpha = .6f) else Color.Gray, fontSize = 8.5.sp, modifier = Modifier.weight(1f))
+                                    Text("${version.activeConstraints} قاعدة", color = if (project.active) Color.White.copy(alpha = .6f) else Color.Gray, fontSize = 12.sp, modifier = Modifier.weight(1f))
                                     TextButton(onClick = {
                                         store.restoreVersion(project.id, version.revision)?.let {
                                             onPlanChanged(it); refresh(); nav.navigate("editor")
                                         }
-                                    }) { Text("استعادة", color = if (project.active) Color.White else PMBronze, fontSize = 9.sp) }
+                                    }) { Text("استعادة", color = if (project.active) Color.White else PMBronze, fontSize = 12.sp) }
                                 }
                             }
                         }
                     }
                 }
             }
-            if (projects.isEmpty()) Text("لا توجد مشاريع محفوظة بعد.", color = Color.Gray, modifier = Modifier.padding(top = 30.dp))
+            if (projects.isEmpty()) StudioEmpty("لا توجد مشاريع بعد", "إنشاء مشروع") { nav.navigate("new") }
         }
     }
 
@@ -131,7 +131,7 @@ fun ProjectLibraryScreen(nav: NavHostController, store: ProjectPlanStore, onPlan
     deleteTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
-            icon = { Icon(Icons.Rounded.WarningAmber, null, tint = PMBronze) },
+            icon = { Icon(Icons.Outlined.WarningAmber, null, tint = PMBronze) },
             title = { Text("حذف المشروع؟") },
             text = { Text("سيتم حذف «${target.title}» وسجل نسخه المحلي من هذا الجهاز. هذا الإجراء لا يمكن التراجع عنه.") },
             confirmButton = { TextButton(onClick = {
@@ -156,18 +156,18 @@ fun ProjectMemoryManagerScreen(nav: NavHostController, plan: FloorPlan?, onUpdat
 
     PMPage {
         PMTop(nav, "ذاكرة المشروع", plan.title)
-        Text("${rules.count { it.active }} قاعدة فعالة من ${rules.size}", color = Color.Gray, fontSize = 10.sp)
+        Text("${rules.count { it.active }} قاعدة فعالة من ${rules.size}", color = Color.Gray, fontSize = 12.sp)
         Spacer(Modifier.height(9.dp))
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             rules.forEach { rule ->
                 Card(colors = CardDefaults.cardColors(containerColor = PMPaper), shape = RoundedCornerShape(17.dp)) {
                     Column(Modifier.padding(11.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(if (rule.active) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder, null, tint = if (rule.active) PMBronze else Color.Gray, modifier = Modifier.size(18.dp))
+                            Icon(if (rule.active) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder, null, tint = if (rule.active) PMBronze else Color.Gray, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(ProjectConstraintManager.describe(plan, rule), fontWeight = FontWeight.Black, fontSize = 11.sp)
-                                Text(if (rule.hard) "قيد إلزامي" else "أولوية تصميمية", color = Color.Gray, fontSize = 8.5.sp)
+                                Text(ProjectConstraintManager.describe(plan, rule), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text(if (rule.hard) "قيد إلزامي" else "أولوية تصميمية", color = Color.Gray, fontSize = 12.sp)
                             }
                             Switch(checked = rule.active, onCheckedChange = { enabled ->
                                 onUpdate(ProjectConstraintManager.setActive(plan, rule.id, enabled).copy(revision = plan.revision + 1))
@@ -176,17 +176,17 @@ fun ProjectMemoryManagerScreen(nav: NavHostController, plan: FloorPlan?, onUpdat
                         Row(Modifier.fillMaxWidth()) {
                             if (rule.kind == ProjectMemoryEngine.MIN_ROOM_AREA) {
                                 TextButton(onClick = { editing = rule; value = rule.value?.let { "%.1f".format(it) } ?: "" }, modifier = Modifier.weight(1f)) {
-                                    Text("تعديل الحد", fontSize = 9.5.sp)
+                                    Text("تعديل الحد", fontSize = 12.sp)
                                 }
                             }
                             TextButton(onClick = { onUpdate(ProjectConstraintManager.forget(plan, rule.id).copy(revision = plan.revision + 1)) }, modifier = Modifier.weight(1f)) {
-                                Text("نسيان القاعدة", color = PMBronze, fontSize = 9.5.sp)
+                                Text("نسيان القاعدة", color = PMBronze, fontSize = 12.sp)
                             }
                         }
                     }
                 }
             }
-            if (rules.isEmpty()) Text("قل لـ HAI مثلًا: «المجلس ممنوع يصغر» أو «مدخل الضيوف مستقل».", color = Color.Gray, fontSize = 11.sp)
+            if (rules.isEmpty()) Text("قل لـ HAI مثلًا: «المجلس ممنوع يصغر» أو «مدخل الضيوف مستقل».", color = Color.Gray, fontSize = 12.sp)
         }
     }
 
@@ -211,10 +211,5 @@ private fun PMPage(content: @Composable ColumnScope.() -> Unit) = Surface(color 
 
 @Composable
 private fun PMTop(nav: NavHostController, title: String, subtitle: String) {
-    Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.Rounded.ArrowForward, "رجوع") }
-        Box(Modifier.size(40.dp).background(PMDeep, RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.FolderSpecial, null, tint = Color.White) }
-        Spacer(Modifier.width(9.dp))
-        Column { Text(title, fontWeight = FontWeight.Black, fontSize = 18.sp); Text(subtitle, color = Color.Gray, fontSize = 9.5.sp) }
-    }
+    StudioHeader(title, { nav.popBackStack() })
 }
