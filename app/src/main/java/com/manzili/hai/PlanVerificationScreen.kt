@@ -28,9 +28,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
+import com.manzili.hai.ai.HaiArchitectClient
+import com.manzili.hai.engine.HaiReviewResolutionEngine
 import com.manzili.hai.engine.PlanVerificationEngine
 import com.manzili.hai.model.FloorPlan
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private val VSSand = Color(0xFFF8F6F2)
@@ -38,6 +41,7 @@ private val VSPaper = Color(0xFFFFFEFC)
 private val VSDeep = Color(0xFF181A18)
 private val VSViolet = Color(0xFF6353D9)
 private val VSOrange = Color(0xFFE28B5A)
+private val VSGreen = Color(0xFF4C8A78)
 
 @Composable
 fun PlanVerificationScreen(nav: NavHostController, source: Uri?, plan: FloorPlan?, onConfirm: (FloorPlan) -> Unit) {
@@ -50,10 +54,57 @@ fun PlanVerificationScreen(nav: NavHostController, source: Uri?, plan: FloorPlan
         return
     }
 
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val haiClient = remember(context) { HaiArchitectClient(context) }
     var working by remember(plan) { mutableStateOf(PlanVerificationEngine.inspect(plan).plan) }
     var width by remember(working.widthM) { mutableStateOf(working.widthM?.let { "%.2f".format(it) } ?: "") }
     var height by remember(working.heightM) { mutableStateOf(working.heightM?.let { "%.2f".format(it) } ?: "") }
+    var haiBusy by remember { mutableStateOf(false) }
+    var haiStatus by remember { mutableStateOf<String?>(null) }
     val report = remember(working) { PlanVerificationEngine.inspect(working) }
+
+    fun runHaiResolver() {
+        if (haiBusy) return
+        haiBusy = true
+        haiStatus = null
+        val beforeIssueCount = report.issues.size
+        scope.launch {
+            var candidate = HaiReviewResolutionEngine.localResolve(working)
+            var candidateReport = PlanVerificationEngine.inspect(candidate)
+            var visualSucceeded = false
+
+            val needsVisualHelp = source != null && (
+                candidateReport.blocking ||
+                    candidate.widthM == null ||
+                    candidate.heightM == null ||
+                    candidateReport.issues.isNotEmpty()
+                )
+
+            if (needsVisualHelp) {
+                runCatching { haiClient.analyzePlan(source!!) }
+                    .onSuccess { visual ->
+                        candidate = HaiReviewResolutionEngine.mergeVisualEvidence(candidate, visual)
+                        candidate = HaiReviewResolutionEngine.localResolve(candidate)
+                        candidateReport = PlanVerificationEngine.inspect(candidate)
+                        visualSucceeded = true
+                    }
+            }
+
+            working = candidateReport.plan
+            width = candidateReport.plan.widthM?.let { "%.2f".format(it) } ?: ""
+            height = candidateReport.plan.heightM?.let { "%.2f".format(it) } ?: ""
+
+            val solvedCount = (beforeIssueCount - candidateReport.issues.size).coerceAtLeast(0)
+            haiStatus = when {
+                !candidateReport.blocking && candidateReport.issues.isEmpty() -> "تم حل مشاكل المراجعة تلقائيًا. المشروع جاهز للاعتماد."
+                solvedCount > 0 -> "حل HAI $solvedCount من مشاكل المراجعة تلقائيًا. راجع ما تبقى فقط."
+                visualSucceeded -> "راجع HAI المخطط الأصلي وحدّث ما أمكن إثباته. المتبقي يحتاج تأكيدًا يدويًا."
+                else -> "لم يجد HAI دليلًا كافيًا لحل المشكلة بأمان. أكمل الحقل أو العنصر يدويًا."
+            }
+            haiBusy = false
+        }
+    }
 
     Surface(color = VSSand, modifier = Modifier.fillMaxSize()) {
         Column(
@@ -125,6 +176,7 @@ fun PlanVerificationScreen(nav: NavHostController, source: Uri?, plan: FloorPlan
                                     val h = height.replace(',', '.').toDoubleOrNull()
                                     if (w != null && h != null && w > .5 && h > .5) {
                                         working = PlanVerificationEngine.confirmScale(working, w, h)
+                                        haiStatus = null
                                     }
                                 },
                                 shape = RoundedCornerShape(18.dp),
@@ -132,7 +184,7 @@ fun PlanVerificationScreen(nav: NavHostController, source: Uri?, plan: FloorPlan
                             ) {
                                 Icon(Icons.Rounded.Straighten, null, Modifier.size(17.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("تأكيد")
+                                Text("تأكيد يدوي")
                             }
                         }
                     }
@@ -165,11 +217,47 @@ fun PlanVerificationScreen(nav: NavHostController, source: Uri?, plan: FloorPlan
                     }
                 }
 
+                haiStatus?.let { status ->
+                    Spacer(Modifier.height(10.dp))
+                    Surface(
+                        color = if (report.blocking) VSPaper else VSGreen.copy(alpha = .10f),
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(Modifier.padding(horizontal = 13.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.AutoAwesome, null, tint = if (report.blocking) VSViolet else VSGreen, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(status, fontSize = 10.5.sp, lineHeight = 15.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(14.dp))
             }
 
+            FilledTonalButton(
+                onClick = { runHaiResolver() },
+                enabled = !haiBusy && report.issues.isNotEmpty(),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = VSViolet.copy(alpha = .12f),
+                    contentColor = VSViolet
+                ),
+                shape = RoundedCornerShape(22.dp),
+                modifier = Modifier.fillMaxWidth().height(54.dp)
+            ) {
+                if (haiBusy) {
+                    CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp, color = VSViolet)
+                } else {
+                    Icon(Icons.Rounded.AutoAwesome, null)
+                }
+                Spacer(Modifier.width(7.dp))
+                Text(if (haiBusy) "HAI يحل المشكلة..." else "HAI • حل تلقائي", fontWeight = FontWeight.Black, fontSize = 15.sp)
+            }
+
+            Spacer(Modifier.height(8.dp))
+
             Button(
-                enabled = !report.blocking,
+                enabled = !report.blocking && !haiBusy,
                 onClick = { onConfirm(report.plan) },
                 colors = ButtonDefaults.buttonColors(containerColor = VSViolet),
                 shape = RoundedCornerShape(22.dp),
@@ -235,7 +323,7 @@ private fun VerificationOverlay(source: Uri, plan: FloorPlan) {
                     }
                     plan.openings.forEach { opening ->
                         drawCircle(
-                            if (opening.confidence < 65) VSOrange else Color(0xFF4C8A78),
+                            if (opening.confidence < 65) VSOrange else VSGreen,
                             radius = 3.dp.toPx(),
                             center = p(opening.x, opening.y)
                         )
