@@ -18,7 +18,7 @@ import androidx.navigation.NavHostController
 import com.manzili.hai.data.CloudSyncClient
 import com.manzili.hai.data.HaiSettings
 import com.manzili.hai.data.ProjectPlanStore
-import com.manzili.hai.data.SafeCloudUploader
+import com.manzili.hai.data.SafeCloudUploaderV2
 import com.manzili.hai.data.SupabaseOtpAuth
 import com.manzili.hai.model.FloorPlan
 import kotlinx.coroutines.launch
@@ -34,7 +34,7 @@ fun CloudSyncScreen(
     val settings = remember(context) { HaiSettings(context) }
     val auth = remember(settings) { SupabaseOtpAuth(settings) }
     val cloud = remember(settings) { CloudSyncClient(settings) }
-    val uploader = remember(settings, cloud) { SafeCloudUploader(settings, cloud) }
+    val uploader = remember(settings, cloud) { SafeCloudUploaderV2(settings, cloud) }
     val scope = rememberCoroutineScope()
 
     var email by remember { mutableStateOf("") }
@@ -174,7 +174,7 @@ fun CloudSyncScreen(
                                         }
                                         .onFailure { error ->
                                             message = when (error) {
-                                                is SafeCloudUploader.Conflict -> error.message
+                                                is SafeCloudUploaderV2.Conflict -> error.message
                                                 else -> error.message ?: "فشل رفع المشروع"
                                             }
                                             remote = runCatching { cloud.listProjects() }.getOrDefault(remote)
