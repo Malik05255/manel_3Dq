@@ -1,10 +1,12 @@
 package com.manzili.hai
 
 import com.manzili.hai.engine.FloorplanParserEngine
+import com.manzili.hai.engine.PlanVerificationEngine
 import com.manzili.hai.model.FloorPlan
 import com.manzili.hai.model.PlanPoint
 import com.manzili.hai.model.Wall
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -22,6 +24,15 @@ class ImportGeometryBootstrapRegressionTest {
 
         assertEquals(4, result.walls.size)
         assertTrue(result.uncertainties.any { it.contains("قابلة للمراجعة") })
+        assertFalse(PlanVerificationEngine.inspect(result).blocking)
+    }
+
+    @Test
+    fun emptyAnalysisCanBeReviewedButCannotBeApprovedFor3d() {
+        val report = PlanVerificationEngine.inspect(FloorPlan())
+
+        assertTrue(report.blocking)
+        assertTrue(report.issues.any { it.title.contains("الهندسة غير مكتملة") })
     }
 
     @Test
@@ -33,5 +44,6 @@ class ImportGeometryBootstrapRegressionTest {
         val result = FloorplanParserEngine.refine(FloorPlan(), evidence).plan
 
         assertTrue(result.walls.isEmpty())
+        assertTrue(PlanVerificationEngine.inspect(result).blocking)
     }
 }
