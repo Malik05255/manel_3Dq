@@ -2,24 +2,23 @@ package com.manzili.hai
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -28,15 +27,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.roundToInt
+import androidx.compose.ui.zIndex
 
-/** Small draggable HAI summon bubble. Long-press then drag; tap invokes contextual help. */
+/**
+ * Contextual HAI bubble.
+ * Tap = solve the current screen. Drag directly = move it anywhere without waiting for long-press.
+ */
 @Composable
 fun FloatingHaiButton(
     busy: Boolean,
@@ -45,29 +47,43 @@ fun FloatingHaiButton(
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val bubblePx = with(density) { 74.dp.toPx() }
-        val maxXPx = with(density) { maxWidth.toPx() } - bubblePx
-        val maxYPx = with(density) { maxHeight.toPx() } - bubblePx
-        var x by remember(maxXPx) { mutableFloatStateOf((maxXPx * .78f).coerceAtLeast(0f)) }
-        var y by remember(maxYPx) { mutableFloatStateOf((maxYPx * .58f).coerceAtLeast(0f)) }
+        val bubblePx = with(density) { 64.dp.toPx() }
+        val maxXPx = (with(density) { maxWidth.toPx() } - bubblePx).coerceAtLeast(0f)
+        val maxYPx = (with(density) { maxHeight.toPx() } - bubblePx).coerceAtLeast(0f)
+
+        var x by remember { mutableFloatStateOf(Float.NaN) }
+        var y by remember { mutableFloatStateOf(Float.NaN) }
+
+        LaunchedEffect(maxXPx, maxYPx) {
+            if (x.isNaN()) x = (maxXPx * .80f).coerceIn(0f, maxXPx)
+            else x = x.coerceIn(0f, maxXPx)
+            if (y.isNaN()) y = (maxYPx * .62f).coerceIn(0f, maxYPx)
+            else y = y.coerceIn(0f, maxYPx)
+        }
 
         Surface(
             modifier = Modifier
-                .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
-                .size(74.dp)
-                .shadow(12.dp, CircleShape)
+                .graphicsLayer {
+                    translationX = if (x.isNaN()) 0f else x
+                    translationY = if (y.isNaN()) 0f else y
+                }
+                .size(64.dp)
+                .zIndex(30f)
+                .shadow(9.dp, CircleShape)
                 .pointerInput(maxXPx, maxYPx) {
-                    detectDragGesturesAfterLongPress { change, drag ->
-                        change.consume()
-                        x = (x + drag.x).coerceIn(0f, maxXPx.coerceAtLeast(0f))
-                        y = (y + drag.y).coerceIn(0f, maxYPx.coerceAtLeast(0f))
-                    }
+                    detectDragGestures(
+                        onDrag = { change, drag ->
+                            change.consume()
+                            x = ((if (x.isNaN()) 0f else x) + drag.x).coerceIn(0f, maxXPx)
+                            y = ((if (y.isNaN()) 0f else y) + drag.y).coerceIn(0f, maxYPx)
+                        }
+                    )
                 }
                 .clickable(enabled = !busy, onClick = onClick),
             shape = CircleShape,
             color = Color(0xFF6652E8),
-            tonalElevation = 10.dp,
-            shadowElevation = 10.dp
+            tonalElevation = 8.dp,
+            shadowElevation = 8.dp
         ) {
             Box(
                 Modifier
@@ -77,24 +93,24 @@ fun FloatingHaiButton(
             ) {
                 if (busy) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(27.dp),
+                        modifier = Modifier.size(23.dp),
                         color = Color.White,
-                        strokeWidth = 2.5.dp
+                        strokeWidth = 2.3.dp
                     )
                 } else {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
                             Icons.Rounded.AutoAwesome,
-                            contentDescription = null,
+                            contentDescription = "استدع HAI",
                             tint = Color.White,
-                            modifier = Modifier.size(21.dp)
+                            modifier = Modifier.size(18.dp)
                         )
-                        Spacer(Modifier.height(2.dp))
+                        Spacer(Modifier.height(1.dp))
                         Text(
-                            "استدع HAI",
+                            "HAI",
                             color = Color.White,
                             fontWeight = FontWeight.Black,
-                            fontSize = 9.5.sp,
+                            fontSize = 10.sp,
                             maxLines = 1
                         )
                     }
