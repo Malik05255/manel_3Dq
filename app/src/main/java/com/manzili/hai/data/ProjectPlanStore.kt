@@ -11,7 +11,8 @@ class ProjectPlanStore(context: Context) {
     data class ProjectSummary(val id: String, val title: String, val revision: Int, val activeConstraints: Int, val roomCount: Int, val updatedAt: Long, val active: Boolean)
     data class VersionSummary(val projectId: String, val revision: Int, val savedAt: Long, val activeConstraints: Int)
 
-    private val prefs = context.getSharedPreferences("manzili_hai_project", Context.MODE_PRIVATE)
+    internal val appContext: Context = context.applicationContext
+    private val prefs = appContext.getSharedPreferences("manzili_hai_project", Context.MODE_PRIVATE)
 
     init { migrateSinglePlan() }
 
