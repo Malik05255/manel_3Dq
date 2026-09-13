@@ -2,8 +2,10 @@ package com.manzili.hai.engine
 
 import com.manzili.hai.model.FloorPlan
 import com.manzili.hai.model.Opening
+import com.manzili.hai.model.PlanDimension
 import com.manzili.hai.model.Room
 import com.manzili.hai.model.Wall
+import kotlin.math.abs
 
 /**
  * Resolves review-stage gaps without redesigning the house.
@@ -14,18 +16,8 @@ object HaiReviewResolutionEngine {
         var width = input.widthM
         var height = input.heightM
 
-        if (width == null) {
-            width = input.dimensions
-                .filter { it.confidence >= 70 && it.axis.equals("horizontal", true) }
-                .maxByOrNull { it.valueM }
-                ?.valueM
-        }
-        if (height == null) {
-            height = input.dimensions
-                .filter { it.confidence >= 70 && it.axis.equals("vertical", true) }
-                .maxByOrNull { it.valueM }
-                ?.valueM
-        }
+        if (width == null) width = strongestOverallDimension(input.dimensions, "horizontal")
+        if (height == null) height = strongestOverallDimension(input.dimensions, "vertical")
 
         if (width == input.widthM && height == input.heightM) return input
         return input.copy(
@@ -60,6 +52,27 @@ object HaiReviewResolutionEngine {
         )
     }
 
+    private fun strongestOverallDimension(dimensions: List<PlanDimension>, axis: String): Double? {
+        return dimensions
+            .filter { it.confidence >= 70 && it.axis.equals(axis, true) }
+            .filter { dimension ->
+                val text = "${dimension.label} ${dimension.sourceText}"
+                val namedOverall = if (axis == "horizontal") {
+                    text.contains("عرض") || text.contains("width", true)
+                } else {
+                    text.contains("طول") || text.contains("height", true) || text.contains("length", true)
+                }
+                val spanPct = dimension.start?.let { start ->
+                    dimension.end?.let { end ->
+                        if (axis == "horizontal") abs(end.x - start.x) else abs(end.y - start.y)
+                    }
+                } ?: 0f
+                namedOverall || spanPct >= 70f
+            }
+            .maxWithOrNull(compareBy<PlanDimension> { it.confidence }.thenBy { it.valueM })
+            ?.valueM
+    }
+
     private fun mergeRooms(current: List<Room>, visual: List<Room>): List<Room> = mergeById(
         current,
         visual,
@@ -91,18 +104,18 @@ object HaiReviewResolutionEngine {
         locked: (T) -> Boolean,
         confidence: (T) -> Int
     ): List<T> {
-        if (current.isEmpty()) return visual.filter { confidence(it) >= 55 }
+        if (current.isEmpty()) return visual.filter { confidence(it) >= 70 }
         if (visual.isEmpty()) return current
 
         val visualById = visual.associateBy(id)
         val out = current.map { existing ->
             if (locked(existing)) return@map existing
             val candidate = visualById[id(existing)] ?: return@map existing
-            if (confidence(candidate) > confidence(existing)) candidate else existing
+            if (confidence(candidate) >= 75 && confidence(candidate) > confidence(existing)) candidate else existing
         }.toMutableList()
 
         val existingIds = current.map(id).toHashSet()
-        visual.filter { id(it) !in existingIds && confidence(it) >= 70 }.forEach(out::add)
+        visual.filter { id(it) !in existingIds && confidence(it) >= 75 }.forEach(out::add)
         return out
     }
 }
