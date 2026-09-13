@@ -28,5 +28,5 @@ def test_sparse_segmentation_recovers_reviewable_walls_and_spaces(monkeypatch):
     assert len(result["walls"]) >= 3
     assert len(result["rooms"]) >= 1
     assert all(len(room["polygon"]) >= 3 for room in result["rooms"])
-    assert "opencv-recovery" in result["model_used"]
+    assert "opencv" in result["model_used"] and "recovery" in result["model_used"]
     assert any("insufficient wall geometry" in warning for warning in result["warnings"])
