@@ -30,7 +30,7 @@ class SafeCloudUploaderV2(
         require(projectId.isNotBlank()) { "معرّف المشروع المحلي غير متاح" }
         val observed = cloud.listProjects().firstOrNull { it.id == projectId }
         if (observed != null && observed.revision > plan.revision) {
-            throw@withContext Conflict(observed.revision)
+            throw Conflict(observed.revision)
         }
 
         val targetRevision = observed?.let { maxOf(plan.revision, it.revision + 1) }
