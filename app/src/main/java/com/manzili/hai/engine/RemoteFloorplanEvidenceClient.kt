@@ -50,10 +50,10 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
     val available: Boolean get() = settings.backendConfigured
 
     suspend fun readiness():Readiness = withContext(Dispatchers.IO) {
-        if(!available) return@withContext Readiness(false,"none",false,"none","Backend غير مفعّل")
+        if(!available) return@withContext Readiness(false,"none",false,"none","Backend غير مفعّل أو لا توجد مصادقة")
         val request=Request.Builder()
             .url("${settings.backendBaseUrl}/v1/parser/status")
-            .header("Authorization","Bearer ${settings.backendAccessToken}")
+            .header("Authorization","Bearer ${settings.backendAuthToken}")
             .get()
             .build()
         runCatching {
@@ -86,9 +86,9 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         val body = JSONObject().put("image_base64", base64).put("page_index", pageIndex)
         val req = Request.Builder()
             .url("${settings.backendBaseUrl}/v1/parse-floorplan")
-            .header("Authorization", "Bearer ${settings.backendAccessToken}")
+            .header("Authorization", "Bearer ${settings.backendAuthToken}")
             .header("Content-Type", "application/json")
-            .header("X-Manzili-Parser-Client", "android-0.41")
+            .header("X-Manzili-Parser-Client", "android-0.62")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
         http.newCall(req).execute().use { res ->
