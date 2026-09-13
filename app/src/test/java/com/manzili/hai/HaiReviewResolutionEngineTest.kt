@@ -53,4 +53,15 @@ class HaiReviewResolutionEngineTest {
         assertEquals(14.0, resolved.widthM ?: 0.0, 0.001)
         assertEquals(20.0, resolved.heightM ?: 0.0, 0.001)
     }
+
+    @Test
+    fun visualEvidenceNeverOverwritesExistingUserScale() {
+        val current = FloorPlan(widthM = 11.0, heightM = 17.0)
+        val visual = FloorPlan(widthM = 13.0, heightM = 19.0)
+
+        val resolved = HaiReviewResolutionEngine.mergeVisualEvidence(current, visual)
+
+        assertEquals(11.0, resolved.widthM ?: 0.0, 0.001)
+        assertEquals(17.0, resolved.heightM ?: 0.0, 0.001)
+    }
 }
