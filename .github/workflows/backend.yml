@@ -2,7 +2,7 @@ name: Backend Build
 
 on:
   push:
-    branches: [ main, 'codex/**' ]
+    branches: [ main, 'codex/**', 'android-light-rebuild' ]
     paths:
       - 'backend/**'
       - 'render.yaml'
