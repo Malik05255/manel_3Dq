@@ -76,3 +76,18 @@ jobs:
           fi
           BODY="$(curl --fail --silent --show-error --max-time 45 -H "Authorization: Bearer $BACKEND_TOKEN" "${BACKEND_URL%/}/v1/parser/status")"
           python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("ready") is True, d; assert d.get("preferred_path") == "cubicasa-unet-resnet34", d; print("parser status ok")' "$BODY"
+
+      - name: Verify zero-cost AI provider response
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$BACKEND_TOKEN" ]; then
+            echo '::warning::Production API token is unavailable; live AI smoke coverage is skipped.'
+            exit 0
+          fi
+          BODY="$(curl --fail --silent --show-error --max-time 90 \
+            -H "Authorization: Bearer $BACKEND_TOKEN" \
+            -H 'Content-Type: application/json' \
+            --data '{"model":"openrouter/free","messages":[{"role":"user","content":"Reply with OK only."}],"max_tokens":8,"temperature":0}' \
+            "${BACKEND_URL%/}/v1/ai/chat")"
+          python -c 'import json,sys; d=json.loads(sys.argv[1]); choices=d.get("choices") or []; assert choices, d; msg=choices[0].get("message") or {}; assert isinstance(msg.get("content"), str) and msg.get("content").strip(), d; print("live AI provider smoke ok")' "$BODY"
