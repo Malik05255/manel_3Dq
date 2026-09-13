@@ -57,10 +57,11 @@ object MultiPageEvidenceFusionEngine {
     }
 
     private fun pageObservation(page: RemoteFloorplanEvidenceClient.PageResult): String {
+        val source = if (page.modelUsed.contains("roboflow-universe", ignoreCase = true)) "Roboflow" else "Deep Parser"
         return if (page.rooms.isNotEmpty()) {
-            "Deep Parser صفحة ${page.pageIndex + 1}: ${page.rooms.size} مساحة، هندسة ${page.geometryConfidence}%، ترابط جدران ${page.wallTopology}%، أبعاد مؤكدة ${page.dimensionEvidenceCount}."
+            "$source صفحة ${page.pageIndex + 1}: ${page.rooms.size} مساحة، هندسة ${page.geometryConfidence}%، ترابط جدران ${page.wallTopology}%، أبعاد مؤكدة ${page.dimensionEvidenceCount}."
         } else {
-            "Deep Parser صفحة ${page.pageIndex + 1}: لم يستخرج غرفًا مغلقة مؤكدة؛ بقيت قراءة Vision للمراجعة ولم تعتبر دليلًا مستقلًا."
+            "$source صفحة ${page.pageIndex + 1}: لم يستخرج غرفًا مغلقة مؤكدة؛ بقيت قراءة Vision للمراجعة ولم تعتبر دليلًا مستقلًا."
         }
     }
 
@@ -73,10 +74,6 @@ object MultiPageEvidenceFusionEngine {
         }
     }
 
-    /**
-     * Vision is not allowed to win simply because it returned a high self-confidence value.
-     * The backend's page-level geometry/topology verification also caps the consensus room score.
-     */
     private fun fuseRooms(
         primary: List<Room>,
         evidence: List<Room>,
@@ -86,6 +83,11 @@ object MultiPageEvidenceFusionEngine {
         val pageTrust = if (qualityValues.isEmpty()) 70 else qualityValues.average().toInt()
         val evidenceCap = (pageTrust + 8).coerceIn(58, 92)
         val consensusCap = (pageTrust + 12).coerceIn(66, 96)
+        val roboflowPrimary = page.modelUsed.contains("roboflow-universe", ignoreCase = true)
+
+        if (roboflowPrimary && evidence.size >= 3) {
+            return fuseRoboflowPrimary(primary, evidence, pageTrust)
+        }
 
         if (primary.isEmpty()) return evidence.map { it.copy(confidence = min(it.confidence, evidenceCap)) }
         if (evidence.isEmpty()) return primary.map { it.copy(confidence = min(it.confidence, min(72, pageTrust + 4))) }
@@ -93,8 +95,7 @@ object MultiPageEvidenceFusionEngine {
         val usedEvidence = mutableSetOf<String>()
         val out = mutableListOf<Room>()
         primary.forEach { room ->
-            val candidates = evidence.map { it to overlapScore(room, it) }
-            val matched = candidates.maxByOrNull { it.second }?.takeIf { it.second >= .34f }
+            val matched = evidence.map { it to overlapScore(room, it) }.maxByOrNull { it.second }?.takeIf { it.second >= .34f }
             if (matched == null) {
                 val cap = if (evidence.size >= 3) min(62, evidenceCap) else min(70, evidenceCap)
                 out += room.copy(confidence = min(room.confidence, cap))
@@ -103,8 +104,7 @@ object MultiPageEvidenceFusionEngine {
 
             val other = matched.first
             usedEvidence += other.id
-            val preferEvidenceGeometry =
-                (room.polygon.size < 3 && other.polygon.size >= 3) || other.confidence >= room.confidence + 8
+            val preferEvidenceGeometry = (room.polygon.size < 3 && other.polygon.size >= 3) || other.confidence >= room.confidence + 8
             val geometry = if (preferEvidenceGeometry) other else room
             val name = when {
                 !isGenericName(room.name) -> room.name
@@ -113,12 +113,7 @@ object MultiPageEvidenceFusionEngine {
             }
             val type = if (room.type.equals("unknown", true) && !other.type.equals("unknown", true)) other.type else room.type
             val localAgreement = (max(room.confidence, other.confidence) + 6).coerceAtMost(consensusCap)
-            out += geometry.copy(
-                id = room.id,
-                name = name,
-                type = type,
-                confidence = localAgreement
-            )
+            out += geometry.copy(id = room.id, name = name, type = type, confidence = localAgreement)
         }
 
         evidence.filterNot { it.id in usedEvidence }
@@ -126,17 +121,38 @@ object MultiPageEvidenceFusionEngine {
             .filter { candidate -> out.none { overlapScore(it, candidate) >= .28f } }
             .take(20)
             .forEach { recovered ->
-                out += recovered.copy(
-                    id = "remote-recovered-${recovered.id}",
-                    confidence = min(recovered.confidence, min(74, evidenceCap))
-                )
+                out += recovered.copy(id = "remote-recovered-${recovered.id}", confidence = min(recovered.confidence, min(74, evidenceCap)))
             }
 
-        return out.distinctBy { room ->
-            val cx = ((room.x + room.width / 2f) * 2f).toInt()
-            val cy = ((room.y + room.height / 2f) * 2f).toInt()
-            "$cx:$cy:${(room.width * 2f).toInt()}:${(room.height * 2f).toInt()}"
-        }
+        return dedupeRooms(out)
+    }
+
+    private fun fuseRoboflowPrimary(localRooms: List<Room>, roboflowRooms: List<Room>, pageTrust: Int): List<Room> {
+        val cap = (pageTrust + 16).coerceIn(72, 94)
+        val out = roboflowRooms.sortedByDescending { it.confidence }.take(40).map { remote ->
+            val local = localRooms.map { it to overlapScore(it, remote) }.maxByOrNull { it.second }?.takeIf { it.second >= .24f }?.first
+            val name = when {
+                local != null && !isGenericName(local.name) -> local.name
+                !isGenericName(remote.name) -> remote.name
+                else -> remote.name
+            }
+            val type = if (local != null && !local.type.equals("unknown", true)) local.type else remote.type
+            val confidence = if (local != null) min(cap, max(remote.confidence, local.confidence) + 4) else min(cap, remote.confidence)
+            remote.copy(name = name, type = type, confidence = confidence)
+        }.toMutableList()
+
+        localRooms.filter { it.confidence >= 78 }
+            .filter { candidate -> out.none { overlapScore(it, candidate) >= .24f } }
+            .take(8)
+            .forEach { local -> out += local.copy(id = "vision-extra-${local.id}", confidence = min(local.confidence, 66)) }
+
+        return dedupeRooms(out)
+    }
+
+    private fun dedupeRooms(rooms: List<Room>): List<Room> = rooms.distinctBy { room ->
+        val cx = ((room.x + room.width / 2f) * 2f).toInt()
+        val cy = ((room.y + room.height / 2f) * 2f).toInt()
+        "$cx:$cy:${(room.width * 2f).toInt()}:${(room.height * 2f).toInt()}"
     }
 
     private fun overlapScore(a: Room, b: Room): Float {
