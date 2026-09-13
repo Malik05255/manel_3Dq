@@ -142,7 +142,7 @@ async def parser_status(_: dict[str, Any] = Depends(backend_principal)) -> dict[
     return {
         "ready": bool(status.get("configured")),
         "model": status,
-        "preferred_path": "cubicasa-unet-resnet34+adaptive-v2" if status.get("configured") else "fallback+adaptive-v2",
+        "preferred_path": "cubicasa-tiled-consensus+accuracy-v3" if status.get("configured") else "fallback+accuracy-v3",
     }
 
 
@@ -236,86 +236,35 @@ async def render_3d(
     )
 
 
-def _supabase_headers(token: str, prefer: str | None = None) -> dict[str, str]:
-    _, key = _supabase_config()
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "apikey": key,
-        "Content-Type": "application/json",
-    }
-    if prefer:
-        headers["Prefer"] = prefer
-    return headers
+class ProjectSyncRequest(BaseModel):
+    project: ProjectPayload
 
 
-@app.get("/v1/projects")
-async def list_projects(
-    authorization: str | None = Header(default=None),
-    _: dict[str, Any] = Depends(cloud_user),
-) -> Any:
-    token = _bearer(authorization)
-    base, _ = _supabase_config()
-    async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.get(
-            f"{base}/rest/v1/manzili_projects",
-            params={"select": "id,title,revision,updated_at", "order": "updated_at.desc"},
-            headers=_supabase_headers(token),
-        )
-    if res.status_code >= 400:
-        raise HTTPException(res.status_code, res.text[:600])
-    return res.json()
-
-
-@app.get("/v1/projects/{project_id}")
-async def get_project(
-    project_id: str,
-    authorization: str | None = Header(default=None),
-    _: dict[str, Any] = Depends(cloud_user),
-) -> Any:
-    token = _bearer(authorization)
-    base, _ = _supabase_config()
-    async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.get(
-            f"{base}/rest/v1/manzili_projects",
-            params={
-                "id": f"eq.{project_id}",
-                "select": "id,title,revision,plan,updated_at",
-                "limit": "1",
-            },
-            headers=_supabase_headers(token),
-        )
-    if res.status_code >= 400:
-        raise HTTPException(res.status_code, res.text[:600])
-    rows = res.json()
-    if not rows:
-        raise HTTPException(404, "project not found")
-    return rows[0]
-
-
-@app.put("/v1/projects/{project_id}")
-async def put_project(
-    project_id: str,
-    payload: ProjectPayload,
-    authorization: str | None = Header(default=None),
+@app.post("/v1/projects/sync")
+async def sync_project(
+    payload: ProjectSyncRequest,
     user: dict[str, Any] = Depends(cloud_user),
-) -> Any:
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    supabase_url, publishable = _supabase_config()
     token = _bearer(authorization)
-    base, _ = _supabase_config()
-    body = {
-        "id": project_id,
-        "user_id": user["id"],
-        "title": payload.title[:160],
-        "revision": max(1, payload.revision),
-        "plan": payload.plan,
+    user_id = str(user["id"])
+    project = payload.project.model_dump()
+    project_id = str(project.get("plan", {}).get("id") or project.get("title") or "project")
+    row = {
+        "user_id": user_id,
+        "project_id": project_id,
+        "title": project.get("title") or "مشروعي",
+        "revision": int(project.get("revision") or 1),
+        "payload": project,
     }
+    headers = {"Authorization": f"Bearer {token}", "apikey": publishable, "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=representation"}
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.post(
-            f"{base}/rest/v1/manzili_projects",
-            params={"on_conflict": "id"},
-            json=body,
-            headers=_supabase_headers(token, "resolution=merge-duplicates,return=representation"),
+            f"{supabase_url}/rest/v1/hai_projects?on_conflict=user_id,project_id",
+            json=row,
+            headers=headers,
         )
     if res.status_code >= 400:
-        raise HTTPException(res.status_code, res.text[:600])
-    rows = res.json()
-    return rows[0] if rows else body
+        raise HTTPException(res.status_code, res.text[:800])
+    return {"ok": True, "project_id": project_id, "revision": row["revision"]}
