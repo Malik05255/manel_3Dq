@@ -88,6 +88,6 @@ jobs:
           BODY="$(curl --fail --silent --show-error --max-time 90 \
             -H "Authorization: Bearer $BACKEND_TOKEN" \
             -H 'Content-Type: application/json' \
-            --data '{"model":"openrouter/free","messages":[{"role":"user","content":"Reply with OK only."}],"max_tokens":8,"temperature":0}' \
+            --data '{"model":"openrouter/free","messages":[{"role":"user","content":"Reply with OK only."}],"max_tokens":32,"temperature":0}' \
             "${BACKEND_URL%/}/v1/ai/chat")"
-          python -c 'import json,sys; d=json.loads(sys.argv[1]); choices=d.get("choices") or []; assert choices, d; msg=choices[0].get("message") or {}; assert isinstance(msg.get("content"), str) and msg.get("content").strip(), d; print("live AI provider smoke ok")' "$BODY"
+          python -c 'import json,sys; d=json.loads(sys.argv[1]); choices=d.get("choices") or []; assert choices, d; msg=choices[0].get("message") or {}; signal=(msg.get("content") or msg.get("reasoning") or "").strip(); assert signal, d; usage=d.get("usage") or {}; assert float(usage.get("cost", 0) or 0)==0.0, usage; print("live zero-cost AI provider smoke ok", d.get("model"))' "$BODY"
