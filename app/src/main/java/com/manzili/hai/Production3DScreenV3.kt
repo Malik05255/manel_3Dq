@@ -15,16 +15,17 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
+import com.manzili.hai.data.Remote3DRenderClient
 import com.manzili.hai.engine.PbrSceneFramingEngine
 import com.manzili.hai.engine.PlanVerificationEngine
 import com.manzili.hai.engine.ProductionSceneEngine
 import com.manzili.hai.engine.SaudiResidentialEngine
 import com.manzili.hai.engine.SaudiVisualRenderEngine
-import com.manzili.hai.export.GltfPlanExporter
 import com.manzili.hai.model.FloorPlan
 import io.github.sceneview.Scene
 import io.github.sceneview.math.Position
@@ -33,9 +34,14 @@ import io.github.sceneview.rememberCameraManipulator
 import io.github.sceneview.rememberEngine
 import io.github.sceneview.rememberMainLightNode
 import io.github.sceneview.rememberModelLoader
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
+
+private data class Server3DState(
+    val loading: Boolean = true,
+    val bytes: ByteArray? = null,
+    val renderer: String = "server",
+    val error: String? = null
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -68,7 +74,9 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
         return
     }
 
+    val context = LocalContext.current
     val verification = remember(plan) { PlanVerificationEngine.inspect(plan) }
+    val renderAllowed = !verification.blocking && verification.scaleConfidence >= 65 && verification.readingConfidence >= 65
     val semanticScene = remember(plan) { ProductionSceneEngine.build(plan) }
     val visual = remember(plan) { SaudiVisualRenderEngine.build(plan, SaudiVisualRenderEngine.Quality.ULTRA) }
     val frame = remember(semanticScene) { PbrSceneFramingEngine.frame(semanticScene) }
@@ -87,9 +95,22 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
         SaudiResidentialEngine.Climate.DESERT_CONTINENTAL -> Color(0xFFF2EEE7)
     }
 
-    val glb by produceState<ByteArray?>(initialValue = null, plan) {
-        value = withContext(Dispatchers.Default) { GltfPlanExporter.renderGlb(plan) }
+    val serverClient = remember(context) { Remote3DRenderClient(context) }
+    val serverState by produceState(initialValue = Server3DState(), plan, renderAllowed) {
+        if (!renderAllowed) {
+            value = Server3DState(
+                loading = false,
+                error = "لا يمكن بناء 3D موثوق قبل تثبيت الهندسة والمقياس. راجع المخطط أولاً."
+            )
+        } else {
+            val result = serverClient.render(plan)
+            value = result.fold(
+                onSuccess = { Server3DState(loading = false, bytes = it.bytes, renderer = it.renderer) },
+                onFailure = { Server3DState(loading = false, error = it.message ?: "تعذر إنشاء المجسم على خادم Blender") }
+            )
+        }
     }
+    val glb = serverState.bytes
     val modelLoad = remember(glb, modelLoader) {
         glb?.let { bytes ->
             runCatching {
@@ -110,7 +131,8 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
         }
     }
     val childNodes = remember(modelNode) { listOfNotNull(modelNode) }
-    val renderError = modelLoad?.exceptionOrNull()
+    val sceneError = modelLoad?.exceptionOrNull()?.message
+    val renderError = serverState.error ?: sceneError
 
     Scaffold(
         containerColor = H360Ivory,
@@ -119,7 +141,13 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                 title = {
                     Column {
                         Text("المجسم", fontSize = 24.sp, fontWeight = FontWeight.Black)
-                        Text("ULTRA", color = H360CyanDeep, fontSize = 8.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
+                        Text(
+                            if (glb != null) serverState.renderer.uppercase().take(24) else "BLENDER SERVER",
+                            color = H360CyanDeep,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 1.0.sp
+                        )
                     }
                 },
                 navigationIcon = {
@@ -129,8 +157,8 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                 },
                 actions = {
                     Surface(shape = CircleShape, color = H360Cyan, modifier = Modifier.padding(end = 10.dp)) {
-                        IconButton(onClick = { nav.navigate("walkthrough") }) {
-                            Icon(Icons.Rounded.DirectionsWalk, "جولة", tint = H360CyanDeep)
+                        IconButton(onClick = { nav.navigate("walkthrough") }, enabled = glb != null) {
+                            Icon(Icons.Rounded.DirectionsWalk, "جولة", tint = if (glb != null) H360CyanDeep else H360Muted)
                         }
                     }
                 },
@@ -139,7 +167,7 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
         }
     ) { pad ->
         Box(Modifier.fillMaxSize().padding(pad).background(background)) {
-            if (renderError == null) {
+            if (renderError == null && modelNode != null) {
                 Scene(
                     modifier = Modifier.fillMaxSize(),
                     engine = engine,
@@ -151,18 +179,18 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                 )
             }
 
-            if (verification.readingConfidence < 65 || verification.scaleConfidence < 50) {
+            if (!renderAllowed) {
                 Surface(
-                    color = H360Paper.copy(alpha = .94f),
-                    shape = RoundedCornerShape(16.dp),
+                    color = H360Paper.copy(alpha = .97f),
+                    shape = RoundedCornerShape(18.dp),
                     shadowElevation = 3.dp,
                     modifier = Modifier.align(Alignment.TopCenter).padding(12.dp)
                 ) {
-                    Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.Info, null, tint = H360Amber, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(7.dp))
                         Text(
-                            if (verification.scaleConfidence < 50) "معاينة نسبية: المقياس غير مؤكد" else "المجسم مبني على قراءة تحتاج مراجعة",
+                            "3D متوقف حتى تصبح القراءة ≥65% والمقياس ≥65% بدون أخطاء هندسية",
                             color = H360Ink,
                             fontSize = 9.5.sp,
                             fontWeight = FontWeight.Bold
@@ -172,14 +200,16 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
             }
 
             when {
-                glb == null -> Surface(
+                serverState.loading -> Surface(
                     modifier = Modifier.align(Alignment.Center),
-                    shape = CircleShape,
-                    color = H360Paper.copy(alpha = 0.96f),
-                    shadowElevation = 4.dp
+                    shape = RoundedCornerShape(24.dp),
+                    color = H360Paper.copy(alpha = 0.97f),
+                    shadowElevation = 5.dp
                 ) {
-                    Box(Modifier.size(64.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.5.dp, color = H360CyanDeep)
+                    Column(Modifier.padding(horizontal = 28.dp, vertical = 22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.5.dp, color = H360CyanDeep)
+                        Spacer(Modifier.height(12.dp))
+                        Text("Blender يبني المجسم…", fontWeight = FontWeight.Black, color = H360Ink)
                     }
                 }
 
@@ -191,14 +221,12 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                     Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Rounded.ViewInAr, null, tint = H360Amber, modifier = Modifier.size(36.dp))
                         Spacer(Modifier.height(12.dp))
-                        Text("تعذر العرض", fontWeight = FontWeight.Black, fontSize = 18.sp)
+                        Text("المجسم غير جاهز", fontWeight = FontWeight.Black, fontSize = 18.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text(renderError.take(240), color = H360Muted, fontSize = 10.sp, lineHeight = 14.sp)
                         Spacer(Modifier.height(14.dp))
-                        Button(
-                            onClick = { compatibilityMode = true },
-                            shape = RoundedCornerShape(18.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = H360CyanDeep)
-                        ) {
-                            Text("عرض بديل")
+                        OutlinedButton(onClick = { compatibilityMode = true }, shape = RoundedCornerShape(18.dp)) {
+                            Text("معاينة محلية مؤقتة")
                         }
                     }
                 }
