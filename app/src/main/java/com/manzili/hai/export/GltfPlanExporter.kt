@@ -58,10 +58,11 @@ object GltfPlanExporter {
         val rootNodes=JSONArray((0 until nodes.length()).toList())
         val json=JSONObject()
             .put("asset",JSONObject().put("version","2.0").put("generator","Manzili HAI ${BuildConfig.VERSION_NAME}"))
+            .put("extensionsUsed",JSONArray(listOf("KHR_materials_transmission","KHR_materials_ior","KHR_materials_clearcoat")))
             .put("scene",0).put("scenes",JSONArray().put(JSONObject().put("nodes",rootNodes).put("name",scene.title)))
             .put("nodes",nodes).put("meshes",meshesJson).put("materials",materials).put("bufferViews",bufferViews).put("accessors",accessors)
             .put("buffers",JSONArray().put(JSONObject().put("byteLength",bin.size())))
-            .put("extras",JSONObject().put("metricReady",scene.metricReady).put("units",scene.units).put("pbrReady",true).put("geometrySource","Geometry V3").put("facadeGeometry",true).put("siteContext",true).put("productionScene",true))
+            .put("extras",JSONObject().put("metricReady",scene.metricReady).put("units",scene.units).put("pbrReady",true).put("ultraPbr",true).put("geometrySource","Geometry V3").put("facadeGeometry",true).put("siteContext",true).put("productionScene",true))
         return Built(json,bin.toByteArray())
     }
 
@@ -76,24 +77,35 @@ object GltfPlanExporter {
     }
 
     private fun materialLibrary():JSONArray=JSONArray()
-        .put(material("Saudi Plaster",0.86,0.82,0.74,1.0,0.74))
-        .put(material("Concrete Slab",0.55,0.56,0.54,1.0,0.90))
-        .put(material("Structure",0.46,0.34,0.23,1.0,0.82))
-        .put(material("Timber Door",0.30,0.16,0.075,1.0,0.43))
-        .put(material("Architectural Glass",0.18,0.42,0.55,0.24,0.06,true))
-        .put(material("Roof / Parapet",0.54,0.51,0.46,1.0,0.84))
-        .put(material("Architectural Accent",0.64,0.60,0.53,1.0,0.66))
-        .put(material("Saudi Limestone",0.72,0.65,0.53,1.0,0.68))
-        .put(material("Shade Metal",0.20,0.21,0.20,1.0,0.30,metallic=0.55))
-        .put(material("Hijazi Screen",0.40,0.25,0.14,1.0,0.48,metallic=0.08))
-        .put(material("Warm Site Ground",0.48,0.43,0.35,1.0,0.96))
-        .put(material("Saudi Paving",0.62,0.58,0.50,1.0,0.78))
-        .put(material("Parking Concrete",0.40,0.41,0.40,1.0,0.90))
-        .put(material("Planting Soil",0.22,0.20,0.12,1.0,1.0))
+        .put(material("Saudi Plaster",0.90,0.87,0.80,1.0,0.58,clearcoat=0.06))
+        .put(material("Concrete Slab",0.58,0.59,0.57,1.0,0.82))
+        .put(material("Structure",0.48,0.38,0.29,1.0,0.76))
+        .put(material("Timber Door",0.32,0.17,0.08,1.0,0.34,clearcoat=0.18))
+        .put(material("Architectural Glass",0.20,0.46,0.62,1.0,0.035,transmission=0.92,ior=1.45,clearcoat=0.12,doubleSided=true))
+        .put(material("Roof / Parapet",0.62,0.59,0.54,1.0,0.72))
+        .put(material("Architectural Accent",0.68,0.64,0.57,1.0,0.52,clearcoat=0.08))
+        .put(material("Saudi Limestone",0.76,0.69,0.57,1.0,0.56,clearcoat=0.04))
+        .put(material("Shade Metal",0.20,0.21,0.20,1.0,0.22,metallic=0.72,clearcoat=0.12))
+        .put(material("Hijazi Screen",0.42,0.27,0.15,1.0,0.40,metallic=0.10,clearcoat=0.08))
+        .put(material("Warm Site Ground",0.50,0.45,0.37,1.0,0.93))
+        .put(material("Saudi Paving",0.66,0.62,0.54,1.0,0.68))
+        .put(material("Parking Concrete",0.43,0.44,0.43,1.0,0.84))
+        .put(material("Planting Soil",0.24,0.21,0.13,1.0,0.98))
 
-    private fun material(name:String,r:Double,g:Double,b:Double,a:Double,roughness:Double,blend:Boolean=false,metallic:Double=0.0):JSONObject=JSONObject()
-        .put("name",name).put("pbrMetallicRoughness",JSONObject().put("baseColorFactor",JSONArray(listOf(r,g,b,a))).put("metallicFactor",metallic).put("roughnessFactor",roughness))
-        .apply{if(blend){put("alphaMode","BLEND");put("doubleSided",true)}}
+    private fun material(
+        name:String,r:Double,g:Double,b:Double,a:Double,roughness:Double,
+        metallic:Double=0.0,transmission:Double=0.0,ior:Double=1.5,clearcoat:Double=0.0,doubleSided:Boolean=false
+    ):JSONObject=JSONObject()
+        .put("name",name)
+        .put("pbrMetallicRoughness",JSONObject().put("baseColorFactor",JSONArray(listOf(r,g,b,a))).put("metallicFactor",metallic).put("roughnessFactor",roughness))
+        .apply {
+            val extensions=JSONObject()
+            if(transmission>0.0) extensions.put("KHR_materials_transmission",JSONObject().put("transmissionFactor",transmission.coerceIn(0.0,1.0)))
+            if(transmission>0.0) extensions.put("KHR_materials_ior",JSONObject().put("ior",ior.coerceIn(1.0,2.5)))
+            if(clearcoat>0.0) extensions.put("KHR_materials_clearcoat",JSONObject().put("clearcoatFactor",clearcoat.coerceIn(0.0,1.0)).put("clearcoatRoughnessFactor",(roughness*.35).coerceIn(0.0,1.0)))
+            if(extensions.length()>0) put("extensions",extensions)
+            if(doubleSided) put("doubleSided",true)
+        }
 
     private fun materialIndex(kind:String):Int=when(kind){
         "wall"->0;"slab"->1;"structural"->2;"door"->3;"window"->4;"roof","saudi-parapet"->5
