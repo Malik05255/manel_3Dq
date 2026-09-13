@@ -29,8 +29,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import com.manzili.hai.ai.HaiArchitectClient
+import com.manzili.hai.engine.DimensionEvidenceEngine
+import com.manzili.hai.engine.FloorplanParserEngine
 import com.manzili.hai.engine.HaiReviewResolutionEngine
+import com.manzili.hai.engine.MultiPageEvidenceFusionEngine
+import com.manzili.hai.engine.PlanTextOcrEngine
 import com.manzili.hai.engine.PlanVerificationEngine
+import com.manzili.hai.engine.RasterFloorplanParserEngine
+import com.manzili.hai.engine.RemoteFloorplanEvidenceClient
 import com.manzili.hai.model.FloorPlan
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -57,6 +63,9 @@ fun PlanVerificationScreen(nav: NavHostController, source: Uri?, plan: FloorPlan
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val haiClient = remember(context) { HaiArchitectClient(context) }
+    val localOcr = remember(context) { PlanTextOcrEngine(context) }
+    val raster = remember(context) { RasterFloorplanParserEngine(context) }
+    val remote = remember(context) { RemoteFloorplanEvidenceClient(context) }
     var working by remember(plan) { mutableStateOf(PlanVerificationEngine.inspect(plan).plan) }
     var width by remember(working.widthM) { mutableStateOf(working.widthM?.let { "%.2f".format(it) } ?: "") }
     var height by remember(working.heightM) { mutableStateOf(working.heightM?.let { "%.2f".format(it) } ?: "") }
@@ -68,28 +77,78 @@ fun PlanVerificationScreen(nav: NavHostController, source: Uri?, plan: FloorPlan
     fun runHaiResolver() {
         if (haiBusy) return
         haiBusy = true
-        haiStatus = null
+        haiStatus = "HAI يعيد قراءة المخطط ويبحث عن الأبعاد والهندسة الناقصة..."
         val beforeIssueCount = report.issues.size
+        val beforeWidthMissing = working.widthM == null
+        val beforeHeightMissing = working.heightM == null
+
         scope.launch {
             var candidate = HaiReviewResolutionEngine.localResolve(working)
             var candidateReport = PlanVerificationEngine.inspect(candidate)
-            var visualSucceeded = false
+            var evidenceChannels = 0
+            val failures = mutableListOf<String>()
+            val uri = source
 
-            val needsVisualHelp = source != null && (
-                candidateReport.blocking ||
+            if (uri != null && (
+                    candidateReport.blocking ||
+                        candidate.widthM == null ||
+                        candidate.heightM == null ||
+                        candidateReport.issues.isNotEmpty()
+                    )
+            ) {
+                val ocrAttempt = runCatching { localOcr.readSpatial(uri, maxPdfPages = 8) }
+                val rasterAttempt = runCatching { raster.analyze(uri, maxPdfPages = 6) }
+                val remoteAttempt = if (remote.available) {
+                    runCatching { remote.analyze(uri, maxPdfPages = 8) }
+                } else null
+
+                val ocrResult = ocrAttempt.getOrNull()
+                val rasterResult = rasterAttempt.getOrNull()
+                val remoteResult = remoteAttempt?.getOrNull()
+
+                ocrAttempt.exceptionOrNull()?.message?.let { failures += "OCR: ${it.take(90)}" }
+                rasterAttempt.exceptionOrNull()?.message?.let { failures += "Raster: ${it.take(90)}" }
+                remoteAttempt?.exceptionOrNull()?.message?.let { failures += "Deep Parser: ${it.take(90)}" }
+
+                val dimensionLines = ocrResult?.lines.orEmpty() + remoteResult?.ocrLines.orEmpty()
+                val recoveredDimensions = DimensionEvidenceEngine.extractSpatial(dimensionLines)
+                if (recoveredDimensions.isNotEmpty()) {
+                    candidate = candidate.copy(
+                        dimensions = (candidate.dimensions + recoveredDimensions).distinctBy {
+                            "${it.pageIndex}:${it.id}:${"%.3f".format(it.valueM)}"
+                        }
+                    )
+                    evidenceChannels++
+                }
+
+                if (remoteResult != null) {
+                    candidate = MultiPageEvidenceFusionEngine.apply(candidate, remoteResult.pages)
+                    evidenceChannels++
+                }
+
+                if (rasterResult != null) {
+                    candidate = FloorplanParserEngine.refine(candidate, rasterResult.primaryWalls).plan
+                    evidenceChannels++
+                }
+
+                candidate = HaiReviewResolutionEngine.localResolve(candidate)
+                candidateReport = PlanVerificationEngine.inspect(candidate)
+
+                val stillNeedsVision = candidateReport.blocking ||
                     candidate.widthM == null ||
                     candidate.heightM == null ||
                     candidateReport.issues.isNotEmpty()
-                )
 
-            if (needsVisualHelp) {
-                runCatching { haiClient.analyzePlan(source!!) }
-                    .onSuccess { visual ->
-                        candidate = HaiReviewResolutionEngine.mergeVisualEvidence(candidate, visual)
-                        candidate = HaiReviewResolutionEngine.localResolve(candidate)
-                        candidateReport = PlanVerificationEngine.inspect(candidate)
-                        visualSucceeded = true
-                    }
+                if (stillNeedsVision) {
+                    runCatching { haiClient.analyzePlan(uri) }
+                        .onSuccess { visual ->
+                            candidate = HaiReviewResolutionEngine.mergeVisualEvidence(candidate, visual)
+                            candidate = HaiReviewResolutionEngine.localResolve(candidate)
+                            candidateReport = PlanVerificationEngine.inspect(candidate)
+                            evidenceChannels++
+                        }
+                        .onFailure { error -> failures += "HAI Vision: ${error.message.orEmpty().take(90)}" }
+                }
             }
 
             working = candidateReport.plan
@@ -97,10 +156,18 @@ fun PlanVerificationScreen(nav: NavHostController, source: Uri?, plan: FloorPlan
             height = candidateReport.plan.heightM?.let { "%.2f".format(it) } ?: ""
 
             val solvedCount = (beforeIssueCount - candidateReport.issues.size).coerceAtLeast(0)
+            val widthSolved = beforeWidthMissing && candidateReport.plan.widthM != null
+            val heightSolved = beforeHeightMissing && candidateReport.plan.heightM != null
+            val scaleSolved = widthSolved || heightSolved
+
             haiStatus = when {
+                scaleSolved && !candidateReport.blocking -> "تمت تعبئة الأبعاد تلقائيًا وإصلاح المراجعة. المشروع جاهز للاعتماد."
+                scaleSolved -> "تمت تعبئة ${listOfNotNull(if (widthSolved) "العرض" else null, if (heightSolved) "الطول" else null).joinToString(" و")} تلقائيًا من المخطط."
                 !candidateReport.blocking && candidateReport.issues.isEmpty() -> "تم حل مشاكل المراجعة تلقائيًا. المشروع جاهز للاعتماد."
                 solvedCount > 0 -> "حل HAI $solvedCount من مشاكل المراجعة تلقائيًا. راجع ما تبقى فقط."
-                visualSucceeded -> "راجع HAI المخطط الأصلي وحدّث ما أمكن إثباته. المتبقي يحتاج تأكيدًا يدويًا."
+                uri == null -> "المصدر الأصلي غير متاح لهذه الجلسة؛ لا يمكن استخراج أبعاد جديدة. أعد فتح المخطط أو أدخل القيم يدويًا."
+                evidenceChannels > 0 -> "أعاد HAI قراءة المخطط، لكن لم يجد دليلًا موثوقًا كافيًا لتعبئة الحقول المتبقية دون تخمين."
+                failures.isNotEmpty() -> "تعذر إكمال الحل التلقائي: ${failures.first()}"
                 else -> "لم يجد HAI دليلًا كافيًا لحل المشكلة بأمان. أكمل الحقل أو العنصر يدويًا."
             }
             haiBusy = false
