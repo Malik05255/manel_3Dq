@@ -13,21 +13,42 @@ from .parser_quality import architectural_wall_mask, merge_ocr_lines
 _DIGIT_TRANSLATION = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹٫،,", "01234567890123456789...")
 _NUMBER_RE = re.compile(r"(?<!\d)(\d{1,4}(?:\.\d{1,3})?)(?!\d)")
 _UNIT_RE = re.compile(r"(?:\bm\b|m2|m²|cm|mm|م(?:تر)?|سم|مم|م2|م²)", re.IGNORECASE)
+_AREA_RE = re.compile(r"(?:m\s*[²2]|م\s*[²2]|مساح(?:ة|ه)|area)", re.IGNORECASE)
 
 
 def _norm_digits(value: str) -> str:
     text = value.translate(_DIGIT_TRANSLATION)
-    text = text.replace("..", ".")
+    while ".." in text:
+        text = text.replace("..", ".")
     return text
 
 
-def _line_support(mask: np.ndarray, x1: float, y1: float, x2: float, y2: float) -> float:
+def _sample_points(x1: float, y1: float, x2: float, y2: float) -> tuple[np.ndarray, np.ndarray]:
     length = max(2, int(round(math.hypot(x2 - x1, y2 - y1))))
-    xs = np.linspace(x1, x2, length).round().astype(np.int32)
-    ys = np.linspace(y1, y2, length).round().astype(np.int32)
-    xs = np.clip(xs, 0, mask.shape[1] - 1)
-    ys = np.clip(ys, 0, mask.shape[0] - 1)
-    return float(np.count_nonzero(mask[ys, xs])) / max(len(xs), 1)
+    xs = np.linspace(x1, x2, length)
+    ys = np.linspace(y1, y2, length)
+    return xs, ys
+
+
+def _line_support(mask: np.ndarray, x1: float, y1: float, x2: float, y2: float) -> float:
+    xs, ys = _sample_points(x1, y1, x2, y2)
+    xi = np.clip(xs.round().astype(np.int32), 0, mask.shape[1] - 1)
+    yi = np.clip(ys.round().astype(np.int32), 0, mask.shape[0] - 1)
+    return float(np.count_nonzero(mask[yi, xi])) / max(len(xi), 1)
+
+
+def _band_support(mask: np.ndarray, x1: float, y1: float, x2: float, y2: float, radius: int = 2) -> float:
+    """Estimate whether a detected line has wall-like thickness, not only a 1px center stroke."""
+    xs, ys = _sample_points(x1, y1, x2, y2)
+    dx, dy = x2 - x1, y2 - y1
+    length = max(math.hypot(dx, dy), 1e-6)
+    nx, ny = -dy / length, dx / length
+    supports: list[float] = []
+    for offset in range(-radius, radius + 1):
+        xi = np.clip((xs + nx * offset).round().astype(np.int32), 0, mask.shape[1] - 1)
+        yi = np.clip((ys + ny * offset).round().astype(np.int32), 0, mask.shape[0] - 1)
+        supports.append(float(np.count_nonzero(mask[yi, xi])) / max(len(xi), 1))
+    return float(mean(supports)) if supports else 0.0
 
 
 def _segment_signature(segment: dict[str, Any]) -> tuple[float, float, float, float]:
@@ -70,9 +91,9 @@ def _dedupe_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def precision_wall_evidence(image: np.ndarray, confidence: int = 78) -> list[dict[str, Any]]:
     """Recover thin/old/blue/diagonal wall vectors at multiple Hough scales.
 
-    The existing model supplies semantic classes. This pass is deliberately independent
-    and only accepts line candidates that are actually supported by the architectural
-    wall mask along most of their length.
+    The semantic model supplies the primary wall class. This independent pass only keeps
+    candidates supported along their length and across a small perpendicular band, which
+    reduces false walls caused by dimension strings, leader lines and drawing annotations.
     """
     mask = architectural_wall_mask(image)
     h, w = mask.shape[:2]
@@ -106,7 +127,12 @@ def precision_wall_evidence(image: np.ndarray, confidence: int = 78) -> list[dic
             support = _line_support(closed, x1, y1, x2, y2)
             if support < 0.58:
                 continue
-            local_conf = int(round(confidence + min(14.0, max(0.0, (support - 0.58) * 34.0))))
+            band = _band_support(closed, x1, y1, x2, y2, radius=2)
+            # Keep genuinely thin legacy walls, but require very strong center support.
+            if band < 0.22 and support < 0.86:
+                continue
+            thickness_bonus = max(0.0, min(8.0, (band - 0.22) * 20.0))
+            local_conf = int(round(confidence + min(10.0, max(0.0, (support - 0.58) * 28.0)) + thickness_bonus))
             candidates.append({
                 "id": f"precision-wall-{len(candidates)}",
                 "start": {"x": x1 / w * 100.0, "y": y1 / h * 100.0},
@@ -114,6 +140,7 @@ def precision_wall_evidence(image: np.ndarray, confidence: int = 78) -> list[dic
                 "confidence": max(55, min(94, local_conf)),
                 "kind": "precision-multiscale-wall-evidence",
                 "mask_support": round(support, 4),
+                "band_support": round(band, 4),
             })
     return _dedupe_segments(candidates)
 
@@ -186,23 +213,24 @@ def precision_rotated_ocr(image: np.ndarray, reader: Any, seed_lines: list[dict[
 
 
 def dimension_evidence(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return plausible *linear* dimension readings; area labels are deliberately excluded."""
     evidence: list[dict[str, Any]] = []
     for line in lines:
         text = str(line.get("text") or "").strip()
         normalized = _norm_digits(text)
+        if _AREA_RE.search(normalized):
+            continue
         values: list[float] = []
         for match in _NUMBER_RE.finditer(normalized):
             try:
                 value = float(match.group(1))
             except ValueError:
                 continue
-            # Architectural dimensions commonly span centimetres through plot lengths.
             if 0.15 <= value <= 250.0:
                 values.append(value)
         if not values:
             continue
         unit_hint = bool(_UNIT_RE.search(normalized))
-        # Bare 4+ digit integers are usually drawing numbers, dates or IDs, not scale evidence.
         if not unit_hint and all(float(v).is_integer() and v >= 1000 for v in values):
             continue
         confidence = int(line.get("confidence", 0))
@@ -286,7 +314,6 @@ def precision_quality(
         overall = min(overall, 72)
     if "fallback" in model_used:
         overall = min(overall, 74)
-    # Automatic analysis is evidence-based, not ground truth. Reserve 100 for explicit validation.
     overall = max(0, min(98, overall))
 
     result = dict(base_quality)
