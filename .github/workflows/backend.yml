@@ -28,7 +28,7 @@ jobs:
         run: python -m compileall backend/app backend/scripts backend/tests
       - name: Run backend regression tests
         working-directory: backend
-        run: pytest -q
+        run: PYTHONPATH="$PWD" pytest -q
       - name: Import FastAPI application
         working-directory: backend
         run: |
