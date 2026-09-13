@@ -5,9 +5,12 @@ security invoker
 set search_path = public, pg_temp
 as $$
 declare
+  marker_present boolean;
   expected_revision integer;
 begin
-  if tg_op = 'UPDATE' then
+  marker_present := new.plan ? '_cloud_expected_revision';
+
+  if tg_op = 'UPDATE' and marker_present then
     begin
       expected_revision := nullif(new.plan ->> '_cloud_expected_revision', '')::integer;
     exception when others then
@@ -35,6 +38,15 @@ begin
           old.revision::text
         );
     end if;
+  elsif tg_op = 'UPDATE' and new.revision < old.revision then
+    raise exception using
+      errcode = '23505',
+      message = 'manzili_revision_regression',
+      detail = format(
+        'new_revision=%s current_revision=%s',
+        new.revision::text,
+        old.revision::text
+      );
   end if;
 
   new.plan := new.plan - '_cloud_expected_revision';
