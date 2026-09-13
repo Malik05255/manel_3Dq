@@ -118,14 +118,15 @@ fun VerifiedImportScreenV3(
                         runCatching {
                             val uri = source!!
                             coroutineScope {
+                                // Each channel uses the highest page count it currently supports safely on-device.
                                 val visionJob = async {
-                                    if (vision.available) runCatching { vision.analyze(uri, maxPdfPages = 5, projectType = projectType) }
+                                    if (vision.available) runCatching { vision.analyze(uri, maxPdfPages = 8, projectType = projectType) }
                                     else Result.success(null)
                                 }
-                                val ocrJob = async { runCatching { localOcr.readSpatial(uri, maxPdfPages = 5) } }
-                                val rasterJob = async { runCatching { raster.analyze(uri, maxPdfPages = 5) } }
+                                val ocrJob = async { runCatching { localOcr.readSpatial(uri, maxPdfPages = 8) } }
+                                val rasterJob = async { runCatching { raster.analyze(uri, maxPdfPages = 6) } }
                                 val remoteJob = async {
-                                    if (remote.available) runCatching { remote.analyze(uri, maxPdfPages = 5) }
+                                    if (remote.available) runCatching { remote.analyze(uri, maxPdfPages = 8) }
                                     else Result.success(null)
                                 }
 
