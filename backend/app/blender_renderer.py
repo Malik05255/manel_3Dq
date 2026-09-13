@@ -28,6 +28,13 @@ def _pbr_root() -> Path:
     return Path(os.getenv("PBR_ASSET_DIR", "/srv/manzili/assets/pbr"))
 
 
+def _truthy(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _find_pbr_map(root: Path, key: str, suffix: str) -> Path | None:
     for ext in PBR_EXTENSIONS:
         candidate = root / f"{key}_{suffix}.{ext}"
@@ -67,11 +74,15 @@ def blender_status() -> dict[str, Any]:
     configured = os.getenv("BLENDER_BIN", "").strip()
     executable = configured or shutil.which("blender") or ""
     assets = pbr_asset_status()
+    strict_pbr = _truthy("REQUIRE_COMPLETE_PBR", False)
+    ready = bool(executable) and (assets["complete"] or not strict_pbr)
     return {
         "configured": bool(executable),
+        "ready": ready,
         "executable": executable or None,
         "worker_url_configured": bool(os.getenv("BLENDER_WORKER_URL", "").strip()),
         "renderer": "blender-pbr-v3",
+        "require_complete_pbr": strict_pbr,
         "pbr_asset_dir": assets["root"],
         "pbr_assets_present": assets["complete_material_sets"] > 0,
         "pbr_assets_complete": assets["complete"],
@@ -85,6 +96,13 @@ def render_plan_glb(plan: dict[str, Any], timeout_seconds: int = 360) -> tuple[b
     canonical = canonicalize_plan(plan)
     if not canonical.ready:
         raise ValueError("; ".join(canonical.errors))
+
+    assets = pbr_asset_status()
+    if _truthy("REQUIRE_COMPLETE_PBR", False) and not assets["complete"]:
+        missing = ", ".join(assets["missing_maps"][:8])
+        if len(assets["missing_maps"]) > 8:
+            missing += ", ..."
+        raise RuntimeError(f"Production PBR assets are incomplete: {missing}")
 
     executable = os.getenv("BLENDER_BIN", "").strip() or shutil.which("blender")
     if not executable:
@@ -130,7 +148,6 @@ def render_plan_glb(plan: dict[str, Any], timeout_seconds: int = 360) -> tuple[b
         if len(payload) < 20 or payload[:4] != b"glTF":
             raise RuntimeError("Blender output is not a valid GLB container")
 
-        assets = pbr_asset_status()
         return payload, {
             "bytes": len(payload),
             "geometry": canonical.geometry.get("metrics", {}),
