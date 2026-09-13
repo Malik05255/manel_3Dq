@@ -22,7 +22,16 @@ jobs:
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - name: Enforce Android-only release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f app/src/main/AndroidManifest.xml
+          if find . -maxdepth 4 \( -name '*.xcodeproj' -o -name '*.xcworkspace' -o -name 'Podfile' -o -name 'Package.swift' \) -print -quit | grep -q .; then
+            echo 'iOS release surface detected; production is Android-only.' >&2
+            exit 1
+          fi
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
