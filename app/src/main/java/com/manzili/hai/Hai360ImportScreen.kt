@@ -241,14 +241,15 @@ internal fun Hai360ImportScreen(
                                     uncertainties = emptyList()
                                 )
 
-                                val dims = DimensionEvidenceEngine.extractSpatial(
-                                    ocr?.lines.orEmpty() + remoteResult?.ocrLines.orEmpty()
-                                )
+                                val evidenceLines = ocr?.lines.orEmpty() + remoteResult?.ocrLines.orEmpty()
+                                val dims = DimensionEvidenceEngine.extractSpatial(evidenceLines)
+                                val numbers = PlanNumberEvidenceEngine.extract(evidenceLines)
                                 val enriched = base.copy(
-                                    dimensions = (base.dimensions + dims).distinctBy { "${it.pageIndex}:${it.id}:${"%.3f".format(it.valueM)}" },
+                                    dimensions = (base.dimensions + dims + numbers).distinctBy { "${it.pageIndex}:${it.id}:${"%.3f".format(it.valueM)}" },
                                     observations = (base.observations + listOfNotNull(
                                         "محركات القراءة: $channelStatus",
                                         "نوع المشروع: ${type.label}.",
+                                        numbers.takeIf { it.isNotEmpty() }?.let { "تم حفظ ${it.size} رقمًا مقروءًا كأدلة مكانية للمراجعة." },
                                         remoteResult?.let { "Deep Parser: ${it.pages.size} صفحة • متوسط ${it.confidence}%." }
                                     )).distinct(),
                                     uncertainties = (base.uncertainties + failures).distinct()
@@ -297,7 +298,7 @@ internal fun Hai360ImportScreen(
                     Text("HAI يقرأ الفراغ", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        listOf("فصل الرسم عن النص", "استخراج الجدران والفتحات", "مطابقة الأبعاد بين القنوات", "بناء نموذج قابل للتحرير")[phase],
+                        listOf("فصل الرسم عن النص", "استخراج الجدران والفتحات", "مطابقة الأبعاد والأرقام بين القنوات", "بناء نموذج قابل للتحرير")[phase],
                         color = Color.White.copy(alpha = .55f),
                         fontSize = 12.sp
                     )
