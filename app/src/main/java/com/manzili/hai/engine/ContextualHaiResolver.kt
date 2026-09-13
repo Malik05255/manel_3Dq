@@ -28,6 +28,7 @@ class ContextualHaiResolver(context: Context) {
     suspend fun resolveReview(source: Uri?, input: FloorPlan): Resolution {
         val before = PlanVerificationEngine.inspect(input)
         var candidate = inferScaleFromEvidence(HaiReviewResolutionEngine.localResolve(input))
+        candidate = RoomTopologyEngine.recover(candidate).plan
         var channels = 0
         val failures = mutableListOf<String>()
 
@@ -46,15 +47,18 @@ class ContextualHaiResolver(context: Context) {
 
             val lines = ocrResult?.lines.orEmpty() + remoteResult?.ocrLines.orEmpty()
             val recovered = DimensionEvidenceEngine.extractSpatial(lines)
-            if (recovered.isNotEmpty()) {
+            val numericLabels = PlanNumberEvidenceEngine.extract(lines)
+            if (recovered.isNotEmpty() || numericLabels.isNotEmpty()) {
                 candidate = candidate.copy(
-                    dimensions = (candidate.dimensions + recovered).distinctBy { d ->
+                    dimensions = (candidate.dimensions + recovered + numericLabels).distinctBy { d ->
                         val sx = d.start?.x?.times(2f)?.roundToInt() ?: -1
                         val sy = d.start?.y?.times(2f)?.roundToInt() ?: -1
                         val ex = d.end?.x?.times(2f)?.roundToInt() ?: -1
                         val ey = d.end?.y?.times(2f)?.roundToInt() ?: -1
-                        "${d.pageIndex}:${"%.3f".format(d.valueM)}:$sx:$sy:$ex:$ey"
-                    }
+                        "${d.pageIndex}:${"%.3f".format(d.valueM)}:${d.axis}:$sx:$sy:$ex:$ey"
+                    },
+                    observations = (candidate.observations + numericLabels.takeIf { it.isNotEmpty() }
+                        ?.let { "HAI حفظ ${it.size} رقمًا ظاهرًا من OCR كأدلة مكانية." }).filterNotNull().distinct()
                 )
                 channels++
             }
@@ -69,12 +73,14 @@ class ContextualHaiResolver(context: Context) {
                 channels++
             }
 
+            candidate = RoomTopologyEngine.recover(candidate).plan
             candidate = inferScaleFromEvidence(HaiReviewResolutionEngine.localResolve(candidate))
 
             if (needsReviewHelp(candidate)) {
                 runCatching { visualHai.analyzePlan(source) }
                     .onSuccess { visual ->
                         candidate = HaiReviewResolutionEngine.mergeVisualEvidence(candidate, visual)
+                        candidate = RoomTopologyEngine.recover(candidate).plan
                         candidate = inferScaleFromEvidence(HaiReviewResolutionEngine.localResolve(candidate))
                         channels++
                     }
@@ -86,9 +92,16 @@ class ContextualHaiResolver(context: Context) {
         val solvedCount = (before.issues.size - after.issues.size).coerceAtLeast(0)
         val widthSolved = input.widthM == null && after.plan.widthM != null
         val heightSolved = input.heightM == null && after.plan.heightM != null
-        val solved = solvedCount > 0 || widthSolved || heightSolved || after.plan.revision > input.revision
+        val roomsSolved = after.plan.rooms.size > input.rooms.size
+        val numbersBefore = PlanNumberEvidenceEngine.numericLabels(input.dimensions).size
+        val numbersAfter = PlanNumberEvidenceEngine.numericLabels(after.plan.dimensions).size
+        val numbersSolved = numbersAfter > numbersBefore
+        val solved = solvedCount > 0 || widthSolved || heightSolved || roomsSolved || numbersSolved || after.plan.revision > input.revision
 
         val message = when {
+            roomsSolved && numbersSolved -> "استعاد HAI ${after.plan.rooms.size} مساحة وحفظ $numbersAfter رقمًا ظاهرًا من المخطط للمراجعة."
+            roomsSolved -> "استعاد HAI المساحات المغلقة من شبكة الجدران؛ العدد الحالي ${after.plan.rooms.size}."
+            numbersSolved -> "قرأ HAI $numbersAfter رقمًا ظاهرًا وحفظ مواقعها ومعانيها المحتملة للمراجعة."
             widthSolved && heightSolved && !after.blocking -> "تمت قراءة سلسلة الأبعاد الخارجية. عبّأ HAI العرض والطول وأكمل المراجعة."
             widthSolved && heightSolved -> "تمت تعبئة العرض والطول تلقائيًا من أبعاد المخطط."
             widthSolved || heightSolved -> "عبّأ HAI ${listOfNotNull(if (widthSolved) "العرض" else null, if (heightSolved) "الطول" else null).joinToString(" و")} تلقائيًا من المخطط."
@@ -96,7 +109,7 @@ class ContextualHaiResolver(context: Context) {
             solvedCount > 0 -> "حل HAI $solvedCount من المشاكل الحالية."
             source == null -> "المخطط الأصلي غير متاح الآن؛ لا أستطيع استخراج قيم جديدة بأمان."
             failures.isNotEmpty() && channels == 0 -> "تعذر إكمال الاستدعاء: ${failures.first()}"
-            channels > 0 -> "قرأت المخطط من عدة قنوات، لكن الأبعاد الكلية لم تثبت بعد. جرّب تقريب المصدر أو أكمل الحقل يدويًا."
+            channels > 0 -> "قرأت المخطط من عدة قنوات، لكن بعض الأدلة ما زالت تحتاج تأكيدًا بصريًا قبل اعتبار القراءة كاملة."
             failures.isNotEmpty() -> "تعذر إكمال الاستدعاء: ${failures.first()}"
             else -> "لا يوجد حل آمن تلقائي لهذه المشكلة الآن؛ أكملها يدويًا."
         }
@@ -160,10 +173,11 @@ class ContextualHaiResolver(context: Context) {
      * spatial coverage/count wins, rather than simply taking the largest number.
      */
     private fun inferScaleFromEvidence(input: FloorPlan): FloorPlan {
-        var width = input.widthM ?: explicitAxisValue(input.dimensions, horizontal = true)
-        var height = input.heightM ?: explicitAxisValue(input.dimensions, horizontal = false)
-        if (width == null) width = chainTotal(input.dimensions, horizontal = true)
-        if (height == null) height = chainTotal(input.dimensions, horizontal = false)
+        val scaleEvidence = input.dimensions.filterNot { it.axis.startsWith("label-") || it.id.startsWith("num-") }
+        var width = input.widthM ?: explicitAxisValue(scaleEvidence, horizontal = true)
+        var height = input.heightM ?: explicitAxisValue(scaleEvidence, horizontal = false)
+        if (width == null) width = chainTotal(scaleEvidence, horizontal = true)
+        if (height == null) height = chainTotal(scaleEvidence, horizontal = false)
         if (width == input.widthM && height == input.heightM) return input
 
         val resolvedBoth = width != null && height != null
@@ -255,8 +269,6 @@ class ContextualHaiResolver(context: Context) {
         ).firstOrNull()
 
         if (best != null) return best.total
-
-        // A single explicit outer dimension is still valid if the OCR text itself says width/length.
         return explicitAxisValue(dimensions, horizontal)
     }
 }
