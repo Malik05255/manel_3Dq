@@ -9,6 +9,10 @@ on:
       - '.github/workflows/backend.yml'
   workflow_dispatch:
 
+concurrency:
+  group: manzili-hai-backend-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -17,17 +21,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install backend core
+      - name: Install backend dependencies
         working-directory: backend
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
       - name: Compile backend
-        run: python -m compileall backend/app backend/scripts
+        run: python -m compileall backend/app backend/scripts backend/tests
+      - name: Run backend regression tests
+        working-directory: backend
+        run: PYTHONPATH="$PWD" pytest -q
       - name: Import FastAPI application
         working-directory: backend
         run: |
-          python -c "from app.main import app; assert app.title == 'Manzili HAI Backend'; assert app.version == '0.60.0'"
+          python -c "from app.main import app; assert app.title == 'Manzili HAI Backend'; assert app.version == '0.62.0'"
       - name: Validate deployment blueprint
         run: |
+          set -euo pipefail
           grep -q 'healthCheckPath: /readyz' render.yaml
-          grep -q 'FLOORPLAN_SAFETENSORS_MODEL' render.yaml
           grep -q 'dockerfilePath: ./backend/Dockerfile.ml' render.yaml
+          grep -q 'FLOORPLAN_SAFETENSORS_MODEL' render.yaml
+          grep -q 'MANZILI_API_TOKEN' render.yaml
+          grep -q 'SUPABASE_URL' render.yaml
+          grep -q 'SUPABASE_PUBLISHABLE_KEY' render.yaml
+          grep -q 'AI_ENDPOINT' render.yaml
+          grep -q 'AI_MODEL_DEFAULT' render.yaml
+          grep -q 'AI_API_KEY' render.yaml

@@ -1,6 +1,9 @@
 package com.manzili.hai.data
 
 import android.content.Context
+import android.content.SharedPreferences
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import com.manzili.hai.engine.ProjectMemoryEngine
 import com.manzili.hai.model.FloorPlan
 import org.json.JSONArray
@@ -11,18 +14,40 @@ class ProjectPlanStore(context: Context) {
     data class ProjectSummary(val id: String, val title: String, val revision: Int, val activeConstraints: Int, val roomCount: Int, val updatedAt: Long, val active: Boolean)
     data class VersionSummary(val projectId: String, val revision: Int, val savedAt: Long, val activeConstraints: Int)
 
-    private val prefs = context.getSharedPreferences("manzili_hai_project", Context.MODE_PRIVATE)
+    internal val appContext: Context = context.applicationContext
+    private val legacyPrefs = appContext.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences = EncryptedSharedPreferences.create(
+        appContext,
+        SECURE_PREFS_NAME,
+        MasterKey.Builder(appContext).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+    )
 
-    init { migrateSinglePlan() }
+    init {
+        migrateLegacyPreferences()
+        migrateSinglePlan()
+    }
 
     fun activeProjectId(): String? = prefs.getString(KEY_ACTIVE, null)
+    fun contains(projectId: String): Boolean = projectId in ids()
 
     fun createProject(plan: FloorPlan): String {
         val id = UUID.randomUUID().toString()
-        val ids = ids().toMutableSet().apply { add(id) }
-        prefs.edit().putStringSet(KEY_IDS, ids).putString(KEY_ACTIVE, id).apply()
-        persist(id, ProjectMemoryEngine.reconcile(plan), true)
+        upsertProject(id, plan, makeActive = true)
         return id
+    }
+
+    /** Insert or replace a project under a stable ID. Used by cloud sync to avoid duplicate IDs. */
+    fun upsertProject(projectId: String, plan: FloorPlan, makeActive: Boolean = true): FloorPlan {
+        require(projectId.isNotBlank()) { "projectId must not be blank" }
+        val ready = ProjectMemoryEngine.reconcile(plan)
+        val ids = ids().toMutableSet().apply { add(projectId) }
+        val edit = prefs.edit().putStringSet(KEY_IDS, ids)
+        if (makeActive) edit.putString(KEY_ACTIVE, projectId)
+        edit.apply()
+        persist(projectId, ready, snapshot = load(projectId) != ready, makeActive = makeActive)
+        return ready
     }
 
     fun save(plan: FloorPlan) {
@@ -84,10 +109,11 @@ class ProjectPlanStore(context: Context) {
         return next?.let { load(it.id) }
     }
 
-    private fun persist(id: String, plan: FloorPlan, snapshot: Boolean) {
+    private fun persist(id: String, plan: FloorPlan, snapshot: Boolean, makeActive: Boolean = true) {
         val now = System.currentTimeMillis()
         val encoded = PlanStorageCodec.encode(plan)
-        val e = prefs.edit().putString(currentKey(id), encoded.toString()).putLong(updatedKey(id), now).putString(KEY_ACTIVE, id)
+        val e = prefs.edit().putString(currentKey(id), encoded.toString()).putLong(updatedKey(id), now)
+        if (makeActive) e.putString(KEY_ACTIVE, id)
         if (snapshot) e.putString(versionsKey(id), addSnapshot(id, plan, now).toString())
         e.apply()
     }
@@ -108,11 +134,35 @@ class ProjectPlanStore(context: Context) {
 
     private fun ids(): Set<String> = prefs.getStringSet(KEY_IDS, emptySet())?.toSet().orEmpty()
 
+    /**
+     * Existing installs stored floor plans and revision snapshots in plain SharedPreferences.
+     * Copy every supported value into encrypted storage exactly once, then clear the legacy file.
+     * Existing encrypted values win so an interrupted/partial migration never overwrites newer data.
+     */
+    private fun migrateLegacyPreferences() {
+        if (prefs.getBoolean(KEY_SECURE_MIGRATED, false)) return
+        val editor = prefs.edit()
+        legacyPrefs.all.forEach { (key, value) ->
+            if (prefs.contains(key)) return@forEach
+            when (value) {
+                is String -> editor.putString(key, value)
+                is Set<*> -> editor.putStringSet(key, value.filterIsInstance<String>().toSet())
+                is Int -> editor.putInt(key, value)
+                is Long -> editor.putLong(key, value)
+                is Float -> editor.putFloat(key, value)
+                is Boolean -> editor.putBoolean(key, value)
+            }
+        }
+        val committed = editor.putBoolean(KEY_SECURE_MIGRATED, true).commit()
+        if (committed) legacyPrefs.edit().clear().apply()
+    }
+
     private fun migrateSinglePlan() {
         if (ids().isNotEmpty()) return
         val raw = prefs.getString(KEY_PLAN, null)?.takeIf { it.isNotBlank() } ?: return
         val plan = runCatching { PlanStorageCodec.decode(JSONObject(raw)) }.getOrNull() ?: return
         createProject(plan)
+        prefs.edit().remove(KEY_PLAN).apply()
     }
 
     private fun currentKey(id: String) = "p_${id}_current"
@@ -120,6 +170,9 @@ class ProjectPlanStore(context: Context) {
     private fun updatedKey(id: String) = "p_${id}_updated"
 
     companion object {
+        private const val LEGACY_PREFS_NAME = "manzili_hai_project"
+        private const val SECURE_PREFS_NAME = "manzili_hai_project_secure_v1"
+        private const val KEY_SECURE_MIGRATED = "secure_storage_migrated_v1"
         private const val KEY_PLAN = "current_plan_v1"
         private const val KEY_IDS = "project_ids_v2"
         private const val KEY_ACTIVE = "active_project_id_v2"

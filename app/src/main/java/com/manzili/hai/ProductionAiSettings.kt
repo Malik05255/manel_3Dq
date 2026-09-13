@@ -34,7 +34,7 @@ fun ProductionAiSettings(nav: NavHostController) {
     val scope = rememberCoroutineScope()
     var backendMode by remember { mutableStateOf(settings.backendMode) }
     var backendUrl by remember { mutableStateOf(settings.backendBaseUrl) }
-    var backendToken by remember { mutableStateOf(settings.backendAccessToken) }
+    var backendToken by remember { mutableStateOf(settings.backendServiceToken) }
     var supabaseUrl by remember { mutableStateOf(settings.supabaseUrl) }
     var publishable by remember { mutableStateOf(settings.supabasePublishableKey) }
     var directEndpoint by remember { mutableStateOf(settings.directEndpoint) }
@@ -65,22 +65,30 @@ fun ProductionAiSettings(nav: NavHostController) {
                 OutlinedTextField(model, { model = it }, label = { Text("Model ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(10.dp))
                 if (backendMode) {
-                    OutlinedTextField(backendUrl, { backendUrl = it; probe = null }, label = { Text("Backend URL") }, supportingText = { Text("مثال: https://manzili-hai-deep-parser.onrender.com") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(
+                        backendUrl,
+                        { backendUrl = it; probe = null },
+                        label = { Text("Backend URL") },
+                        supportingText = { Text("مثال: https://manzili-hai-deep-parser.onrender.com") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         backendToken,
                         { backendToken = it; probe = null },
-                        label = { Text("Backend access token") },
-                        supportingText = { Text("يُخزن AES-256 مشفرًا على الجهاز ولا يُضمّن داخل APK.") },
+                        label = { Text("Backend service token") },
+                        supportingText = { Text("مستقل عن جلسة Supabase، ويُخزن AES-256 مشفرًا على الجهاز.") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(10.dp))
                     OutlinedButton(
-                        enabled = !probing && backendUrl.isNotBlank() && backendToken.isNotBlank(),
+                        enabled = !probing && backendUrl.startsWith("https://") && backendToken.isNotBlank(),
                         onClick = {
-                            probing = true; probe = null
+                            probing = true
+                            probe = null
                             scope.launch {
                                 val result = probeBackend(backendUrl, backendToken)
                                 probe = result
@@ -92,7 +100,7 @@ fun ProductionAiSettings(nav: NavHostController) {
                         if (probing) CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp)
                         else Icon(Icons.Rounded.CloudDone, null)
                         Spacer(Modifier.width(7.dp))
-                        Text(if (probing) "يفحص Deep Parser…" else "اختبار Backend وDeep Parser")
+                        Text(if (probing) "يفحص الخدمات…" else "اختبار Backend وHAI وDeep Parser")
                     }
                     probe?.let { result ->
                         Text(
@@ -104,31 +112,69 @@ fun ProductionAiSettings(nav: NavHostController) {
                         )
                     }
                     Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(supabaseUrl, { supabaseUrl = it }, label = { Text("Supabase URL (اختياري)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(
+                        supabaseUrl,
+                        { supabaseUrl = it },
+                        label = { Text("Supabase URL (اختياري)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(publishable, { publishable = it }, label = { Text("Supabase publishable key (اختياري)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(
+                        publishable,
+                        { publishable = it },
+                        label = { Text("Supabase publishable key (اختياري)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Spacer(Modifier.height(8.dp))
-                    Text("يمكن استخدام جلسة Supabase بدل الرمز الثابت لاحقًا؛ كلاهما يبقى خارج ملفات التطبيق المصدرية.", fontSize = 10.sp, color = MaterialTheme.colorScheme.secondary)
+                    Text(
+                        "جلسة Supabase مستقلة عن رمز الخدمة. تسجيل الدخول للسحابة لن يغيّر رمز Backend المحفوظ.",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
                 } else {
-                    OutlinedTextField(directEndpoint, { directEndpoint = it }, label = { Text("Provider endpoint") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(
+                        directEndpoint,
+                        { directEndpoint = it },
+                        label = { Text("Provider endpoint") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(directKey, { directKey = it }, label = { Text("Provider API key") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(
+                        directKey,
+                        { directKey = it },
+                        label = { Text("Provider API key") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Spacer(Modifier.height(8.dp))
-                    Text("Direct mode مناسب للتطوير فقط؛ المفتاح يُخزن مشفرًا لكنه يبقى موجودًا على جهاز العميل.", fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
+                    Text(
+                        "Direct mode مناسب للتطوير فقط؛ المفتاح يُخزن مشفرًا لكنه يبقى موجودًا على جهاز العميل.",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             }
-            Button(onClick = {
-                settings.backendMode = backendMode
-                settings.backendBaseUrl = backendUrl
-                settings.backendAccessToken = backendToken
-                settings.supabaseUrl = supabaseUrl
-                settings.supabasePublishableKey = publishable
-                settings.directEndpoint = directEndpoint
-                settings.directApiKey = directKey
-                settings.model = model
-                saved = true
-            }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-                Icon(Icons.Rounded.Save, null); Spacer(Modifier.width(7.dp)); Text("حفظ الاتصال")
+            Button(
+                onClick = {
+                    settings.backendMode = backendMode
+                    settings.backendBaseUrl = backendUrl
+                    settings.backendServiceToken = backendToken
+                    settings.supabaseUrl = supabaseUrl
+                    settings.supabasePublishableKey = publishable
+                    settings.directEndpoint = directEndpoint
+                    settings.directApiKey = directKey
+                    settings.model = model
+                    saved = true
+                },
+                modifier = Modifier.fillMaxWidth().height(56.dp)
+            ) {
+                Icon(Icons.Rounded.Save, null)
+                Spacer(Modifier.width(7.dp))
+                Text("حفظ الاتصال")
             }
             if (saved) Text("تم الحفظ", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
             Spacer(Modifier.height(10.dp))
@@ -138,22 +184,58 @@ fun ProductionAiSettings(nav: NavHostController) {
 
 private suspend fun probeBackend(rawBaseUrl: String, token: String): BackendProbe = withContext(Dispatchers.IO) {
     val base = rawBaseUrl.trim().trimEnd('/')
-    if (!base.startsWith("https://") && !base.startsWith("http://")) return@withContext BackendProbe(false, "رابط Backend غير صحيح")
-    val client = OkHttpClient.Builder().connectTimeout(12, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
+    if (!base.startsWith("https://")) {
+        return@withContext BackendProbe(false, "رابط Backend يجب أن يستخدم HTTPS")
+    }
+    val client = OkHttpClient.Builder()
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build()
+
     runCatching {
-        val request = Request.Builder()
+        val healthRequest = Request.Builder()
+            .url("$base/health")
+            .get()
+            .build()
+        val health = client.newCall(healthRequest).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                return@use null
+            }
+            JSONObject(body)
+        } ?: return@runCatching BackendProbe(false, "Backend لا يعرض حالة الخدمات عبر /health")
+
+        val aiConfigured = health.optBoolean("ai_configured", false)
+        val serviceAuthConfigured = health.optBoolean("service_auth_configured", false)
+        val supabaseConfigured = health.optBoolean("supabase_configured", false)
+
+        val parserRequest = Request.Builder()
             .url("$base/v1/parser/status")
             .header("Authorization", "Bearer ${token.trim()}")
             .get()
             .build()
-        client.newCall(request).execute().use { response ->
+        client.newCall(parserRequest).execute().use { response ->
             val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) return@use BackendProbe(false, "Backend رد ${response.code}: ${body.take(120)}")
+            if (!response.isSuccessful) {
+                return@use BackendProbe(false, "فشل مصادقة Backend (${response.code}): ${body.take(120)}")
+            }
             val json = JSONObject(body)
-            val ready = json.optBoolean("ready", false)
+            val parserReady = json.optBoolean("ready", false)
             val path = json.optString("preferred_path", "")
-            if (ready) BackendProbe(true, "متصل ✓ Deep Parser جاهز فعليًا${if (path.isNotBlank()) " • $path" else ""}")
-            else BackendProbe(false, "Backend متصل لكن نموذج Deep Parser غير جاهز")
+            val missing = buildList {
+                if (!parserReady) add("Deep Parser")
+                if (!aiConfigured) add("HAI/AI_API_KEY")
+                if (!serviceAuthConfigured) add("Service auth")
+            }
+            if (missing.isNotEmpty()) {
+                BackendProbe(false, "Backend متصل لكن غير مكتمل: ${missing.joinToString("، ")}")
+            } else {
+                val cloud = if (supabaseConfigured) "Cloud/Supabase ✓" else "Cloud/Supabase غير مهيأ"
+                BackendProbe(
+                    true,
+                    "Backend ✓ • HAI ✓ • Deep Parser ✓${if (path.isNotBlank()) " ($path)" else ""} • $cloud"
+                )
+            }
         }
     }.getOrElse { BackendProbe(false, "فشل الاتصال: ${it.message.orEmpty().take(140)}") }
 }

@@ -1,0 +1,68 @@
+name: CodeQL Security
+
+on:
+  push:
+    branches: [ main, 'codex/**' ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '23 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: java-kotlin
+            build-mode: manual
+          - language: python
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        if: matrix.language == 'java-kotlin'
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Generate Gradle wrapper
+        if: matrix.language == 'java-kotlin'
+        run: gradle wrapper --gradle-version 8.7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Build Android sources for CodeQL
+        if: matrix.language == 'java-kotlin'
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'
+          upload: never
+          output: codeql-results/${{ matrix.language }}
+
+      - name: Preserve SARIF report
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-${{ matrix.language }}-sarif
+          path: codeql-results/${{ matrix.language }}
+          if-no-files-found: error
+          retention-days: 30
