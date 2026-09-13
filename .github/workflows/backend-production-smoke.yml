@@ -19,6 +19,17 @@ jobs:
           set -euo pipefail
           test -n "$BACKEND_URL" || (echo 'MANZILI_PROD_BACKEND_URL is missing' >&2; exit 1)
           test -n "$BACKEND_TOKEN" || (echo 'MANZILI_PROD_API_TOKEN is missing' >&2; exit 1)
+          case "$BACKEND_URL" in
+            https://*) ;;
+            *) echo 'Production backend must use HTTPS' >&2; exit 1 ;;
+          esac
+
+      - name: Verify production service configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          BODY="$(curl --fail --silent --show-error --max-time 45 "${BACKEND_URL%/}/health")"
+          python -c 'import json,sys; d=json.loads(sys.argv[1]); required=("ai_configured","service_auth_configured","supabase_configured","deep_parser_ready"); missing=[k for k in required if d.get(k) is not True]; assert not missing, f"production services not configured: {missing}; health={d}"; print("production config ok", d.get("version"))' "$BODY"
 
       - name: Verify public readiness
         shell: bash
