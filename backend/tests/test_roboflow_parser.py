@@ -1,4 +1,4 @@
-from backend.app.roboflow_parser import _normalize_predictions, merge_room_evidence
+from app.roboflow_parser import _normalize_predictions, merge_room_evidence
 
 
 def test_normalizes_wall_room_door_window_predictions():
