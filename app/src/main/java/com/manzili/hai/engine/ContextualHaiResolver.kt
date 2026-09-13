@@ -11,8 +11,7 @@ import kotlin.math.roundToInt
 
 /**
  * Context-aware HAI entry point used by the floating assistant button.
- * It always tries local evidence first so the interaction feels immediate,
- * then uses the original source and remote HAI only when something is still unresolved.
+ * It always tries deterministic/local evidence first, then the original source and remote HAI.
  */
 class ContextualHaiResolver(context: Context) {
     data class Resolution(
@@ -49,8 +48,12 @@ class ContextualHaiResolver(context: Context) {
             val recovered = DimensionEvidenceEngine.extractSpatial(lines)
             if (recovered.isNotEmpty()) {
                 candidate = candidate.copy(
-                    dimensions = (candidate.dimensions + recovered).distinctBy {
-                        "${it.pageIndex}:${"%.3f".format(it.valueM)}:${it.sourceText.trim()}"
+                    dimensions = (candidate.dimensions + recovered).distinctBy { d ->
+                        val sx = d.start?.x?.times(2f)?.roundToInt() ?: -1
+                        val sy = d.start?.y?.times(2f)?.roundToInt() ?: -1
+                        val ex = d.end?.x?.times(2f)?.roundToInt() ?: -1
+                        val ey = d.end?.y?.times(2f)?.roundToInt() ?: -1
+                        "${d.pageIndex}:${"%.3f".format(d.valueM)}:$sx:$sy:$ex:$ey"
                     }
                 )
                 channels++
@@ -86,12 +89,14 @@ class ContextualHaiResolver(context: Context) {
         val solved = solvedCount > 0 || widthSolved || heightSolved || after.plan.revision > input.revision
 
         val message = when {
-            widthSolved && heightSolved && !after.blocking -> "استدع HAI عبّأ العرض والطول وأكمل مشاكل المراجعة."
-            widthSolved || heightSolved -> "استدع HAI عبّأ ${listOfNotNull(if (widthSolved) "العرض" else null, if (heightSolved) "الطول" else null).joinToString(" و")} من المخطط."
-            !after.blocking && before.blocking -> "استدع HAI أكمل الهندسة وأصبحت جاهزة للاعتماد."
-            solvedCount > 0 -> "استدع HAI حل $solvedCount من المشاكل الحالية."
+            widthSolved && heightSolved && !after.blocking -> "تمت قراءة سلسلة الأبعاد الخارجية. عبّأ HAI العرض والطول وأكمل المراجعة."
+            widthSolved && heightSolved -> "تمت تعبئة العرض والطول تلقائيًا من أبعاد المخطط."
+            widthSolved || heightSolved -> "عبّأ HAI ${listOfNotNull(if (widthSolved) "العرض" else null, if (heightSolved) "الطول" else null).joinToString(" و")} تلقائيًا من المخطط."
+            !after.blocking && before.blocking -> "أكمل HAI الهندسة وأصبحت جاهزة للاعتماد."
+            solvedCount > 0 -> "حل HAI $solvedCount من المشاكل الحالية."
             source == null -> "المخطط الأصلي غير متاح الآن؛ لا أستطيع استخراج قيم جديدة بأمان."
-            channels > 0 -> "راجعت المخطط من عدة قنوات، لكن لم أجد دليلاً موثوقًا كافيًا لتعبئة المتبقي دون تخمين."
+            failures.isNotEmpty() && channels == 0 -> "تعذر إكمال الاستدعاء: ${failures.first()}"
+            channels > 0 -> "قرأت المخطط من عدة قنوات، لكن الأبعاد الكلية لم تثبت بعد. جرّب تقريب المصدر أو أكمل الحقل يدويًا."
             failures.isNotEmpty() -> "تعذر إكمال الاستدعاء: ${failures.first()}"
             else -> "لا يوجد حل آمن تلقائي لهذه المشكلة الآن؛ أكملها يدويًا."
         }
@@ -150,49 +155,108 @@ class ContextualHaiResolver(context: Context) {
     }
 
     /**
-     * Exterior dimension chains are common in Saudi residential drawings.
-     * If there is no explicit overall width/height, sum a coherent edge chain instead of
-     * forcing the user to manually calculate every segment.
+     * Resolve overall scale from exterior dimension chains. Repeated segment values are preserved;
+     * only duplicate OCR hits at the same location are collapsed. The lane with the strongest
+     * spatial coverage/count wins, rather than simply taking the largest number.
      */
     private fun inferScaleFromEvidence(input: FloorPlan): FloorPlan {
-        var width = input.widthM
-        var height = input.heightM
+        var width = input.widthM ?: explicitAxisValue(input.dimensions, horizontal = true)
+        var height = input.heightM ?: explicitAxisValue(input.dimensions, horizontal = false)
         if (width == null) width = chainTotal(input.dimensions, horizontal = true)
         if (height == null) height = chainTotal(input.dimensions, horizontal = false)
         if (width == input.widthM && height == input.heightM) return input
+
+        val resolvedBoth = width != null && height != null
         return input.copy(
             widthM = width,
             heightM = height,
-            scaleConfidence = maxOf(input.scaleConfidence, 78),
+            scaleConfidence = maxOf(input.scaleConfidence, if (resolvedBoth) 84 else 76),
             revision = input.revision + 1,
-            observations = (input.observations + "استدع HAI حسب البعد الكلي من سلسلة الأبعاد الخارجية المقروءة.").distinct()
+            observations = (input.observations + "HAI استنتج الأبعاد الكلية من سلسلة أبعاد خارجية مكانية موثوقة.").distinct()
         )
     }
 
-    private fun chainTotal(dimensions: List<PlanDimension>, horizontal: Boolean): Double? {
-        data class Item(val d: PlanDimension, val lane: Int, val nearEdge: Boolean)
+    private fun explicitAxisValue(dimensions: List<PlanDimension>, horizontal: Boolean): Double? {
+        val axis = if (horizontal) "horizontal" else "vertical"
+        return dimensions
+            .filter { it.axis == axis && it.confidence >= 82 && it.valueM in 2.0..100.0 }
+            .filter { d ->
+                val text = d.sourceText
+                if (horizontal) text.contains("عرض") || d.label.contains("عرض")
+                else text.contains("طول") || text.contains("ارتفاع") || d.label.contains("طول") || d.label.contains("ارتفاع")
+            }
+            .maxByOrNull { it.confidence }
+            ?.valueM
+    }
 
+    private data class ChainItem(
+        val d: PlanDimension,
+        val page: Int,
+        val side: Int,
+        val lane: Int,
+        val mainCenter: Float,
+        val cross: Float
+    )
+
+    private data class ChainCandidate(
+        val total: Double,
+        val count: Int,
+        val coverage: Float,
+        val confidence: Double
+    )
+
+    private fun chainTotal(dimensions: List<PlanDimension>, horizontal: Boolean): Double? {
         val items = dimensions.mapNotNull { d ->
-            if (d.confidence < 62 || d.valueM !in 0.25..30.0) return@mapNotNull null
+            if (d.confidence < 60 || d.valueM !in 0.25..40.0) return@mapNotNull null
             val start = d.start ?: return@mapNotNull null
             val end = d.end ?: return@mapNotNull null
             val dx = abs(end.x - start.x)
             val dy = abs(end.y - start.y)
             val orientationMatches = if (horizontal) dx >= dy else dy > dx
             if (!orientationMatches) return@mapNotNull null
+
             val cross = if (horizontal) (start.y + end.y) / 2f else (start.x + end.x) / 2f
-            val nearEdge = cross <= 18f || cross >= 82f
-            Item(d, (cross / 4f).roundToInt(), nearEdge)
+            if (cross > 22f && cross < 78f) return@mapNotNull null
+            val side = if (cross < 50f) 0 else 1
+            val main = if (horizontal) (start.x + end.x) / 2f else (start.y + end.y) / 2f
+            ChainItem(d, d.pageIndex, side, (cross / 2.5f).roundToInt(), main, cross)
         }
 
-        val grouped = items.filter { it.nearEdge }
-            .groupBy { "${it.d.pageIndex}:${it.lane}" }
+        val candidates = items.groupBy { "${it.page}:${it.side}:${it.lane}" }
             .values
-            .map { lane -> lane.distinctBy { "%.2f".format(it.d.valueM) + ":" + it.d.sourceText.trim() } }
-            .filter { it.size >= 3 }
+            .mapNotNull { lane ->
+                val unique = lane
+                    .sortedBy { it.mainCenter }
+                    .fold(mutableListOf<ChainItem>()) { acc, item ->
+                        val duplicate = acc.any { previous ->
+                            abs(previous.mainCenter - item.mainCenter) < 1.3f &&
+                                abs(previous.d.valueM - item.d.valueM) < .03
+                        }
+                        if (!duplicate) acc += item
+                        acc
+                    }
+                if (unique.size < 2) return@mapNotNull null
+                val coverage = unique.maxOf { it.mainCenter } - unique.minOf { it.mainCenter }
+                if (coverage < 20f) return@mapNotNull null
+                val total = unique.sumOf { it.d.valueM }
+                if (total !in 3.0..100.0) return@mapNotNull null
+                ChainCandidate(
+                    total = total,
+                    count = unique.size,
+                    coverage = coverage,
+                    confidence = unique.map { it.d.confidence }.average()
+                )
+            }
 
-        return grouped.map { lane -> lane.sumOf { it.d.valueM } }
-            .filter { it in 3.0..100.0 }
-            .maxOrNull()
+        val best = candidates.sortedWith(
+            compareByDescending<ChainCandidate> { it.count }
+                .thenByDescending { it.coverage }
+                .thenByDescending { it.confidence }
+        ).firstOrNull()
+
+        if (best != null) return best.total
+
+        // A single explicit outer dimension is still valid if the OCR text itself says width/length.
+        return explicitAxisValue(dimensions, horizontal)
     }
 }
