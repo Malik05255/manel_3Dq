@@ -96,7 +96,6 @@ def _extract_lines(mask: np.ndarray, confidence: int) -> list[dict[str, Any]]:
         length = float(np.hypot(x2 - x1, y2 - y1))
         if length < min_len:
             continue
-        # Normalize direction and suppress near-duplicate Hough fragments.
         if (x2, y2) < (x1, y1):
             x1, y1, x2, y2 = x2, y2, x1, y1
         key = (round(x1 / 8), round(y1 / 8), round(x2 / 8), round(y2 / 8))
@@ -113,6 +112,15 @@ def _extract_lines(mask: np.ndarray, confidence: int) -> list[dict[str, Any]]:
         if len(out) >= 220:
             break
     return out
+
+
+def _recover_sparse_walls(image: np.ndarray, walls: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+    if len(walls) >= 3:
+        return walls, False
+    recovered = _extract_lines(_fallback_wall_mask(image), confidence=68)
+    if len(recovered) >= 3 and len(recovered) > len(walls):
+        return recovered, True
+    return walls, False
 
 
 def _extract_openings(mask: np.ndarray, kind: str, confidence: int) -> list[dict[str, Any]]:
@@ -207,6 +215,13 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
             model_meta = model_status()
             base_confidence = 56
             warnings.append("Real segmentation weights are not available; deterministic OpenCV evidence was used.")
+
+    if model_used != "opencv-fallback":
+        walls, recovered = _recover_sparse_walls(image, walls)
+        if recovered:
+            model_used = f"{model_used}+opencv-recovery"
+            base_confidence = min(base_confidence, 68)
+            warnings.append("Segmentation returned insufficient wall geometry; deterministic OpenCV recovery supplied reviewable wall evidence.")
 
     ocr_lines = _ocr(image)
     confidence = min(97, base_confidence + min(len(walls), 14) // 3 + (2 if ocr_lines else 0)) if walls else 0
