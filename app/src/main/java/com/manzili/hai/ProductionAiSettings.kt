@@ -100,7 +100,7 @@ fun ProductionAiSettings(nav: NavHostController) {
                         if (probing) CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp)
                         else Icon(Icons.Rounded.CloudDone, null)
                         Spacer(Modifier.width(7.dp))
-                        Text(if (probing) "يفحص Deep Parser…" else "اختبار Backend وDeep Parser")
+                        Text(if (probing) "يفحص الخدمات…" else "اختبار Backend وHAI وDeep Parser")
                     }
                     probe?.let { result ->
                         Text(
@@ -191,24 +191,50 @@ private suspend fun probeBackend(rawBaseUrl: String, token: String): BackendProb
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
+
     runCatching {
-        val request = Request.Builder()
+        val healthRequest = Request.Builder()
+            .url("$base/health")
+            .get()
+            .build()
+        val health = client.newCall(healthRequest).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                return@use null
+            }
+            JSONObject(body)
+        } ?: return@runCatching BackendProbe(false, "Backend لا يعرض حالة الخدمات عبر /health")
+
+        val aiConfigured = health.optBoolean("ai_configured", false)
+        val serviceAuthConfigured = health.optBoolean("service_auth_configured", false)
+        val supabaseConfigured = health.optBoolean("supabase_configured", false)
+
+        val parserRequest = Request.Builder()
             .url("$base/v1/parser/status")
             .header("Authorization", "Bearer ${token.trim()}")
             .get()
             .build()
-        client.newCall(request).execute().use { response ->
+        client.newCall(parserRequest).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                return@use BackendProbe(false, "Backend رد ${response.code}: ${body.take(120)}")
+                return@use BackendProbe(false, "فشل مصادقة Backend (${response.code}): ${body.take(120)}")
             }
             val json = JSONObject(body)
-            val ready = json.optBoolean("ready", false)
+            val parserReady = json.optBoolean("ready", false)
             val path = json.optString("preferred_path", "")
-            if (ready) {
-                BackendProbe(true, "متصل ✓ Deep Parser جاهز فعليًا${if (path.isNotBlank()) " • $path" else ""}")
+            val missing = buildList {
+                if (!parserReady) add("Deep Parser")
+                if (!aiConfigured) add("HAI/AI_API_KEY")
+                if (!serviceAuthConfigured) add("Service auth")
+            }
+            if (missing.isNotEmpty()) {
+                BackendProbe(false, "Backend متصل لكن غير مكتمل: ${missing.joinToString("، ")}")
             } else {
-                BackendProbe(false, "Backend متصل لكن نموذج Deep Parser غير جاهز")
+                val cloud = if (supabaseConfigured) "Cloud/Supabase ✓" else "Cloud/Supabase غير مهيأ"
+                BackendProbe(
+                    true,
+                    "Backend ✓ • HAI ✓ • Deep Parser ✓${if (path.isNotBlank()) " ($path)" else ""} • $cloud"
+                )
             }
         }
     }.getOrElse { BackendProbe(false, "فشل الاتصال: ${it.message.orEmpty().take(140)}") }
