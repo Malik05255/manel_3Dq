@@ -3,6 +3,8 @@ name: Android Build
 on:
   push:
     branches: [ main, 'codex/**' ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 concurrency:
@@ -21,8 +23,17 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Generate Gradle wrapper
         run: gradle wrapper --gradle-version 8.7
+      - name: Verify focused production surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'android:name=".FocusedMainActivityV2"' app/src/main/AndroidManifest.xml
+          ! grep -q 'composable("4d")' app/src/main/java/com/manzili/hai/FocusedMainActivityV2.kt
+          grep -q 'versionCode = 62' app/build.gradle.kts
       - name: Run engine regression tests
         run: ./gradlew testDebugUnitTest
+      - name: Run Android lint
+        run: ./gradlew lintDebug
       - name: Build debug APK
         run: ./gradlew assembleDebug
       - name: Build optimized release APK and AAB
@@ -41,6 +52,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Manzili-HAI-test-reports
-          path: app/build/reports/tests/testDebugUnitTest
+          name: Manzili-HAI-quality-reports
+          path: |
+            app/build/reports/tests/testDebugUnitTest
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-debug.xml
           if-no-files-found: ignore
