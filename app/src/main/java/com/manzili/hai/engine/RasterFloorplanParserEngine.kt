@@ -26,7 +26,7 @@ internal object RasterPixelClassifier {
         if (alpha < 80) return false
         val (r, g, b) = rgb(pixel)
         val luma = (r * 299 + g * 587 + b * 114) / 1000
-        return luma < 118
+        return luma < 100
     }
 
     /**
