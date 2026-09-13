@@ -31,6 +31,12 @@ object FloorplanParserEngine {
         val adjustedOpenings = plan.openings.map { opening -> refineOpening(opening, plan.walls, notes, uncertainties) }
         plan = plan.copy(openings = adjustedOpenings, uncertainties = uncertainties.distinct())
 
+        val roomRecovery = RoomTopologyEngine.recover(plan)
+        if (roomRecovery.inferredRooms > 0) {
+            plan = roomRecovery.plan
+            notes += "استعيدت ${roomRecovery.inferredRooms} مساحة مغلقة من طوبولوجيا الجدران."
+        }
+
         val verified = PlanVerificationEngine.inspect(plan)
         return Result(verified.plan, notes.distinct())
     }
