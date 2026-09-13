@@ -6,8 +6,8 @@ import os
 from typing import Any
 
 import cv2
-import httpx
 import numpy as np
+from inference_sdk import InferenceConfiguration, InferenceHTTPClient
 
 DEFAULT_MODELS = (
     "harsh-bagadiya/floor-plan-detector-19-rfdetr-seg-medium-t1",
@@ -23,14 +23,15 @@ def roboflow_status() -> dict[str, Any]:
         "api_url": os.getenv("ROBOFLOW_API_URL", "https://serverless.roboflow.com").rstrip("/"),
         "models": models,
         "primary": True,
+        "transport": "official-inference-sdk-header",
     }
 
 
 def roboflow_floorplan(image_base64: str) -> dict[str, Any]:
-    """Run public Roboflow Universe floor-plan models server-side and normalize their output.
+    """Run Roboflow Universe models through the official hosted Inference SDK.
 
-    Roboflow is the primary detector when configured. Local CubiCasa/OpenCV remains a verifier/fallback.
-    The private Roboflow API key never leaves the backend.
+    Roboflow is the primary detector when configured. CubiCasa/OpenCV remains
+    independent verifier/fallback evidence. The private API key never leaves the backend.
     """
     status = roboflow_status()
     if not status["configured"]:
@@ -59,17 +60,20 @@ def roboflow_floorplan(image_base64: str) -> dict[str, Any]:
     openings: list[dict[str, Any]] = []
     warnings: list[str] = []
     succeeded: list[str] = []
+    raw_prediction_counts: dict[str, int] = {}
 
     for model_id in status["models"]:
         try:
-            payload = _infer_model(model_id, image_bytes, raw)
+            payload = _infer_model(model_id, image)
+            items = _prediction_items(payload)
+            raw_prediction_counts[model_id] = len(items)
             model_walls, model_rooms, model_openings = _normalize_predictions(payload, w, h, model_id)
             walls.extend(model_walls)
             rooms.extend(model_rooms)
             openings.extend(model_openings)
             succeeded.append(model_id)
         except Exception as exc:
-            warnings.append(f"Roboflow model {model_id} failed: {str(exc)[:180]}")
+            warnings.append(f"Roboflow model {model_id} failed: {str(exc)[:220]}")
 
     walls = _dedupe_walls(walls)
     rooms = merge_room_evidence(rooms, [])
@@ -85,6 +89,7 @@ def roboflow_floorplan(image_base64: str) -> dict[str, Any]:
             "openings": [],
             "warnings": warnings,
             "models": status["models"],
+            "raw_prediction_counts": raw_prediction_counts,
         }
 
     if not walls:
@@ -100,11 +105,12 @@ def roboflow_floorplan(image_base64: str) -> dict[str, Any]:
         "openings": openings,
         "warnings": warnings,
         "models": succeeded,
+        "raw_prediction_counts": raw_prediction_counts,
     }
 
 
 def merge_room_evidence(primary: list[dict[str, Any]], verifier: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep Roboflow room regions primary and add only unmatched verifier rooms at capped confidence."""
+    """Keep Roboflow room regions primary and add only unmatched verifier rooms."""
     if not primary:
         return list(verifier)
 
@@ -134,42 +140,33 @@ def _configured_models() -> list[str]:
     return list(dict.fromkeys(values))[:4]
 
 
-def _infer_model(model_id: str, image_bytes: bytes, base64_value: str) -> dict[str, Any]:
+def _infer_model(model_id: str, image: np.ndarray) -> dict[str, Any]:
     api_key = os.getenv("ROBOFLOW_API_KEY", "").strip()
     base_url = os.getenv("ROBOFLOW_API_URL", "https://serverless.roboflow.com").rstrip("/")
     confidence = float(os.getenv("ROBOFLOW_CONFIDENCE", "0.25"))
-    url = f"{base_url}/{model_id.lstrip('/')}"
-    params = {"confidence": max(0.01, min(0.99, confidence))}
-    timeout = httpx.Timeout(75.0, connect=20.0)
-    auth_headers = {"Authorization": f"Bearer {api_key}"}
+    confidence = max(0.01, min(0.99, confidence))
 
-    # Current Roboflow Serverless models prefer bearer-header authentication.
-    # Keep the raw-image request first because it matches the hosted inference REST contract;
-    # retry with explicit base64 JSON for inference-server-compatible deployments.
-    with httpx.Client(timeout=timeout) as client:
-        response = client.post(
-            url,
-            params=params,
-            content=image_bytes,
-            headers={**auth_headers, "Content-Type": "application/x-www-form-urlencoded"},
+    client = InferenceHTTPClient(api_url=base_url, api_key=api_key)
+    client.configure(
+        InferenceConfiguration(
+            api_key_transport="header",
+            confidence_threshold=confidence,
+            max_batch_size=1,
+            max_concurrent_requests=1,
         )
-        if response.status_code >= 400:
-            response = client.post(
-                url,
-                params=params,
-                json={"image": {"type": "base64", "value": base64_value}},
-                headers=auth_headers,
-            )
-    if response.status_code >= 400:
-        raise RuntimeError(f"HTTP {response.status_code}: {response.text[:220]}")
-    body = response.json()
+    )
+    body = client.infer(image, model_id=model_id)
+    if isinstance(body, list):
+        if len(body) != 1 or not isinstance(body[0], dict):
+            raise RuntimeError("unexpected Roboflow batch response")
+        body = body[0]
     if not isinstance(body, dict):
         raise RuntimeError("unexpected Roboflow response")
     return body
 
 
 def _normalize_predictions(
-    payload: dict[str, Any],
+    payload: Any,
     image_w: int,
     image_h: int,
     model_id: str,
@@ -192,7 +189,12 @@ def _normalize_predictions(
             wall = _wall_from_prediction(pred, points, image_w, image_h, confidence, model_id, index)
             if wall:
                 walls.append(wall)
-        elif "room" in label or label.startswith("space") or label.startswith("zone"):
+        elif (
+            "room" in label
+            or label.startswith("space")
+            or label.startswith("zone")
+            or "공간" in label
+        ):
             room = _room_from_prediction(pred, points, image_w, image_h, confidence, model_id, index)
             if room:
                 rooms.append(room)
@@ -331,7 +333,10 @@ def _room_from_prediction(
         xs, ys = zip(*points)
         x, y = min(xs), min(ys)
         width, height = max(xs) - x, max(ys) - y
-        polygon = [{"x": max(0.0, min(100.0, px)), "y": max(0.0, min(100.0, py))} for px, py in points[:48]]
+        polygon = [
+            {"x": max(0.0, min(100.0, px)), "y": max(0.0, min(100.0, py))}
+            for px, py in points[:64]
+        ]
     else:
         box = _bbox(pred, image_w, image_h)
         if not box:
@@ -413,7 +418,10 @@ def _dedupe_openings(openings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for item in sorted(openings, key=lambda value: int(value.get("confidence", 0)), reverse=True):
         duplicate = any(
             kept.get("type") == item.get("type")
-            and math.hypot(float(kept.get("x", 0.0)) - float(item.get("x", 0.0)), float(kept.get("y", 0.0)) - float(item.get("y", 0.0))) <= 1.8
+            and math.hypot(
+                float(kept.get("x", 0.0)) - float(item.get("x", 0.0)),
+                float(kept.get("y", 0.0)) - float(item.get("y", 0.0)),
+            ) <= 1.8
             for kept in out
         )
         if not duplicate:
@@ -424,7 +432,10 @@ def _dedupe_openings(openings: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _distance(a: dict[str, Any], b: dict[str, Any]) -> float:
-    return math.hypot(float(a.get("x", 0.0)) - float(b.get("x", 0.0)), float(a.get("y", 0.0)) - float(b.get("y", 0.0)))
+    return math.hypot(
+        float(a.get("x", 0.0)) - float(b.get("x", 0.0)),
+        float(a.get("y", 0.0)) - float(b.get("y", 0.0)),
+    )
 
 
 def _room_iou(a: dict[str, Any], b: dict[str, Any]) -> float:
@@ -435,5 +446,8 @@ def _room_iou(a: dict[str, Any], b: dict[str, Any]) -> float:
     ix = max(0.0, min(ax2, bx2) - max(ax1, bx1))
     iy = max(0.0, min(ay2, by2) - max(ay1, by1))
     intersection = ix * iy
-    union = max(0.001, (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - intersection)
+    union = max(
+        0.001,
+        (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - intersection,
+    )
     return max(0.0, min(1.0, intersection / union))
