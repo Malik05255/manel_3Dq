@@ -28,3 +28,20 @@ services:
         value: google/gemini-2.5-flash
       - key: AI_API_KEY
         sync: false
+      - key: BLENDER_WORKER_URL
+        sync: false
+      - key: RENDER_WORKER_TOKEN
+        sync: false
+
+  - type: web
+    name: manzili-hai-blender-worker
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile.blender
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: RENDER_WORKER_TOKEN
+        sync: false
+      - key: BLENDER_BIN
+        value: /usr/bin/blender
