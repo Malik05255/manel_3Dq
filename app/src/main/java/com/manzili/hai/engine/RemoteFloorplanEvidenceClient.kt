@@ -33,6 +33,11 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         val ocrLines: List<PlanTextOcrEngine.SpatialLine>,
         val modelUsed: String,
         val confidence: Int,
+        val geometryConfidence: Int,
+        val ocrConfidence: Int,
+        val scaleConfidence: Int,
+        val wallTopology: Int,
+        val dimensionEvidenceCount: Int,
         val warnings: List<String>
     )
 
@@ -73,7 +78,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
                     ready=root.optBoolean("ready",false),
                     preferredPath=root.optString("preferred_path","fallback"),
                     configured=model?.optBoolean("configured",false)?:false,
-                    modelLabel=model?.optString("backend","unknown")?:"unknown",
+                    modelLabel=model?.optString("name","unknown")?:"unknown",
                     detail=root.optString("detail","")
                 )
             }
@@ -87,8 +92,8 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         val images = renderer.render(
             uri,
             maxPdfPages = maxPdfPages.coerceIn(1,12),
-            targetMaxPx = 2600,
-            jpegQuality = 94
+            targetMaxPx = 3200,
+            jpegQuality = 96
         )
         val pages = images.map { image -> requestPage(image.pageIndex, image.base64Jpeg) }
         Result(pages)
@@ -100,7 +105,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
             .url("${settings.backendBaseUrl}/v1/parse-floorplan")
             .header("Authorization", "Bearer ${settings.backendAuthToken}")
             .header("Content-Type", "application/json")
-            .header("X-Manzili-Parser-Client", "android-0.62")
+            .header("X-Manzili-Parser-Client", "android-accuracy-v3")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
         http.newCall(req).execute().use { res ->
@@ -194,6 +199,21 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         val warnings = buildList {
             if (warningsJson != null) for (i in 0 until warningsJson.length()) warningsJson.optString(i).takeIf { it.isNotBlank() }?.let(::add)
         }
-        return PageResult(pageIndex, rooms, walls, openings, ocr, root.optString("model_used", "unknown"), root.optInt("confidence", 0), warnings)
+        val quality = root.optJSONObject("quality")
+        return PageResult(
+            pageIndex = pageIndex,
+            rooms = rooms,
+            walls = walls,
+            openings = openings,
+            ocrLines = ocr,
+            modelUsed = root.optString("model_used", "unknown"),
+            confidence = root.optInt("confidence", 0).coerceIn(0,100),
+            geometryConfidence = quality?.optInt("geometry", 0)?.coerceIn(0,100) ?: 0,
+            ocrConfidence = quality?.optInt("ocr", 0)?.coerceIn(0,100) ?: 0,
+            scaleConfidence = quality?.optInt("scale_evidence", 0)?.coerceIn(0,100) ?: 0,
+            wallTopology = quality?.optInt("wall_topology", 0)?.coerceIn(0,100) ?: 0,
+            dimensionEvidenceCount = quality?.optInt("dimension_evidence", 0)?.coerceAtLeast(0) ?: 0,
+            warnings = warnings
+        )
     }
 }
