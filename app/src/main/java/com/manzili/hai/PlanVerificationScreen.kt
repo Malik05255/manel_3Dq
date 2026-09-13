@@ -63,6 +63,7 @@ fun PlanVerificationScreen(nav: NavHostController, source: Uri?, plan: FloorPlan
     var haiBusy by remember { mutableStateOf(false) }
     var haiStatus by remember { mutableStateOf<String?>(null) }
     val report = remember(working) { PlanVerificationEngine.inspect(working) }
+    val hasReviewGap = report.issues.isNotEmpty() || working.widthM == null || working.heightM == null
 
     fun runHaiResolver() {
         if (haiBusy) return
@@ -237,7 +238,7 @@ fun PlanVerificationScreen(nav: NavHostController, source: Uri?, plan: FloorPlan
 
             FilledTonalButton(
                 onClick = { runHaiResolver() },
-                enabled = !haiBusy && report.issues.isNotEmpty(),
+                enabled = !haiBusy && hasReviewGap,
                 colors = ButtonDefaults.filledTonalButtonColors(
                     containerColor = VSViolet.copy(alpha = .12f),
                     contentColor = VSViolet
