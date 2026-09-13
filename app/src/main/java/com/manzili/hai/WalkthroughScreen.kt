@@ -68,7 +68,7 @@ fun WalkthroughScreen(nav:NavHostController,plan:FloorPlan?) {
                     modelNode!=null->key("${current.floorId}:${current.roomId}:${"%.2f".format(current.x)}:${"%.2f".format(current.y)}:${current.yaw}"){
                         val rad=Math.toRadians(current.yaw.toDouble());val lookX=current.x+cos(rad)*1.6;val lookY=current.y+sin(rad)*1.6
                         val camera=rememberCameraManipulator(orbitHomePosition=Position(current.x.toFloat(),current.eyeZ.toFloat(),(-current.y).toFloat()),targetPosition=Position(lookX.toFloat(),current.eyeZ.toFloat(),(-lookY).toFloat()))
-                        Scene(modifier=Modifier.fillMaxSize(),engine=engine,modelLoader=modelLoader,mainLightNode=mainLight,cameraManipulator=camera,childNodes=listOf(modelNode))
+                        Scene(modifier=Modifier.fillMaxSize(),engine=engine,modelLoader=modelLoader,mainLightNode=mainLight,cameraManipulator=camera,childNodes=listOf(modelNode),isOpaque=false)
                     }
                 }
                 Surface(color=Color(0xE627312C),shape=RoundedCornerShape(16.dp),modifier=Modifier.align(Alignment.TopCenter).padding(12.dp)){

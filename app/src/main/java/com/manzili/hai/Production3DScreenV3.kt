@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.DirectionsWalk
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.ViewInAr
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -19,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import com.manzili.hai.engine.PbrSceneFramingEngine
+import com.manzili.hai.engine.PlanVerificationEngine
 import com.manzili.hai.engine.ProductionSceneEngine
 import com.manzili.hai.engine.SaudiResidentialEngine
 import com.manzili.hai.engine.SaudiVisualRenderEngine
@@ -53,10 +55,7 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                 )
             }
         ) { pad ->
-            Box(
-                Modifier.fillMaxSize().padding(pad),
-                contentAlignment = Alignment.Center
-            ) {
+            Box(Modifier.fillMaxSize().padding(pad), contentAlignment = Alignment.Center) {
                 Icon(Icons.Rounded.ViewInAr, null, tint = H360Muted, modifier = Modifier.size(48.dp))
             }
         }
@@ -69,6 +68,7 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
         return
     }
 
+    val verification = remember(plan) { PlanVerificationEngine.inspect(plan) }
     val semanticScene = remember(plan) { ProductionSceneEngine.build(plan) }
     val visual = remember(plan) { SaudiVisualRenderEngine.build(plan, SaudiVisualRenderEngine.Quality.ULTRA) }
     val frame = remember(semanticScene) { PbrSceneFramingEngine.frame(semanticScene) }
@@ -128,11 +128,7 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                     }
                 },
                 actions = {
-                    Surface(
-                        shape = CircleShape,
-                        color = H360Cyan,
-                        modifier = Modifier.padding(end = 10.dp)
-                    ) {
+                    Surface(shape = CircleShape, color = H360Cyan, modifier = Modifier.padding(end = 10.dp)) {
                         IconButton(onClick = { nav.navigate("walkthrough") }) {
                             Icon(Icons.Rounded.DirectionsWalk, "جولة", tint = H360CyanDeep)
                         }
@@ -142,9 +138,7 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
             )
         }
     ) { pad ->
-        Box(
-            Modifier.fillMaxSize().padding(pad).background(background)
-        ) {
+        Box(Modifier.fillMaxSize().padding(pad).background(background)) {
             if (renderError == null) {
                 Scene(
                     modifier = Modifier.fillMaxSize(),
@@ -152,8 +146,29 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                     modelLoader = modelLoader,
                     mainLightNode = mainLight,
                     cameraManipulator = cameraManipulator,
-                    childNodes = childNodes
+                    childNodes = childNodes,
+                    isOpaque = false
                 )
+            }
+
+            if (verification.readingConfidence < 65 || verification.scaleConfidence < 50) {
+                Surface(
+                    color = H360Paper.copy(alpha = .94f),
+                    shape = RoundedCornerShape(16.dp),
+                    shadowElevation = 3.dp,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(12.dp)
+                ) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Info, null, tint = H360Amber, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text(
+                            if (verification.scaleConfidence < 50) "معاينة نسبية: المقياس غير مؤكد" else "المجسم مبني على قراءة تحتاج مراجعة",
+                            color = H360Ink,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
 
             when {
@@ -164,11 +179,7 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                     shadowElevation = 4.dp
                 ) {
                     Box(Modifier.size(64.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(
-                            Modifier.size(26.dp),
-                            strokeWidth = 2.5.dp,
-                            color = H360CyanDeep
-                        )
+                        CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.5.dp, color = H360CyanDeep)
                     }
                 }
 
@@ -177,10 +188,7 @@ fun Production3DScreenV3(nav: NavHostController, plan: FloorPlan?) {
                     shape = RoundedCornerShape(28.dp),
                     colors = CardDefaults.cardColors(containerColor = H360Paper)
                 ) {
-                    Column(
-                        Modifier.padding(22.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
+                    Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Rounded.ViewInAr, null, tint = H360Amber, modifier = Modifier.size(36.dp))
                         Spacer(Modifier.height(12.dp))
                         Text("تعذر العرض", fontWeight = FontWeight.Black, fontSize = 18.sp)

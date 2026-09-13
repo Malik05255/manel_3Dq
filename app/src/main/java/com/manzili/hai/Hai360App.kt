@@ -166,6 +166,9 @@ internal fun Hai360App() {
                 composable("3d") {
                     plan?.let { Production3DScreenV3(nav, it) } ?: LaunchedEffect(Unit) { nav.popBackStack() }
                 }
+                composable("walkthrough") {
+                    plan?.let { WalkthroughScreen(nav, it) } ?: LaunchedEffect(Unit) { nav.popBackStack() }
+                }
                 composable("library") {
                     Hai360LibraryScreen(nav, store) { id ->
                         openProject(id)
