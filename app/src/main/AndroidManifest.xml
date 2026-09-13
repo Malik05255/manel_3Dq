@@ -9,7 +9,7 @@
         android:theme="@style/Theme.ManziliHAI"
         android:supportsRtl="true">
         <activity
-            android:name=".ProductionMainActivity"
+            android:name=".FocusedMainActivity"
             android:exported="true"
             android:screenOrientation="unspecified">
             <intent-filter>
