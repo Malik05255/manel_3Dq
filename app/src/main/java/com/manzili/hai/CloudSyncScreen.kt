@@ -22,6 +22,7 @@ import com.manzili.hai.data.SupabaseOtpAuth
 import com.manzili.hai.model.FloorPlan
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CloudSyncScreen(
     nav: NavHostController,
