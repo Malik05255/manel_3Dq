@@ -39,6 +39,7 @@ object FloorplanParserEngine {
             plan = roomRecovery.plan
             notes += "استعيدت ${roomRecovery.inferredRooms} مساحة مغلقة من طوبولوجيا الجدران."
         }
+        plan = RoomNumericAssignmentEngine.apply(plan)
 
         val verified = PlanVerificationEngine.inspect(plan)
         return Result(verified.plan, notes.distinct())
