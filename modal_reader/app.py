@@ -1,31 +1,238 @@
 from __future__ import annotations
 
 import base64
-import io
+import json
 import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import Any
 
 import modal
 
 app = modal.App("manzili-hai-floorplan-reader")
 
-image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .pip_install(
-        "fastapi==0.115.12",
-        "pydantic==2.11.3",
-        "pillow==11.1.0",
-        "transformers==4.51.3",
-        "torch==2.6.0",
-        "torchvision==0.21.0",
-        "opencv-python-headless==4.11.0.86",
-        "numpy==2.2.4",
-    )
+reader_image = (
+    modal.Image.from_registry("pytorch/pytorch:2.3.1-cuda11.8-cudnn8-devel")
+    .apt_install("git", "build-essential", "libgl1", "libglib2.0-0")
+    .run_commands("git clone --depth 1 https://github.com/Cornell-VAILab/Raster2Seq.git /opt/raster2seq")
+    .workdir("/opt/raster2seq")
+    .run_commands("pip install -r requirements.txt")
+    .run_commands("cd models/ops && sh make.sh")
+    .run_commands("cd diff_ras && python setup.py build develop")
+    .pip_install("fastapi==0.115.12", "pydantic==2.11.3", "easyocr==1.7.2")
+    .run_commands("python -c \"from raster2seq_hub import download_checkpoint; print(download_checkpoint('raster2graph-512'))\"")
+    .run_commands("python -c \"import easyocr; easyocr.Reader(['ar','en'], gpu=False)\"")
 )
+
+_R2G_LABELS = {
+    0: ("unknown", "مساحة"),
+    1: ("living_room", "صالة"),
+    2: ("kitchen", "مطبخ"),
+    3: ("bedroom", "غرفة نوم"),
+    4: ("bathroom", "حمام"),
+    5: ("restroom", "دورة مياه"),
+    6: ("balcony", "شرفة"),
+    7: ("closet", "خزانة"),
+    8: ("corridor", "ممر"),
+    9: ("washing_room", "غرفة غسيل"),
+    10: ("service", "خدمات"),
+    11: ("outside", "خارجي"),
+}
+
+
+def _auth_header(value: str | None) -> None:
+    from fastapi import HTTPException
+
+    expected = os.getenv("MODAL_READER_TOKEN", "").strip()
+    supplied = value[7:].strip() if value and value.startswith("Bearer ") else ""
+    if not expected or supplied != expected:
+        raise HTTPException(401, "invalid reader token")
+
+
+def _decode_image(payload: dict[str, Any]) -> bytes:
+    from fastapi import HTTPException
+
+    raw = str(payload.get("image_base64") or "").split(",", 1)[-1]
+    try:
+        data = base64.b64decode(raw, validate=True)
+    except Exception as exc:
+        raise HTTPException(400, "invalid image") from exc
+    if len(data) < 128:
+        raise HTTPException(400, "image is empty")
+    return data
+
+
+def _run_raster2seq(image_bytes: bytes) -> list[dict[str, Any]]:
+    with tempfile.TemporaryDirectory(prefix="hai-r2s-") as temp:
+        root = Path(temp)
+        input_dir = root / "input"
+        output_dir = root / "output"
+        input_dir.mkdir()
+        output_dir.mkdir()
+        image_path = input_dir / "plan.png"
+
+        from PIL import Image
+        import io
+
+        Image.open(io.BytesIO(image_bytes)).convert("RGB").save(image_path)
+        command = [
+            "python",
+            "predict.py",
+            "--dataset_name=r2g",
+            f"--dataset_root={input_dir}",
+            "--checkpoint=hf:raster2graph-512",
+            f"--output_dir={output_dir}",
+            "--semantic_classes=13",
+            "--input_channels=3",
+            "--poly2seq",
+            "--image_size=512",
+            "--seq_len=512",
+            "--num_bins=32",
+            "--disable_poly_refine",
+            "--dec_attn_concat_src",
+            "--ema4eval",
+            "--use_anchor",
+            "--per_token_sem_loss",
+            "--save_pred",
+            "--batch_size=1",
+            "--num_workers=0",
+        ]
+        completed = subprocess.run(
+            command,
+            cwd="/opt/raster2seq",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=240,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError("Raster2Seq inference failed: " + completed.stdout[-1800:])
+
+        candidates = list(output_dir.rglob("plan.json"))
+        if not candidates:
+            raise RuntimeError("Raster2Seq produced no polygon JSON")
+        result = json.loads(candidates[0].read_text())
+        if not isinstance(result, list):
+            raise RuntimeError("Raster2Seq polygon JSON is invalid")
+        return result
+
+
+def _normalize_polygon(segmentation: Any) -> list[dict[str, float]]:
+    if not isinstance(segmentation, list) or len(segmentation) < 3:
+        return []
+    points: list[tuple[float, float]] = []
+    for point in segmentation:
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            continue
+        try:
+            points.append((float(point[0]), float(point[1])))
+        except (TypeError, ValueError):
+            continue
+    if len(points) < 3:
+        return []
+    max_coord = max(max(abs(x), abs(y)) for x, y in points)
+    denom = 512.0 if max_coord <= 520.0 else max_coord
+    return [
+        {"x": max(0.0, min(100.0, x / denom * 100.0)), "y": max(0.0, min(100.0, y / denom * 100.0))}
+        for x, y in points
+    ]
+
+
+def _rooms(predictions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rooms: list[dict[str, Any]] = []
+    for index, item in enumerate(predictions):
+        polygon = _normalize_polygon(item.get("segmentation"))
+        if len(polygon) < 3:
+            continue
+        cls = int(item.get("category_id", 0) or 0)
+        room_type, name = _R2G_LABELS.get(cls, ("unknown", "مساحة"))
+        if room_type == "outside":
+            continue
+        xs = [p["x"] for p in polygon]
+        ys = [p["y"] for p in polygon]
+        x, y = min(xs), min(ys)
+        width, height = max(xs) - x, max(ys) - y
+        if width < 0.5 or height < 0.5:
+            continue
+        rooms.append(
+            {
+                "id": f"r2s-room-{index}",
+                "name": name,
+                "type": room_type,
+                "x": x,
+                "y": y,
+                "width": width,
+                "height": height,
+                "area_m2": 0.0,
+                "confidence": 0,
+                "polygon": polygon,
+            }
+        )
+    return rooms
+
+
+def _walls_from_rooms(rooms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    edges: dict[tuple[int, int, int, int], dict[str, Any]] = {}
+    for room in rooms:
+        polygon = room.get("polygon") or []
+        for i, start in enumerate(polygon):
+            end = polygon[(i + 1) % len(polygon)]
+            ax, ay = float(start["x"]), float(start["y"])
+            bx, by = float(end["x"]), float(end["y"])
+            if abs(ax - bx) + abs(ay - by) < 0.35:
+                continue
+            qa = (round(ax * 5), round(ay * 5))
+            qb = (round(bx * 5), round(by * 5))
+            if qb < qa:
+                qa, qb = qb, qa
+                ax, ay, bx, by = bx, by, ax, ay
+            key = (qa[0], qa[1], qb[0], qb[1])
+            if key not in edges:
+                edges[key] = {
+                    "id": f"r2s-wall-{len(edges)}",
+                    "start": {"x": ax, "y": ay},
+                    "end": {"x": bx, "y": by},
+                    "kind": "raster2seq-room-boundary",
+                    "confidence": 0,
+                }
+    return list(edges.values())
+
+
+def _cloud_ocr(image_bytes: bytes) -> list[dict[str, Any]]:
+    import cv2
+    import easyocr
+    import numpy as np
+
+    image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        return []
+    h, w = image.shape[:2]
+    reader = easyocr.Reader(["ar", "en"], gpu=True, verbose=False)
+    output: list[dict[str, Any]] = []
+    for box, text, confidence in reader.readtext(image, detail=1, paragraph=False):
+        value = str(text).strip()
+        if not value:
+            continue
+        xs = [float(p[0]) for p in box]
+        ys = [float(p[1]) for p in box]
+        output.append(
+            {
+                "text": value,
+                "left_pct": min(xs) / max(w, 1) * 100.0,
+                "top_pct": min(ys) / max(h, 1) * 100.0,
+                "right_pct": max(xs) / max(w, 1) * 100.0,
+                "bottom_pct": max(ys) / max(h, 1) * 100.0,
+                "confidence": max(0, min(100, int(round(float(confidence) * 100.0)))),
+            }
+        )
+    return output[:500]
 
 
 @app.function(
-    image=image,
+    image=reader_image,
     gpu="T4",
     timeout=300,
     scaledown_window=60,
@@ -33,80 +240,31 @@ image = (
 )
 @modal.fastapi_endpoint(method="POST")
 def parse_floorplan(payload: dict[str, Any], authorization: str | None = None) -> dict[str, Any]:
-    """Single cloud inference entrypoint.
-
-    The Android app performs no OCR/vision inference. This container is the only
-    floor-plan reader. Replace `_run_model` with the selected trained checkpoint
-    without changing the mobile contract.
-    """
-    expected = os.getenv("MODAL_READER_TOKEN", "").strip()
-    supplied = ""
-    if authorization and authorization.startswith("Bearer "):
-        supplied = authorization[7:].strip()
-    if not expected or supplied != expected:
-        from fastapi import HTTPException
-
-        raise HTTPException(401, "invalid reader token")
-
-    image_base64 = str(payload.get("image_base64") or "")
-    page_index = int(payload.get("page_index") or 0)
-    raw = image_base64.split(",", 1)[-1]
-    try:
-        image_bytes = base64.b64decode(raw, validate=True)
-    except Exception as exc:
-        from fastapi import HTTPException
-
-        raise HTTPException(400, "invalid image") from exc
-
-    result = _run_model(image_bytes)
-    result["page_index"] = page_index
-    result["model_used"] = result.get("model_used") or "modal-cloud-reader"
-    result["reader_path"] = "modal-cloud-only"
-    result["local_inference"] = False
-    return result
-
-
-def _run_model(image_bytes: bytes) -> dict[str, Any]:
-    """Cloud-only model boundary.
-
-    This initial deployment contract intentionally fails closed until a selected
-    floor-plan checkpoint is configured. There is no local/device fallback and no
-    fabricated geometry. Configure READER_MODEL_ID in the Modal secret/environment
-    after choosing the model to activate inference.
-    """
-    model_id = os.getenv("READER_MODEL_ID", "").strip()
-    if not model_id:
-        from fastapi import HTTPException
-
-        raise HTTPException(503, "READER_MODEL_ID is not configured")
-
-    # Keep decoding here in the cloud so Android remains transport/display only.
-    from PIL import Image
-
-    plan_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-
-    # The production model adapter is intentionally isolated here. A checkpoint
-    # that returns structural graph JSON can be swapped in without any mobile change.
-    adapter = _load_adapter(model_id)
-    result = adapter(plan_image)
-    if not isinstance(result, dict):
-        from fastapi import HTTPException
-
-        raise HTTPException(502, "reader model returned invalid output")
-    return result
-
-
-def _load_adapter(model_id: str):
-    """Load the configured cloud reader.
-
-    Supported production adapters are added explicitly rather than silently
-    falling back to on-device or heuristic readers.
-    """
-    if model_id == "stub":
-        def _stub(_image):
-            from fastapi import HTTPException
-
-            raise HTTPException(503, "stub reader is disabled in production")
-        return _stub
-
-    raise RuntimeError(f"unsupported READER_MODEL_ID: {model_id}")
+    _auth_header(authorization)
+    image_bytes = _decode_image(payload)
+    predictions = _run_raster2seq(image_bytes)
+    rooms = _rooms(predictions)
+    walls = _walls_from_rooms(rooms)
+    ocr_lines = _cloud_ocr(image_bytes)
+    return {
+        "page_index": int(payload.get("page_index") or 0),
+        "model_used": "modal:raster2seq-raster2graph-512+easyocr-ar-en",
+        "confidence": 0,
+        "rooms": rooms,
+        "walls": walls,
+        "openings": [],
+        "ocr_lines": ocr_lines,
+        "quality": {
+            "geometry": 0,
+            "ocr": int(sum(x["confidence"] for x in ocr_lines) / len(ocr_lines)) if ocr_lines else 0,
+            "scale_evidence": 0,
+            "wall_topology": 0,
+            "dimension_evidence": 0,
+        },
+        "warnings": [
+            "Cloud reader uses Raster2Seq room polygons and cloud OCR; confidence is intentionally uncalibrated.",
+            "Door/window extraction is not enabled in this first cloud-only reader revision.",
+        ],
+        "reader_path": "modal-cloud-only",
+        "local_inference": False,
+    }
