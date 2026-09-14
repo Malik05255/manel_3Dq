@@ -24,11 +24,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.manzili.hai.ai.MultiPageHaiPlanAnalyzer
-import com.manzili.hai.engine.*
+import com.manzili.hai.engine.MultiFloorGeometryEngine
+import com.manzili.hai.engine.RemoteFloorplanEvidenceClient
+import com.manzili.hai.engine.SaudiProjectTypeEngine
 import com.manzili.hai.model.FloorPlan
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -41,9 +40,6 @@ internal fun Hai360ImportScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val vision = remember { MultiPageHaiPlanAnalyzer(context) }
-    val localOcr = remember { AdaptivePlanOcrEngine(context) }
-    val raster = remember { RasterFloorplanParserEngine(context) }
     val remote = remember { RemoteFloorplanEvidenceClient(context) }
 
     var source by remember(initialSource) { mutableStateOf(initialSource) }
@@ -58,8 +54,8 @@ internal fun Hai360ImportScreen(
             return@LaunchedEffect
         }
         while (busy) {
-            delay(850)
-            phase = (phase + 1).coerceAtMost(3)
+            delay(900)
+            phase = (phase + 1).coerceAtMost(2)
         }
     }
 
@@ -122,16 +118,16 @@ internal fun Hai360ImportScreen(
                             }
                         }
                         Spacer(Modifier.height(18.dp))
-                        Text(if (source == null) "اختر المخطط" else "جاهز للمسح", color = H360Ink, fontWeight = FontWeight.Black, fontSize = 20.sp)
+                        Text(if (source == null) "اختر المخطط" else "جاهز للرفع", color = H360Ink, fontWeight = FontWeight.Black, fontSize = 20.sp)
                         if (source != null) {
                             Spacer(Modifier.height(5.dp))
                             Text(source?.lastPathSegment.orEmpty(), color = H360Muted, fontSize = 9.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                     Row(Modifier.align(Alignment.BottomCenter), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        ScannerTag("سحابي", Icons.Rounded.CloudUpload)
                         ScannerTag("غرف", Icons.Rounded.GridView)
                         ScannerTag("جدران", Icons.Rounded.ViewWeek)
-                        ScannerTag("أرقام", Icons.Rounded.Pin)
                         ScannerTag("فتحات", Icons.Rounded.DoorFront)
                     }
                 }
@@ -143,72 +139,31 @@ internal fun Hai360ImportScreen(
                     Row(Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.ErrorOutline, null, tint = H360Danger, modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(7.dp))
-                        Text(it, color = H360Ink, fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(it, color = H360Ink, fontSize = 10.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
 
             Spacer(Modifier.height(12.dp))
             H360PrimaryButton(
-                text = "مسح المخطط",
+                text = "تحليل المخطط سحابيًا",
                 modifier = Modifier.fillMaxWidth(),
                 enabled = source != null && !busy,
-                icon = Icons.Rounded.CenterFocusStrong
+                icon = Icons.Rounded.CloudUpload
             ) {
                 val uri = source ?: return@H360PrimaryButton
                 busy = true
                 error = null
                 scope.launch {
                     runCatching {
-                        coroutineScope {
-                            val visionJob = async {
-                                if (vision.available) runCatching { vision.analyze(uri, maxPdfPages = 8, projectType = type) }
-                                else Result.success(null)
-                            }
-                            val ocrJob = async { runCatching { localOcr.readSpatial(uri, maxPdfPages = 8) } }
-                            val rasterJob = async { runCatching { raster.analyze(uri, maxPdfPages = 6) } }
-                            val remoteJob = async {
-                                if (remote.available) runCatching { remote.analyze(uri, maxPdfPages = 8) }
-                                else Result.success(null)
-                            }
-
-                            val visionAttempt = visionJob.await()
-                            val ocrAttempt = ocrJob.await()
-                            val rasterAttempt = rasterJob.await()
-                            val remoteAttempt = remoteJob.await()
-
-                            val visionPlan = visionAttempt.getOrNull()
-                            val ocr = ocrAttempt.getOrNull()
-                            val rasterResult = rasterAttempt.getOrNull()
-                            val remoteResult = remoteAttempt.getOrNull()
-
-                            if (visionPlan == null && rasterResult == null && remoteResult == null) {
-                                error("تعذر استخراج هندسة من الملف")
-                            }
-
-                            val failures = buildList {
-                                visionAttempt.exceptionOrNull()?.message?.let { add("Vision: ${it.take(100)}") }
-                                ocrAttempt.exceptionOrNull()?.message?.let { add("OCR: ${it.take(100)}") }
-                                rasterAttempt.exceptionOrNull()?.message?.let { add("Raster: ${it.take(100)}") }
-                                remoteAttempt.exceptionOrNull()?.message?.let { add("Deep: ${it.take(100)}") }
-                            }
-
-                            val base = visionPlan ?: FloorPlan(title = "مخطط مستورد")
-                            val evidenceLines = ocr?.lines.orEmpty() + remoteResult?.ocrLines.orEmpty()
-                            val dims = DimensionEvidenceEngine.extractSpatial(evidenceLines)
-                            val numbers = PlanNumberEvidenceEngine.extract(evidenceLines)
-                            val enriched = base.copy(
-                                dimensions = (base.dimensions + dims + numbers).distinctBy { "${it.pageIndex}:${it.id}:${"%.3f".format(it.valueM)}" },
-                                uncertainties = (base.uncertainties + failures).distinct()
-                            )
-
-                            val fused = MultiPageEvidenceFusionEngine.apply(enriched, remoteResult?.pages.orEmpty())
-                            val refined = FloorplanParserEngine.refine(fused, rasterResult?.primaryWalls.orEmpty()).plan
-                            val typed = SaudiProjectTypeEngine.apply(refined, type)
-                            MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(typed))
-                        }
+                        if (!remote.available) error("خدمة القراءة السحابية غير مهيأة")
+                        val result = remote.analyze(uri, maxPdfPages = 8)
+                            ?: error("لم تعد خدمة القراءة السحابية نتيجة")
+                        val plan = result.toFloorPlan(title = "مخطط مستورد")
+                        val typed = SaudiProjectTypeEngine.apply(plan, type)
+                        MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(typed))
                     }.onSuccess { onAnalyzed(it, type) }
-                        .onFailure { error = it.message ?: "تعذر تحليل المخطط" }
+                        .onFailure { error = it.message ?: "تعذر تحليل المخطط سحابيًا" }
                     busy = false
                 }
             }
@@ -221,17 +176,17 @@ internal fun Hai360ImportScreen(
                     Box(contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = H360CyanDeep, trackColor = H360Cyan, strokeWidth = 4.dp, modifier = Modifier.size(92.dp))
                         Icon(
-                            listOf(Icons.Rounded.DocumentScanner, Icons.Rounded.Architecture, Icons.Rounded.Pin, Icons.Rounded.AutoAwesome)[phase],
+                            listOf(Icons.Rounded.CloudUpload, Icons.Rounded.Architecture, Icons.Rounded.AutoAwesome)[phase],
                             null,
                             tint = H360CyanDeep,
                             modifier = Modifier.size(30.dp)
                         )
                     }
                     Spacer(Modifier.height(24.dp))
-                    Text(listOf("تهيئة", "هندسة", "أرقام", "دمج")[phase], color = H360Ink, fontSize = 18.sp, fontWeight = FontWeight.Black)
+                    Text(listOf("رفع المخطط", "قراءة سحابية", "استلام النتيجة")[phase], color = H360Ink, fontSize = 18.sp, fontWeight = FontWeight.Black)
                     Spacer(Modifier.height(18.dp))
                     LinearProgressIndicator(
-                        progress = { (phase + 1) / 4f },
+                        progress = { (phase + 1) / 3f },
                         color = H360CyanDeep,
                         trackColor = H360Cyan,
                         modifier = Modifier.fillMaxWidth().height(5.dp)
