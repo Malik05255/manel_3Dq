@@ -43,6 +43,8 @@ jobs:
           echo "::add-mask::$CLEAN_SECRET"
           printf 'MODAL_TOKEN_ID=%s\n' "$CLEAN_ID" >> "$GITHUB_ENV"
           printf 'MODAL_TOKEN_SECRET=%s\n' "$CLEAN_SECRET" >> "$GITHUB_ENV"
+      - name: Run cloud geometry regression tests
+        run: python -m unittest modal_reader.tests.test_polygon_sanitize modal_reader.tests.test_metric_evidence
       - name: Patch Raster2Seq dependency conflict
         run: python scripts/patch_modal_reader_dependencies.py
       - name: Install Modal CLI and deploy-time imports
