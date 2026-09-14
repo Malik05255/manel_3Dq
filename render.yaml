@@ -12,7 +12,7 @@ services:
       - key: READER_PROVIDER_TOKEN
         sync: false
       - key: READER_PROVIDER_NAME
-        value: hai-reader-v2
+        value: hai-hybrid-reader-v2
       - key: MODAL_READER_URL
         sync: false
       - key: MODAL_READER_TOKEN
@@ -33,6 +33,25 @@ services:
         sync: false
       - key: RENDER_WORKER_TOKEN
         sync: false
+
+  - type: web
+    name: manzili-hai-reader-v2
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile.reader
+    dockerContext: .
+    healthCheckPath: /readyz
+    autoDeployTrigger: commit
+    envVars:
+      - key: READER_SERVICE_TOKEN
+        sync: false
+      - key: ROBOFLOW_API_KEY
+        sync: false
+      - key: ROBOFLOW_MODEL_IDS
+        sync: false
+      - key: FLOORPLAN_TILED_INFERENCE
+        value: "true"
+      - key: FLOORPLAN_MAX_TILES
+        value: "12"
 
   - type: web
     name: manzili-hai-blender-worker
