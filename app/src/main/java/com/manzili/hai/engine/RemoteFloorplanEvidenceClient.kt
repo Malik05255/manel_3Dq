@@ -193,7 +193,9 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
                 continue
             }
 
-            val root = runCatching { JSONObject(response.body) }.getOrElse {
+            val root = try {
+                JSONObject(response.body)
+            } catch (_: Exception) {
                 lastDetail = "استجابة خدمة القراءة غير صالحة"
                 continue
             }
