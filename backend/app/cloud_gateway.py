@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import hmac
 import json
 import os
@@ -9,13 +10,14 @@ import time
 from typing import Any
 
 import httpx
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from .geometry import canonicalize_plan
 
-app = FastAPI(title="Manzili HAI Cloud Gateway", version="0.71.0")
+app = FastAPI(title="Manzili HAI Cloud Gateway", version="0.72.0")
 
 
 class ParseRequest(BaseModel):
@@ -50,35 +52,56 @@ def _supabase_config() -> tuple[str, str]:
     )
 
 
-def _modal_config() -> tuple[str, str, str]:
+def _modal_config() -> tuple[str, str]:
     return (
         os.getenv("MODAL_READER_URL", "").rstrip("/"),
         os.getenv("MODAL_READER_TOKEN", "").strip(),
-        os.getenv("MODAL_GATEWAY_SIGNING_KEY", "").strip(),
     )
-
-
-def _modal_ready() -> bool:
-    url, proxy_token, signing_key = _modal_config()
-    return bool(url and (proxy_token or signing_key))
 
 
 def _b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
+def _gateway_private_key() -> Ed25519PrivateKey | None:
+    explicit = os.getenv("MODAL_GATEWAY_SIGNING_KEY", "").strip()
+    if explicit:
+        try:
+            return Ed25519PrivateKey.from_private_bytes(_b64url_decode(explicit))
+        except Exception as exc:
+            raise HTTPException(503, "Modal gateway signing key is invalid") from exc
+    service_secret = os.getenv("MANZILI_API_TOKEN", "").strip()
+    if not service_secret:
+        return None
+    seed = hashlib.sha256(("manzili-modal-gateway-v1:" + service_secret).encode("utf-8")).digest()
+    return Ed25519PrivateKey.from_private_bytes(seed)
+
+
+def _gateway_public_key_b64() -> str | None:
+    private_key = _gateway_private_key()
+    if private_key is None:
+        return None
+    raw = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _modal_ready() -> bool:
+    url, proxy_token = _modal_config()
+    return bool(url and (proxy_token or _gateway_private_key() is not None))
+
+
 def _modal_request_headers(body: bytes) -> dict[str, str]:
-    _, proxy_token, signing_key = _modal_config()
+    _, proxy_token = _modal_config()
     headers = {"Content-Type": "application/json"}
     if proxy_token:
         headers["Authorization"] = f"Bearer {proxy_token}"
         return headers
-    if not signing_key:
+    private_key = _gateway_private_key()
+    if private_key is None:
         raise HTTPException(503, "Modal reader authentication is not configured")
-    try:
-        private_key = Ed25519PrivateKey.from_private_bytes(_b64url_decode(signing_key))
-    except Exception as exc:
-        raise HTTPException(503, "Modal gateway signing key is invalid") from exc
     timestamp = str(int(time.time()))
     nonce = secrets.token_urlsafe(16)
     message = timestamp.encode("ascii") + b"." + nonce.encode("ascii") + b"." + body
@@ -217,7 +240,7 @@ async def ai_chat(payload: dict[str, Any], _: dict[str, Any] = Depends(backend_p
 
 @app.post("/v1/parse-floorplan")
 async def parse_floorplan(payload: ParseRequest, _: dict[str, Any] = Depends(backend_principal)) -> dict[str, Any]:
-    modal_url, _, _ = _modal_config()
+    modal_url, _ = _modal_config()
     if not _modal_ready():
         raise HTTPException(503, "Modal reader is not configured")
     body = _modal_body(payload)
