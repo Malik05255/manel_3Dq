@@ -9,6 +9,7 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .cubicasa_model import model_status
+from .ocr_reader import cloud_ocr_engine_name
 from .parser_v2 import parse_floorplan
 from .roboflow_parser import roboflow_status
 
@@ -42,7 +43,7 @@ async def health() -> dict[str, Any]:
         "roboflow_configured": bool(roboflow.get("configured")),
         "local_segmentation_configured": bool(local.get("configured")),
         "strategy": "roboflow-first+opencv-verifier+geometry-quality-gates",
-        "ocr": "optional-easyocr-when-installed",
+        "ocr": cloud_ocr_engine_name(),
     }
 
 
