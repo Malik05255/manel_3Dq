@@ -5,6 +5,7 @@ on:
     branches: [ main, 'codex/**', 'android-light-rebuild' ]
     paths:
       - 'backend/**'
+      - 'modal_reader/**'
       - 'render.yaml'
       - '.github/workflows/backend.yml'
   workflow_dispatch:
@@ -21,30 +22,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install backend dependencies
-        working-directory: backend
-        run: pip install -r requirements-dev.txt
-      - name: Compile backend
-        run: python -m compileall backend/app backend/scripts backend/tests
-      - name: Run backend regression tests
-        working-directory: backend
-        run: PYTHONPATH="$PWD" pytest -q
-      - name: Import FastAPI application
+      - name: Install cloud gateway dependencies
+        run: pip install -r backend/requirements-gateway.txt
+      - name: Compile cloud surfaces
+        run: python -m compileall backend/app/cloud_gateway.py modal_reader/app.py
+      - name: Import cloud gateway
         working-directory: backend
         run: |
-          python -c "from app.public_main import app; assert app.title == 'Manzili HAI Backend'; assert app.version == '0.64.0'"
-      - name: Validate deployment blueprint
+          python -c "from app.cloud_gateway import app; assert app.title == 'Manzili HAI Cloud Gateway'; assert app.version == '0.70.0'"
+      - name: Validate cloud-only deployment blueprint
+        shell: bash
         run: |
           set -euo pipefail
-          grep -q 'runtime: python' render.yaml
-          grep -q 'healthCheckPath: /readyz' render.yaml
-          grep -q 'pip install -r backend/requirements-ml-cpu.txt' render.yaml
-          grep -q 'python backend/scripts/fetch_floorplan_model.py' render.yaml
-          grep -q 'cd backend && uvicorn app.public_main:app' render.yaml
-          grep -q 'FLOORPLAN_SAFETENSORS_MODEL' render.yaml
-          grep -q 'MANZILI_API_TOKEN' render.yaml
-          grep -q 'SUPABASE_URL' render.yaml
-          grep -q 'SUPABASE_PUBLISHABLE_KEY' render.yaml
-          grep -q 'AI_ENDPOINT' render.yaml
-          grep -q 'AI_MODEL_DEFAULT' render.yaml
-          grep -q 'AI_API_KEY' render.yaml
+          grep -q 'pip install -r backend/requirements-gateway.txt' render.yaml
+          grep -q 'uvicorn app.cloud_gateway:app' render.yaml
+          grep -q 'MODAL_READER_URL' render.yaml
+          grep -q 'MODAL_READER_TOKEN' render.yaml
+          ! grep -q 'requirements-ml-cpu.txt' render.yaml
+          ! grep -q 'fetch_floorplan_model.py' render.yaml
+          ! grep -q 'FLOORPLAN_SAFETENSORS_MODEL' render.yaml
+          ! grep -q 'ROBOFLOW_' render.yaml
+      - name: Verify no local production inference
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'local_inference.*False' backend/app/cloud_gateway.py
+          grep -q 'Raster2Seq' modal_reader/app.py
