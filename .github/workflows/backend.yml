@@ -25,19 +25,19 @@ jobs:
       - name: Install cloud gateway dependencies
         run: pip install -r backend/requirements-gateway.txt
       - name: Compile cloud surfaces
-        run: python -m compileall backend/app/cloud_gateway.py modal_reader
+        run: python -m compileall backend/app/cloud_gateway.py backend/app/cloud_public_gateway.py modal_reader
       - name: Run cloud metric evidence regressions
         run: python -m unittest modal_reader.tests.test_metric_evidence
       - name: Import cloud gateway
         working-directory: backend
         run: |
-          python -c "from app.cloud_gateway import app; assert app.title == 'Manzili HAI Cloud Gateway'; assert app.version == '0.70.0'"
+          python -c "from app.cloud_public_gateway import app; assert app.title == 'Manzili HAI Cloud Gateway'; assert app.version == '0.70.0'; assert any(getattr(r, 'path', '') == '/v1/public/parse-floorplan' for r in app.routes)"
       - name: Validate cloud-only deployment blueprint
         shell: bash
         run: |
           set -euo pipefail
           grep -q 'pip install -r backend/requirements-gateway.txt' render.yaml
-          grep -q 'uvicorn app.cloud_gateway:app' render.yaml
+          grep -q 'uvicorn app.cloud_public_gateway:app' render.yaml
           grep -q 'MODAL_READER_URL' render.yaml
           grep -q 'MODAL_READER_TOKEN' render.yaml
           ! grep -q 'requirements-ml-cpu.txt' render.yaml
@@ -49,6 +49,8 @@ jobs:
         run: |
           set -euo pipefail
           grep -q 'local_inference.*False' backend/app/cloud_gateway.py
+          grep -q 'local_inference.*False' backend/app/cloud_public_gateway.py
+          grep -q 'android-cloud-only-v1' backend/app/cloud_public_gateway.py
           grep -q 'raster2graph-512' modal_reader/app.py
           grep -q 'cubicasa5k' modal_reader/app.py
           grep -q '_CC5K_OPENING_LABELS' modal_reader/app.py
