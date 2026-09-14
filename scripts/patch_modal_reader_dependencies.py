@@ -8,6 +8,10 @@ replacements = {
         'import modal\n'
         'from fastapi import Header, HTTPException\n'
     ),
+    'from modal_reader.metric_evidence import metric_evidence\n': (
+        'from modal_reader.metric_evidence import metric_evidence\n'
+        'from modal_reader.polygon_sanitize import R2G_EMPTY_CLASS, sanitize_polygon, wall_edges_from_polygon\n'
+    ),
     '.run_commands("pip install -r requirements.txt")': (
         '.run_commands("sed -i \'s/^numpy==1.26.4$/numpy==1.24.4/; '
         's/^opencv-python$/opencv-python-headless==4.8.1.78/\' requirements.txt '
@@ -31,6 +35,51 @@ replacements = {
         '"plotly==5.24.1"'
         ')'
     ),
+    '        source_x = (padded_x - left) / max(scale, 1e-6)\n'
+    '        source_y = (padded_y - top) / max(scale, 1e-6)\n'
+    '        points.append(\n': (
+        '        tolerance = max(2.0, model_size * 0.015)\n'
+        '        if (\n'
+        '            padded_x < left - tolerance\n'
+        '            or padded_x > left + resized_w + tolerance\n'
+        '            or padded_y < top - tolerance\n'
+        '            or padded_y > top + resized_h + tolerance\n'
+        '        ):\n'
+        '            continue\n'
+        '        source_x = (padded_x - left) / max(scale, 1e-6)\n'
+        '        source_y = (padded_y - top) / max(scale, 1e-6)\n'
+        '        points.append(\n'
+    ),
+    '    for index, item in enumerate(predictions):\n'
+    '        polygon = _normalize_polygon(item.get("segmentation"), source_w, source_h, _R2G_SIZE)\n'
+    '        if len(polygon) < 3:\n'
+    '            continue\n'
+    '        cls = int(item.get("category_id", 0) or 0)\n'
+    '        room_type, name = _R2G_LABELS.get(cls, ("unknown", "مساحة"))\n'
+    '        if room_type == "outside":\n'
+    '            continue\n': (
+        '    for index, item in enumerate(predictions):\n'
+        '        cls = int(item.get("category_id", 0) or 0)\n'
+        '        if cls == R2G_EMPTY_CLASS:\n'
+        '            continue\n'
+        '        room_type, name = _R2G_LABELS.get(cls, ("unknown", "مساحة"))\n'
+        '        if room_type == "outside":\n'
+        '            continue\n'
+        '        raw_polygon = _normalize_polygon(item.get("segmentation"), source_w, source_h, _R2G_SIZE)\n'
+        '        polygon, geometry_status = sanitize_polygon(raw_polygon)\n'
+        '        if len(polygon) < 3:\n'
+        '            continue\n'
+    ),
+    '                "confidence": 0,\n'
+    '                "polygon": polygon,\n': (
+        '                "confidence": 0,\n'
+        '                "polygon": polygon,\n'
+        '                "geometry_status": geometry_status,\n'
+    ),
+    '        for i, start in enumerate(polygon):\n'
+    '            end = polygon[(i + 1) % len(polygon)]\n': (
+        '        for start, end in wall_edges_from_polygon(polygon):\n'
+    ),
     '    h, w = image.shape[:2]\n'
     '    reader = easyocr.Reader(["ar", "en"], gpu=True, verbose=False)\n': (
         '    h, w = image.shape[:2]\n'
@@ -53,6 +102,12 @@ replacements = {
     ),
     '    if opening_error:\n'
     '        warnings.append("Door/window cloud pass failed: " + opening_error)\n': (
+        '    repaired_count = sum(1 for room in rooms if room.get("geometry_status") == "repaired")\n'
+        '    fallback_count = sum(1 for room in rooms if room.get("geometry_status") == "bbox-fallback")\n'
+        '    if repaired_count:\n'
+        '        warnings.append(f"Repaired {repaired_count} self-crossing room polygon(s) before wall extraction.")\n'
+        '    if fallback_count:\n'
+        '        warnings.append(f"Replaced {fallback_count} unusable room polygon(s) with conservative bounding boxes.")\n'
         '    if opening_error:\n'
         '        warnings.append("Door/window cloud pass failed: " + opening_error)\n'
         '    if ocr_error:\n'
