@@ -24,6 +24,7 @@ from .parser_quality import (
     verification_scores,
 )
 from .roboflow_parser import merge_room_evidence, roboflow_floorplan
+from .source_vectorizer import vectorize_source_walls
 from .wall_support import validate_wall_image_support
 
 
@@ -88,10 +89,13 @@ def parse_floorplan(
     *,
     external_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Fuse independent evidence, then make source-image geometry the final authority.
+    """Read the source plan first, then use cloud/model outputs as supporting evidence.
 
-    External legacy/Modal output is accepted only as evidence. It never bypasses the
-    wall-support and consistency gates that protect review/3D from invented geometry.
+    The previous hybrid path merged wall coordinates from several readers into one graph.
+    That can create a Frankenstein floor plan even when every individual reader is only
+    slightly wrong. V2.2 reverses the authority: source pixels are vectorised first and,
+    when they yield enough structural walls, those coordinates become the final wall graph.
+    Legacy/Roboflow/local outputs still help with rooms, labels, openings and confidence.
     """
     local = legacy_parse_floorplan(image_base64)
     roboflow = roboflow_floorplan(image_base64)
@@ -123,21 +127,46 @@ def parse_floorplan(
     model_parts.append(f"local:{local_model}")
     model_used = "+".join(model_parts)
 
-    wall_mask = architectural_wall_mask(image)
-    curve_confidence = 84 if roboflow_used else (82 if external_used or "cubicasa" in local_model else 73)
-    curve_walls = extract_curve_segments(wall_mask, confidence=curve_confidence)
+    # Independent source-pixel vectorisation is now the first wall authority.
+    source_walls, source_meta = vectorize_source_walls(image)
+    source_authoritative = bool(source_meta.get("authoritative"))
+
     precision_confidence = 86 if roboflow_used else (83 if external_used or "cubicasa" in local_model else 76)
     precision_walls = precision_wall_evidence(image, confidence=precision_confidence)
 
     external_walls = _dict_items(external, "walls")
-    walls = merge_wall_evidence(
-        _dict_items(roboflow, "walls")
-        + external_walls
-        + _dict_items(local, "walls")
-        + precision_walls
-        + curve_walls
-    )
-    walls, rejected_walls = validate_wall_image_support(image, walls)
+    rejected_walls: list[dict[str, Any]] = []
+    curve_walls: list[dict[str, Any]] = []
+    if source_authoritative:
+        # Crucial rule: do not merge cloud/model coordinates into a source wall graph.
+        # They are evidence only. This removes the long crossing lines and duplicate wall
+        # edges seen in real HAI uploads while preserving genuine source geometry.
+        walls = source_walls
+        suppressed = (
+            _dict_items(roboflow, "walls")
+            + external_walls
+            + _dict_items(local, "walls")
+        )
+        for item in suppressed[:240]:
+            copy = dict(item)
+            copy["rejection_reason"] = "source-first-authority"
+            rejected_walls.append(copy)
+    else:
+        # Fallback for sketches or unusual monochrome plans where direct vectorisation is
+        # too sparse. Even here, every candidate must survive source-image support gates.
+        wall_mask = architectural_wall_mask(image)
+        curve_confidence = 84 if roboflow_used else (82 if external_used or "cubicasa" in local_model else 73)
+        curve_walls = extract_curve_segments(wall_mask, confidence=curve_confidence)
+        walls = merge_wall_evidence(
+            source_walls
+            + _dict_items(roboflow, "walls")
+            + external_walls
+            + _dict_items(local, "walls")
+            + precision_walls
+            + curve_walls
+        )
+        walls, rejected_by_support = validate_wall_image_support(image, walls)
+        rejected_walls.extend(rejected_by_support)
 
     primary_rooms = _dict_items(roboflow, "rooms")
     external_rooms = _dict_items(external, "rooms")
@@ -175,6 +204,11 @@ def parse_floorplan(
         ]
         if rf_confidences:
             base_confidence = max(base_confidence, min(90, int(sum(rf_confidences) / len(rf_confidences))))
+    if source_authoritative:
+        source_support = [float(item.get("image_support", 0.0)) for item in walls]
+        if source_support:
+            source_confidence = int(round(min(94.0, 76.0 + (sum(source_support) / len(source_support)) * 18.0)))
+            base_confidence = max(base_confidence, source_confidence)
 
     quality = verification_scores(
         model_used=model_used,
@@ -198,27 +232,32 @@ def parse_floorplan(
         + list(external.get("warnings") or [])
         + list(roboflow.get("warnings") or [])
     )
+    if source_authoritative:
+        warnings.append(
+            f"Source-first wall vectorisation is authoritative ({source_meta.get('mode')}, {len(walls)} wall segment(s)); "
+            "cloud/model wall coordinates were suppressed instead of merged."
+        )
     if external_used:
         warnings.append(
-            "Legacy cloud parsing was used only as secondary evidence; HAI Reader V2 revalidated geometry against the source image."
+            "Legacy cloud parsing was used only as secondary evidence for rooms/text/openings; it cannot override source wall coordinates."
         )
     if rejected_walls:
         warnings.append(
-            f"Source-image validation rejected {len(rejected_walls)} unsupported long wall segment(s) before review/3D."
+            f"HAI suppressed {len(rejected_walls)} non-authoritative or unsupported wall candidate(s) before review/3D."
         )
     if roboflow_used:
         warnings.append(
-            f"Roboflow Universe supplied primary detector evidence for this page ({len(primary_rooms)} room region(s), "
-            f"{len(_dict_items(roboflow, 'walls'))} wall segment(s))."
+            f"Roboflow Universe supplied detector evidence for this page ({len(primary_rooms)} room region(s), "
+            f"{len(_dict_items(roboflow, 'walls'))} wall candidate(s))."
         )
     if ocr_meta.get("adaptive_retry"):
         warnings.append("Adaptive OCR automatically zoomed and re-read weak regions to recover small dimensions and room labels.")
     if rotated_passes:
         warnings.append("Vertical dimension text was re-read in both 90-degree orientations before confidence calibration.")
     if precision_walls:
-        warnings.append(f"Independent multiscale wall recovery supplied {len(precision_walls)} supported wall segment(s) for consensus.")
+        warnings.append(f"Independent multiscale wall recovery supplied {len(precision_walls)} verification segment(s).")
     if curve_walls:
-        warnings.append(f"Curve-aware geometry recovery added {len(curve_walls)} diagonal/polyline wall segment(s) for review.")
+        warnings.append(f"Fallback curve recovery supplied {len(curve_walls)} diagonal/polyline candidate(s) for review.")
     orphaned = sum(1 for item in openings if not item.get("wallId"))
     if orphaned:
         warnings.append(f"{orphaned} detected opening(s) could not be attached to a verified wall and must stay reviewable.")
@@ -251,7 +290,7 @@ def parse_floorplan(
 
     result = dict(external) if external_used else dict(local)
     result.update({
-        "model_used": f"{model_used}+accuracy-v5+wall-support-v1+{ocr_engine}",
+        "model_used": f"{model_used}+source-vector-v1+accuracy-v5+wall-support-v1+{ocr_engine}",
         "confidence": int(quality["overall_verified"]),
         "walls": walls,
         "rooms": rooms,
@@ -259,7 +298,9 @@ def parse_floorplan(
         "ocr_lines": ocr_lines,
         "dimension_evidence": dimensions,
         "ocr_meta": ocr_meta,
+        "source_vector_meta": source_meta,
         "wall_validation_meta": {
+            "authority": "source-pixels" if source_authoritative else "hybrid-fallback",
             "kept": len(walls),
             "rejected": len(rejected_walls),
             "rejected_ids": [str(item.get("id") or "") for item in rejected_walls[:24]],
