@@ -5,10 +5,12 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
@@ -25,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -32,17 +35,24 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.manzili.hai.engine.HaiAutoRepairEngine
 import com.manzili.hai.engine.PlanVerificationEngine
+import com.manzili.hai.engine.RemoteFloorplanEvidenceClient
 import com.manzili.hai.model.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.hypot
 
 private enum class HaiEditorTool { SELECT, ROOM, WALL, DOOR, WINDOW }
+private enum class HaiStudioPanel { ORIGINAL, READ }
 private data class HaiEditorSelection(val kind: String, val id: String)
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,83 +64,173 @@ internal fun Hai360StudioScreen(
     onEdit: (FloorPlan) -> Unit,
     onConfirm: (FloorPlan) -> Unit
 ) {
-    val plan = remember(initialPlan) { PlanVerificationEngine.inspect(initialPlan).plan }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val remote = remember { RemoteFloorplanEvidenceClient(context) }
+    val snackbar = remember { SnackbarHostState() }
+
+    var plan by remember(initialPlan) { mutableStateOf(PlanVerificationEngine.inspect(initialPlan).plan) }
     val report = remember(plan) { PlanVerificationEngine.inspect(plan) }
+    var expanded by remember { mutableStateOf<HaiStudioPanel?>(null) }
+    var haiBusy by remember { mutableStateOf(false) }
+    var haiStatus by remember { mutableStateOf("") }
+
+    BackHandler(enabled = expanded != null) { expanded = null }
+
+    fun runHaiRepair() {
+        if (haiBusy) return
+        val uri = source
+        if (uri == null) {
+            scope.launch { snackbar.showSnackbar("HAI يحتاج المخطط الأصلي حتى يقارن القراءة به.") }
+            return
+        }
+        scope.launch {
+            haiBusy = true
+            haiStatus = "HAI يفحص الأصل ويقارن الهندسة..."
+            try {
+                require(remote.available) { "خدمة القراءة السحابية غير مهيأة" }
+                val fresh = remote.analyze(uri, maxPdfPages = 8) { update ->
+                    haiStatus = when {
+                        update.percent < 18 -> "HAI يتصل بمحرك القراءة..."
+                        update.percent < 90 -> "HAI يعيد قراءة الأصل بدقة..."
+                        else -> "HAI يقارن الجدران والغرف والفتحات..."
+                    }
+                }.toFloorPlan(plan.title)
+
+                val repaired = HaiAutoRepairEngine.repair(plan, fresh)
+                plan = repaired.plan
+                haiStatus = ""
+                val message = if (repaired.changed) {
+                    "${repaired.summary} • ${repaired.beforeConfidence}% ← ${repaired.afterConfidence}%"
+                } else {
+                    "أعاد HAI فحص الأصل ولم يعتمد تغييرًا غير موثوق • ${repaired.afterConfidence}%"
+                }
+                snackbar.showSnackbar(message)
+            } catch (failure: Throwable) {
+                haiStatus = ""
+                snackbar.showSnackbar(failure.message ?: "تعذر على HAI إعادة فحص المخطط")
+            } finally {
+                haiBusy = false
+            }
+        }
+    }
 
     Scaffold(
         containerColor = H360Ivory,
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("المخطط", color = H360Ink, fontSize = 22.sp, fontWeight = FontWeight.Black)
-                        Text("${plan.rooms.size} غرف  •  ${plan.walls.size} جدار  •  ${report.readingConfidence}%", color = H360Muted, fontSize = 9.sp)
-                    }
-                },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowForward, "رجوع", tint = H360Ink) } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = H360Paper)
-            )
+            if (expanded == null) {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text("المخطط", color = H360Ink, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                            Text(
+                                "${plan.rooms.size} غرف  •  ${plan.walls.size} جدار  •  ${report.readingConfidence}%",
+                                color = H360Muted,
+                                fontSize = 9.sp
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.Rounded.ArrowForward, "رجوع", tint = H360Ink)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = H360Paper)
+                )
+            }
         },
         bottomBar = {
-            Surface(color = H360Paper, shadowElevation = 10.dp) {
-                Row(
-                    Modifier.fillMaxWidth().navigationBarsPadding().padding(10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(9.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = { onEdit(plan) },
-                        border = BorderStroke(1.dp, H360CyanDeep.copy(alpha = .35f)),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = H360CyanDeep),
-                        shape = RoundedCornerShape(18.dp),
-                        modifier = Modifier.weight(1f).height(52.dp)
+            if (expanded == null) {
+                Surface(color = H360Paper, shadowElevation = 10.dp) {
+                    Row(
+                        Modifier.fillMaxWidth().navigationBarsPadding().padding(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(9.dp)
                     ) {
-                        Icon(Icons.Rounded.Edit, null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("تعديل", fontWeight = FontWeight.Black)
+                        OutlinedButton(
+                            onClick = { onEdit(plan) },
+                            border = BorderStroke(1.dp, H360CyanDeep.copy(alpha = .35f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = H360CyanDeep),
+                            shape = RoundedCornerShape(18.dp),
+                            modifier = Modifier.weight(1f).height(52.dp)
+                        ) {
+                            Icon(Icons.Rounded.Edit, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("تعديل", fontWeight = FontWeight.Black)
+                        }
+                        Button(
+                            onClick = { onConfirm(report.plan) },
+                            enabled = !report.blocking,
+                            colors = ButtonDefaults.buttonColors(containerColor = H360CyanDeep, contentColor = Color.White),
+                            shape = RoundedCornerShape(18.dp),
+                            modifier = Modifier.weight(1.25f).height(52.dp)
+                        ) {
+                            Icon(Icons.Rounded.Check, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("اعتماد", fontWeight = FontWeight.Black)
+                        }
                     }
-                    Button(
-                        onClick = { onConfirm(report.plan) },
-                        enabled = !report.blocking,
-                        colors = ButtonDefaults.buttonColors(containerColor = H360CyanDeep, contentColor = Color.White),
-                        shape = RoundedCornerShape(18.dp),
-                        modifier = Modifier.weight(1.25f).height(52.dp)
+                }
+            } else {
+                Surface(color = H360Paper, shadowElevation = 8.dp) {
+                    Row(
+                        Modifier.fillMaxWidth().navigationBarsPadding().padding(vertical = 7.dp),
+                        horizontalArrangement = Arrangement.Center
                     ) {
-                        Icon(Icons.Rounded.Check, null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("اعتماد", fontWeight = FontWeight.Black)
+                        OutlinedButton(
+                            onClick = { expanded = null },
+                            shape = RoundedCornerShape(15.dp),
+                            border = BorderStroke(1.dp, H360Line),
+                            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 7.dp),
+                            modifier = Modifier.height(40.dp)
+                        ) {
+                            Icon(Icons.Rounded.KeyboardReturn, null, modifier = Modifier.size(15.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text("رجوع للمقارنة", fontSize = 10.sp, fontWeight = FontWeight.Black)
+                        }
                     }
                 }
             }
         }
     ) { pad ->
         Box(Modifier.fillMaxSize().padding(pad)) {
-            EditorCanvas(
-                source = source,
-                plan = plan,
-                tool = HaiEditorTool.SELECT,
-                selection = null,
-                firstWallPoint = null,
-                onTap = { _, _ -> }
-            )
-            Row(
-                Modifier.align(Alignment.TopStart).padding(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(7.dp)
-            ) {
-                ReviewBadge("${report.readingConfidence}%", if (report.readingConfidence >= 90) H360Mint else H360Peach)
-                ReviewBadge("${plan.rooms.size} غرف", H360Sky)
-                ReviewBadge("${plan.walls.size} جدار", H360Lilac)
+            when (expanded) {
+                null -> PlanComparisonSplit(
+                    source = source,
+                    plan = plan,
+                    report = report,
+                    onExpandRead = { expanded = HaiStudioPanel.READ },
+                    onExpandOriginal = { expanded = HaiStudioPanel.ORIGINAL }
+                )
+                HaiStudioPanel.ORIGINAL -> ZoomableFrame {
+                    OriginalPlanPreview(source = source, modifier = Modifier.fillMaxSize(), showHint = false)
+                }
+                HaiStudioPanel.READ -> ZoomableFrame {
+                    ReadPlanPreview(plan = plan, modifier = Modifier.fillMaxSize(), showMetrics = true)
+                }
             }
-            if (report.blocking) {
+
+            FloatingHaiButton(
+                busy = haiBusy,
+                onClick = ::runHaiRepair,
+                modifier = Modifier.fillMaxSize()
+            )
+
+            if (haiBusy && haiStatus.isNotBlank()) {
                 Surface(
-                    color = H360Peach.copy(alpha = .96f),
+                    color = H360Paper.copy(alpha = .97f),
                     shape = RoundedCornerShape(18.dp),
-                    border = BorderStroke(1.dp, H360Amber.copy(alpha = .35f)),
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp)
+                    border = BorderStroke(1.dp, H360Line),
+                    shadowElevation = 4.dp,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(10.dp)
                 ) {
-                    Row(Modifier.padding(horizontal = 13.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.ErrorOutline, null, tint = H360Danger, modifier = Modifier.size(17.dp))
+                    Row(
+                        Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp, color = H360CyanDeep)
                         Spacer(Modifier.width(7.dp))
-                        Text(report.issues.firstOrNull()?.title ?: "يحتاج مراجعة", color = H360Ink, fontSize = 10.sp, fontWeight = FontWeight.Black)
+                        Text(haiStatus, color = H360Ink, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -139,9 +239,265 @@ internal fun Hai360StudioScreen(
 }
 
 @Composable
+private fun PlanComparisonSplit(
+    source: Uri?,
+    plan: FloorPlan,
+    report: PlanVerificationEngine.Report,
+    onExpandRead: () -> Unit,
+    onExpandOriginal: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 9.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ReviewBadge("${report.readingConfidence}%", if (report.readingConfidence >= 90) H360Mint else H360Peach)
+            ReviewBadge("${plan.rooms.size} غرف", H360Sky)
+            ReviewBadge("${plan.walls.size} جدار", H360Lilac)
+        }
+        Spacer(Modifier.height(8.dp))
+
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Row(
+                Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ComparisonCard(
+                    title = "المخطط المقروء",
+                    subtitle = "اضغط للتكبير",
+                    color = H360Lilac,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    onClick = onExpandRead
+                ) {
+                    ReadPlanPreview(plan = plan, modifier = Modifier.fillMaxSize(), showMetrics = false)
+                }
+                ComparisonCard(
+                    title = "المخطط الأصلي",
+                    subtitle = "اضغط للتكبير",
+                    color = H360Sky,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    onClick = onExpandOriginal
+                ) {
+                    OriginalPlanPreview(source = source, modifier = Modifier.fillMaxSize(), showHint = false)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ComparisonCard(
+    title: String,
+    subtitle: String,
+    color: Color,
+    modifier: Modifier,
+    onClick: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    Surface(
+        color = H360Paper,
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, H360Line),
+        shadowElevation = 2.dp,
+        modifier = modifier.clickable(onClick = onClick)
+    ) {
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    Modifier.fillMaxWidth().background(color.copy(alpha = .72f)).padding(horizontal = 10.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(title, color = H360Ink, fontSize = 12.sp, fontWeight = FontWeight.Black, maxLines = 1)
+                        Text(subtitle, color = H360Muted, fontSize = 8.sp, maxLines = 1)
+                    }
+                    Icon(Icons.Rounded.OpenInFull, null, tint = H360Ink, modifier = Modifier.size(16.dp))
+                }
+                Box(Modifier.weight(1f).fillMaxWidth()) { content() }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OriginalPlanPreview(source: Uri?, modifier: Modifier = Modifier, showHint: Boolean = true) {
+    val context = LocalContext.current
+    val bitmap by produceState<Bitmap?>(null, source) {
+        value = source?.let { withContext(Dispatchers.IO) { loadEditorBitmap(context, it) } }
+    }
+    Box(modifier.background(Color.White), contentAlignment = Alignment.Center) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = "المخطط الأصلي",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().padding(4.dp)
+            )
+        } else {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Rounded.InsertDriveFile, null, tint = H360Muted, modifier = Modifier.size(26.dp))
+                Spacer(Modifier.height(6.dp))
+                Text("لا يوجد مخطط أصلي", color = H360Muted, fontSize = 9.sp)
+            }
+        }
+        if (showHint && bitmap != null) {
+            Text(
+                "الأصل",
+                color = H360Ink,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Black,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).background(H360Paper.copy(alpha = .85f), RoundedCornerShape(8.dp)).padding(horizontal = 6.dp, vertical = 3.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReadPlanPreview(plan: FloorPlan, modifier: Modifier = Modifier, showMetrics: Boolean) {
+    Box(modifier.background(Color(0xFFF8FAFD))) {
+        BlueprintGrid(Modifier.matchParentSize(), dark = false, step = 24f)
+        Canvas(Modifier.fillMaxSize().padding(6.dp)) {
+            fun p(x: Float, y: Float) = Offset(size.width * x / 100f, size.height * y / 100f)
+
+            plan.rooms.forEach { room ->
+                if (room.polygon.size >= 3) {
+                    val path = Path().apply {
+                        val first = p(room.polygon.first().x, room.polygon.first().y)
+                        moveTo(first.x, first.y)
+                        room.polygon.drop(1).forEach { point ->
+                            val q = p(point.x, point.y)
+                            lineTo(q.x, q.y)
+                        }
+                        close()
+                    }
+                    drawPath(path, H360CyanDeep.copy(alpha = .055f))
+                    drawPath(path, H360CyanDeep.copy(alpha = .25f), style = Stroke(width = 1.1f))
+                } else {
+                    drawRect(
+                        color = H360CyanDeep.copy(alpha = .055f),
+                        topLeft = p(room.x, room.y),
+                        size = Size(size.width * room.width / 100f, size.height * room.height / 100f)
+                    )
+                }
+            }
+
+            plan.walls.forEach { wall ->
+                drawLine(
+                    color = if (wall.kind.contains("hai", true)) H360CyanDeep else H360Ink.copy(alpha = .88f),
+                    start = p(wall.start.x, wall.start.y),
+                    end = p(wall.end.x, wall.end.y),
+                    strokeWidth = if (wall.kind.contains("hai", true)) 4.2f else 3.1f
+                )
+            }
+
+            plan.openings.forEach { opening ->
+                drawCircle(
+                    color = if (opening.type.contains("window", true)) Color(0xFF4A8ED8) else H360Amber,
+                    radius = 4.5f,
+                    center = p(opening.x, opening.y)
+                )
+            }
+
+            plan.elements.forEach { element ->
+                if (element.footprint.size >= 3) {
+                    val path = Path().apply {
+                        val first = p(element.footprint.first().x, element.footprint.first().y)
+                        moveTo(first.x, first.y)
+                        element.footprint.drop(1).forEach { point ->
+                            val q = p(point.x, point.y)
+                            lineTo(q.x, q.y)
+                        }
+                        close()
+                    }
+                    drawPath(path, H360Lilac.copy(alpha = .75f))
+                    drawPath(path, H360CyanDeep.copy(alpha = .72f), style = Stroke(width = 1.6f))
+                }
+            }
+        }
+
+        if (showMetrics) {
+            Row(
+                Modifier.align(Alignment.TopStart).padding(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                ReviewBadge("${plan.rooms.size} غرف", H360Sky)
+                ReviewBadge("${plan.walls.size} جدار", H360Lilac)
+                ReviewBadge("${plan.openings.size} فتحة", H360Peach)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ZoomableFrame(content: @Composable () -> Unit) {
+    var measured by remember { mutableStateOf(IntSize.Zero) }
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+
+    Box(
+        Modifier.fillMaxSize()
+            .background(Color(0xFFF2F5F9))
+            .onSizeChanged { measured = it }
+            .pointerInput(Unit) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    scale = (scale * zoom).coerceIn(1f, 7f)
+                    val maxX = measured.width * (scale - 1f) / 2f + measured.width * .25f
+                    val maxY = measured.height * (scale - 1f) / 2f + measured.height * .25f
+                    offset = Offset(
+                        (offset.x + pan.x).coerceIn(-maxX, maxX),
+                        (offset.y + pan.y).coerceIn(-maxY, maxY)
+                    )
+                }
+            }
+            .pointerInput(scale) {
+                detectTapGestures(onDoubleTap = {
+                    scale = 1f
+                    offset = Offset.Zero
+                })
+            }
+    ) {
+        Box(
+            Modifier.fillMaxSize().graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                translationX = offset.x
+                translationY = offset.y
+            }
+        ) { content() }
+
+        Surface(
+            color = H360Paper.copy(alpha = .94f),
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, H360Line),
+            modifier = Modifier.align(Alignment.TopEnd).padding(10.dp)
+        ) {
+            Text(
+                "${(scale * 100).toInt()}% • نقرتان للملاءمة",
+                color = H360Muted,
+                fontSize = 8.5.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+            )
+        }
+    }
+}
+
+@Composable
 private fun ReviewBadge(text: String, color: Color) {
-    Surface(color = color.copy(alpha = .96f), shape = RoundedCornerShape(50.dp), border = BorderStroke(1.dp, H360Line), shadowElevation = 1.dp) {
-        Text(text, color = H360Ink, fontSize = 9.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp))
+    Surface(
+        color = color.copy(alpha = .96f),
+        shape = RoundedCornerShape(50.dp),
+        border = BorderStroke(1.dp, H360Line),
+        shadowElevation = 1.dp
+    ) {
+        Text(
+            text,
+            color = H360Ink,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Black,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+        )
     }
 }
 
@@ -173,7 +529,11 @@ internal fun Hai360EditorScreen(
                 title = {
                     Column {
                         Text("التعديل", color = H360Ink, fontSize = 22.sp, fontWeight = FontWeight.Black)
-                        Text("${plan.rooms.size} غرف  •  ${plan.walls.size} جدار  •  ${report.readingConfidence}%", color = H360Muted, fontSize = 9.sp)
+                        Text(
+                            "${plan.rooms.size} غرف  •  ${plan.walls.size} جدار  •  ${report.readingConfidence}%",
+                            color = H360Muted,
+                            fontSize = 9.sp
+                        )
                     }
                 },
                 navigationIcon = { IconButton(onClick = onCancel) { Icon(Icons.Rounded.Close, "إلغاء", tint = H360Ink) } },
@@ -344,7 +704,12 @@ private fun EditorToolbar(
 }
 
 @Composable
-private fun EditorToolButton(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, active: Boolean, onClick: () -> Unit) {
+private fun EditorToolButton(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    active: Boolean,
+    onClick: () -> Unit
+) {
     FilledTonalButton(
         onClick = onClick,
         colors = ButtonDefaults.filledTonalButtonColors(
@@ -379,7 +744,9 @@ private fun EditorCanvas(
 
     fun fittedRect(width: Float, height: Float): FloatArray {
         val bmp = bitmap
-        if (bmp == null || bmp.width <= 0 || bmp.height <= 0 || width <= 0f || height <= 0f) return floatArrayOf(0f, 0f, width, height)
+        if (bmp == null || bmp.width <= 0 || bmp.height <= 0 || width <= 0f || height <= 0f) {
+            return floatArrayOf(0f, 0f, width, height)
+        }
         val imageRatio = bmp.width.toFloat() / bmp.height
         val boxRatio = width / height
         return if (imageRatio > boxRatio) {
@@ -392,17 +759,18 @@ private fun EditorCanvas(
     }
 
     Box(
-        Modifier
-            .fillMaxSize()
+        Modifier.fillMaxSize()
             .background(Color(0xFFF3F6FA))
             .onSizeChanged { measured = it }
             .pointerInput(Unit) {
                 detectTransformGestures { _, pan, zoom, _ ->
                     scale = (scale * zoom).coerceIn(0.7f, 6f)
-                    offset = offset + pan
                     val maxX = measured.width * (scale - 1f) / 2f + measured.width * .45f
                     val maxY = measured.height * (scale - 1f) / 2f + measured.height * .45f
-                    offset = Offset(offset.x.coerceIn(-maxX, maxX), offset.y.coerceIn(-maxY, maxY))
+                    offset = Offset(
+                        (offset.x + pan.x).coerceIn(-maxX, maxX),
+                        (offset.y + pan.y).coerceIn(-maxY, maxY)
+                    )
                 }
             }
             .pointerInput(tool, scale, offset, bitmap) {
@@ -442,7 +810,7 @@ private fun EditorCanvas(
                     bitmap = it.asImageBitmap(),
                     contentDescription = null,
                     contentScale = ContentScale.Fit,
-                    alpha = .68f,
+                    alpha = .62f,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -482,7 +850,9 @@ private fun EditorCanvas(
                         center = p(opening.x, opening.y)
                     )
                 }
-                firstWallPoint?.let { drawCircle(H360CyanDeep, 8f, p(it.x, it.y), style = Stroke(width = 3f)) }
+                firstWallPoint?.let {
+                    drawCircle(H360CyanDeep, 8f, p(it.x, it.y), style = Stroke(width = 3f))
+                }
             }
         }
 
@@ -504,10 +874,16 @@ private fun EditorCanvas(
 
 private fun selectEditorElement(plan: FloorPlan, x: Float, y: Float): HaiEditorSelection? {
     val opening = plan.openings.minByOrNull { hypot((it.x - x).toDouble(), (it.y - y).toDouble()) }
-    if (opening != null && hypot((opening.x - x).toDouble(), (opening.y - y).toDouble()) <= 4.5) return HaiEditorSelection("opening", opening.id)
+    if (opening != null && hypot((opening.x - x).toDouble(), (opening.y - y).toDouble()) <= 4.5) {
+        return HaiEditorSelection("opening", opening.id)
+    }
     val wall = plan.walls.minByOrNull { editorSegmentDistance(x, y, it.start.x, it.start.y, it.end.x, it.end.y) }
-    if (wall != null && editorSegmentDistance(x, y, wall.start.x, wall.start.y, wall.end.x, wall.end.y) <= 2.8) return HaiEditorSelection("wall", wall.id)
-    return plan.rooms.lastOrNull { x in it.x..(it.x + it.width) && y in it.y..(it.y + it.height) }?.let { HaiEditorSelection("room", it.id) }
+    if (wall != null && editorSegmentDistance(x, y, wall.start.x, wall.start.y, wall.end.x, wall.end.y) <= 2.8) {
+        return HaiEditorSelection("wall", wall.id)
+    }
+    return plan.rooms.lastOrNull {
+        x in it.x..(it.x + it.width) && y in it.y..(it.y + it.height)
+    }?.let { HaiEditorSelection("room", it.id) }
 }
 
 private fun editorRoomArea(plan: FloorPlan, widthPct: Float, heightPct: Float): Double {
@@ -533,7 +909,11 @@ private fun loadEditorBitmap(context: Context, source: Uri): Bitmap? = runCatchi
             renderer.openPage(0).use { page ->
                 val target = 2400f
                 val ratio = target / page.width.coerceAtLeast(1)
-                val bitmap = Bitmap.createBitmap(target.toInt(), (page.height * ratio).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                val bitmap = Bitmap.createBitmap(
+                    target.toInt(),
+                    (page.height * ratio).toInt().coerceAtLeast(1),
+                    Bitmap.Config.ARGB_8888
+                )
                 page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                 bitmap
             }
