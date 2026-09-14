@@ -41,7 +41,8 @@ async def health() -> dict[str, Any]:
         "reader": "hai-hybrid-reader-v2",
         "roboflow_configured": bool(roboflow.get("configured")),
         "local_segmentation_configured": bool(local.get("configured")),
-        "strategy": "roboflow-first+wall-segmentation-verifier+ocr+geometry-gates",
+        "strategy": "roboflow-first+opencv-verifier+geometry-quality-gates",
+        "ocr": "optional-easyocr-when-installed",
     }
 
 
