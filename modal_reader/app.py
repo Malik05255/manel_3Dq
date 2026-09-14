@@ -38,6 +38,7 @@ _R2G_LABELS = {
     10: ("service", "خدمات"),
     11: ("outside", "خارجي"),
 }
+_MODEL_SIZE = 512
 
 
 def _decode_image(payload: dict[str, Any]) -> bytes:
@@ -53,7 +54,7 @@ def _decode_image(payload: dict[str, Any]) -> bytes:
     return data
 
 
-def _run_raster2seq(image_bytes: bytes) -> list[dict[str, Any]]:
+def _run_raster2seq(image_bytes: bytes) -> tuple[list[dict[str, Any]], int, int]:
     with tempfile.TemporaryDirectory(prefix="hai-r2s-") as temp:
         root = Path(temp)
         input_dir = root / "input"
@@ -65,7 +66,9 @@ def _run_raster2seq(image_bytes: bytes) -> list[dict[str, Any]]:
         from PIL import Image
         import io
 
-        Image.open(io.BytesIO(image_bytes)).convert("RGB").save(image_path)
+        source = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        source_w, source_h = source.size
+        source.save(image_path)
         command = [
             "python",
             "predict.py",
@@ -106,34 +109,41 @@ def _run_raster2seq(image_bytes: bytes) -> list[dict[str, Any]]:
         result = json.loads(candidates[0].read_text())
         if not isinstance(result, list):
             raise RuntimeError("Raster2Seq polygon JSON is invalid")
-        return result
+        return result, source_w, source_h
 
 
-def _normalize_polygon(segmentation: Any) -> list[dict[str, float]]:
-    if not isinstance(segmentation, list) or len(segmentation) < 3:
+def _normalize_polygon(segmentation: Any, source_w: int, source_h: int) -> list[dict[str, float]]:
+    if not isinstance(segmentation, list) or len(segmentation) < 3 or source_w <= 0 or source_h <= 0:
         return []
-    points: list[tuple[float, float]] = []
+    scale = min(_MODEL_SIZE / source_h, _MODEL_SIZE / source_w)
+    resized_h = int(source_h * scale)
+    resized_w = int(source_w * scale)
+    top = (_MODEL_SIZE - resized_h) // 2
+    left = (_MODEL_SIZE - resized_w) // 2
+
+    points: list[dict[str, float]] = []
     for point in segmentation:
         if not isinstance(point, (list, tuple)) or len(point) < 2:
             continue
         try:
-            points.append((float(point[0]), float(point[1])))
+            padded_x, padded_y = float(point[0]), float(point[1])
         except (TypeError, ValueError):
             continue
-    if len(points) < 3:
-        return []
-    max_coord = max(max(abs(x), abs(y)) for x, y in points)
-    denom = 512.0 if max_coord <= 520.0 else max_coord
-    return [
-        {"x": max(0.0, min(100.0, x / denom * 100.0)), "y": max(0.0, min(100.0, y / denom * 100.0))}
-        for x, y in points
-    ]
+        source_x = (padded_x - left) / max(scale, 1e-6)
+        source_y = (padded_y - top) / max(scale, 1e-6)
+        points.append(
+            {
+                "x": max(0.0, min(100.0, source_x / source_w * 100.0)),
+                "y": max(0.0, min(100.0, source_y / source_h * 100.0)),
+            }
+        )
+    return points if len(points) >= 3 else []
 
 
-def _rooms(predictions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _rooms(predictions: list[dict[str, Any]], source_w: int, source_h: int) -> list[dict[str, Any]]:
     rooms: list[dict[str, Any]] = []
     for index, item in enumerate(predictions):
-        polygon = _normalize_polygon(item.get("segmentation"))
+        polygon = _normalize_polygon(item.get("segmentation"), source_w, source_h)
         if len(polygon) < 3:
             continue
         cls = int(item.get("category_id", 0) or 0)
@@ -229,8 +239,8 @@ def _cloud_ocr(image_bytes: bytes) -> list[dict[str, Any]]:
 @modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
 def parse_floorplan(payload: dict[str, Any]) -> dict[str, Any]:
     image_bytes = _decode_image(payload)
-    predictions = _run_raster2seq(image_bytes)
-    rooms = _rooms(predictions)
+    predictions, source_w, source_h = _run_raster2seq(image_bytes)
+    rooms = _rooms(predictions, source_w, source_h)
     walls = _walls_from_rooms(rooms)
     ocr_lines = _cloud_ocr(image_bytes)
     return {
