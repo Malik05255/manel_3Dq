@@ -34,6 +34,7 @@ import androidx.work.WorkManager
 import com.manzili.hai.data.PendingAnalysisStore
 import com.manzili.hai.engine.RemoteFloorplanEvidenceClient
 import com.manzili.hai.engine.SaudiProjectTypeEngine
+import com.manzili.hai.model.FloorPlan
 import com.manzili.hai.work.FloorplanAnalysisWorker
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -41,11 +42,9 @@ import java.util.UUID
 @Composable
 internal fun Hai360ImportScreen(
     initialSource: Uri?,
-    activeWorkId: UUID?,
     onBack: () -> Unit,
     onSourceChanged: (Uri?) -> Unit,
-    onWorkStarted: (UUID) -> Unit,
-    onWorkStopped: (UUID) -> Unit,
+    onAnalyzed: (FloorPlan, SaudiProjectTypeEngine.Type) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -56,10 +55,11 @@ internal fun Hai360ImportScreen(
     var source by remember(initialSource) { mutableStateOf(initialSource) }
     var type by remember { mutableStateOf(SaudiProjectTypeEngine.Type.VILLA_TWO) }
     var error by remember { mutableStateOf<String?>(null) }
+    var workId by remember { mutableStateOf<UUID?>(pendingStore.activeWorkId()) }
 
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    val workInfo by produceState<WorkInfo?>(initialValue = null, key1 = activeWorkId) {
-        val id = activeWorkId ?: return@produceState
+    val workInfo by produceState<WorkInfo?>(initialValue = null, key1 = workId) {
+        val id = workId ?: return@produceState
         workManager.getWorkInfoByIdFlow(id).collect { value = it }
     }
 
@@ -69,26 +69,37 @@ internal fun Hai360ImportScreen(
         ?: if (workInfo?.state == WorkInfo.State.ENQUEUED) "بانتظار اتصال الشبكة" else "بدء العملية"
 
     LaunchedEffect(source) {
-        if (source != null && activeWorkId == null) {
-            // Wake the cloud gateway while the user is reviewing the selected file. This removes
-            // a large part of the free-tier cold-start delay without lowering analysis quality.
+        if (source != null && workId == null) {
+            // Wake the free cloud gateway as soon as a file is selected. This overlaps cold-start
+            // time with the user's normal interaction without reducing the image resolution.
             scope.launch { runCatching { remote.readiness() } }
         }
     }
 
-    LaunchedEffect(workInfo?.state, activeWorkId) {
-        val id = activeWorkId ?: return@LaunchedEffect
+    LaunchedEffect(workInfo?.state, workId) {
+        val id = workId ?: return@LaunchedEffect
         when (workInfo?.state) {
+            WorkInfo.State.SUCCEEDED -> {
+                val completed = pendingStore.consume(id)
+                workId = null
+                if (completed == null) {
+                    error = "اكتمل التحليل لكن تعذر استعادة النتيجة المحفوظة"
+                } else {
+                    source = completed.source
+                    onSourceChanged(completed.source)
+                    onAnalyzed(completed.plan, completed.type)
+                }
+            }
             WorkInfo.State.FAILED -> {
                 error = workInfo?.outputData?.getString(FloorplanAnalysisWorker.KEY_ERROR)
                     ?: pendingStore.failure(id)
                     ?: "تعذر تحليل المخطط سحابيًا"
                 pendingStore.clear(id)
-                onWorkStopped(id)
+                workId = null
             }
             WorkInfo.State.CANCELLED -> {
                 pendingStore.clear(id)
-                onWorkStopped(id)
+                workId = null
             }
             else -> Unit
         }
@@ -183,7 +194,7 @@ internal fun Hai360ImportScreen(
             H360PrimaryButton(
                 text = "تحليل المخطط سحابيًا",
                 modifier = Modifier.fillMaxWidth(),
-                enabled = source != null && !busy && activeWorkId == null,
+                enabled = source != null && !busy && workId == null,
                 icon = Icons.Rounded.CloudUpload
             ) {
                 val uri = source ?: return@H360PrimaryButton
@@ -194,8 +205,7 @@ internal fun Hai360ImportScreen(
                 ) {
                     notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
-                val id = FloorplanAnalysisWorker.enqueue(context, uri, type, maxPages = 8)
-                onWorkStarted(id)
+                workId = FloorplanAnalysisWorker.enqueue(context, uri, type, maxPages = 8)
             }
             Spacer(Modifier.height(10.dp))
         }
@@ -250,12 +260,11 @@ internal fun Hai360ImportScreen(
                     Spacer(Modifier.height(22.dp))
                     OutlinedButton(
                         onClick = {
-                            val id = activeWorkId
-                            if (id != null) {
+                            workId?.let { id ->
                                 workManager.cancelWorkById(id)
                                 pendingStore.clear(id)
-                                onWorkStopped(id)
                             }
+                            workId = null
                             onBack()
                         },
                         shape = RoundedCornerShape(18.dp),
