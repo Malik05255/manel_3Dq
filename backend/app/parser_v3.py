@@ -25,20 +25,15 @@ def _segment_support(mask: np.ndarray, a: tuple[float, float], b: tuple[float, f
 
 
 def _axis_centerlines(mask: np.ndarray) -> list[dict[str, Any]]:
-    """Turn thick semantic wall regions into one centerline per wall band.
-
-    Hough on a thick wall mask commonly returns both visible edges of the same wall. This
-    extractor first isolates long horizontal/vertical wall bands and uses each band's centre,
-    which is substantially closer to the topology needed by the Android editor and 3D builder.
-    """
+    """Turn thick semantic wall regions into one centerline per wall band."""
     h, w = mask.shape[:2]
     binary = ((mask > 0) * 255).astype(np.uint8)
     min_axis = max(12, int(round(min(h, w) * 0.028)))
     results: list[dict[str, Any]] = []
 
     specs = (
-        ("horizontal", cv2.getStructuringElement(cv2.MORPH_RECT, (min_axis, 3))), True),
-        ("vertical", cv2.getStructuringElement(cv2.MORPH_RECT, (3, min_axis))), False),
+        ("horizontal", cv2.getStructuringElement(cv2.MORPH_RECT, (min_axis, 3)), True),
+        ("vertical", cv2.getStructuringElement(cv2.MORPH_RECT, (3, min_axis)), False),
     )
     for kind, kernel, horizontal in specs:
         opened = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
@@ -68,8 +63,6 @@ def _axis_centerlines(mask: np.ndarray) -> list[dict[str, Any]]:
                 "mask_support": round(support, 4),
             })
 
-    # Keep true diagonals from the semantic wall class. Axis-aligned candidates are excluded
-    # here because they have already been represented by a single centreline above.
     lines = cv2.HoughLinesP(binary, 1, np.pi / 360.0, threshold=26, minLineLength=min_axis, maxLineGap=12)
     if lines is not None:
         for raw in lines[:300]:
@@ -98,7 +91,6 @@ def _axis_centerlines(mask: np.ndarray) -> list[dict[str, Any]]:
 
 
 def _merge_collinear(walls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Merge obvious duplicate/overlapping semantic centre lines without inventing geometry."""
     kept: list[dict[str, Any]] = []
     for wall in sorted(walls, key=lambda item: int(item.get("confidence", 0)), reverse=True):
         a = wall["start"]
