@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hmac
+import os
 import threading
 import time
 from collections import defaultdict, deque
@@ -33,6 +35,17 @@ def _require_android_client(value: str | None) -> str:
     if client not in _ALLOWED_CLIENTS:
         raise HTTPException(403, "unsupported parser client")
     return client
+
+
+def _require_reader_service(authorization: str | None) -> None:
+    expected = os.getenv("READER_PROVIDER_TOKEN", "").strip()
+    if not expected:
+        raise HTTPException(503, "reader evidence token is not configured")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "missing reader evidence bearer token")
+    supplied = authorization[7:].strip()
+    if not hmac.compare_digest(supplied, expected):
+        raise HTTPException(401, "invalid reader evidence bearer token")
 
 
 def _client_key(request: Request, client: str) -> str:
@@ -81,6 +94,7 @@ async def public_parser_status(
         "preferred_path": provider.name if ready else "unavailable",
         "reader_configured": ready,
         "modal_reader_configured": provider.name == "modal-raster2seq-legacy" and ready,
+        "legacy_evidence_configured": _modal_ready(),
         "local_inference": False,
         "detail": "" if ready else "Floor-plan reader provider is not configured on the gateway",
     }
@@ -103,9 +117,23 @@ async def _request_legacy_modal(payload: ParseRequest) -> dict[str, Any]:
     if not isinstance(result, dict):
         raise HTTPException(502, "Cloud reader returned an invalid response")
     result["page_index"] = payload.page_index
-    result["reader_path"] = "modal-raster2seq-legacy"
+    result["reader_path"] = "modal-raster2seq-legacy-evidence"
     result["local_inference"] = False
     return result
+
+
+@app.post("/v1/internal/legacy-floorplan-evidence")
+async def internal_legacy_floorplan_evidence(
+    payload: ParseRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Private migration evidence endpoint used only by HAI Reader V2.
+
+    Modal/Raster2Seq is deliberately demoted to evidence. HAI Reader V2 owns
+    wall validation, fusion, confidence gates and the final response.
+    """
+    _require_reader_service(authorization)
+    return await _request_legacy_modal(payload)
 
 
 @app.post("/v1/public/parse-floorplan")
