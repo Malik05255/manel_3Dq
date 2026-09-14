@@ -2,20 +2,15 @@ services:
   - type: web
     name: manzili-hai-deep-parser
     runtime: python
-    buildCommand: >-
-      pip install -r backend/requirements-ml-cpu.txt &&
-      FLOORPLAN_SAFETENSORS_MODEL=/opt/render/project/src/backend/models/floorplan/best.safetensors
-      python backend/scripts/fetch_floorplan_model.py
-    startCommand: cd backend && uvicorn app.public_main:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install -r backend/requirements-gateway.txt
+    startCommand: cd backend && uvicorn app.cloud_gateway:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /readyz
     autoDeployTrigger: commit
     envVars:
-      - key: FLOORPLAN_SAFETENSORS_MODEL
-        value: /opt/render/project/src/backend/models/floorplan/best.safetensors
-      - key: FLOORPLAN_DEVICE
-        value: cpu
-      - key: FLOORPLAN_TORCH_THREADS
-        value: "2"
+      - key: MODAL_READER_URL
+        sync: false
+      - key: MODAL_READER_TOKEN
+        sync: false
       - key: MANZILI_API_TOKEN
         sync: false
       - key: SUPABASE_URL
@@ -28,14 +23,6 @@ services:
         value: google/gemini-2.5-flash
       - key: AI_API_KEY
         sync: false
-      - key: ROBOFLOW_API_URL
-        value: https://serverless.roboflow.com
-      - key: ROBOFLOW_API_KEY
-        sync: false
-      - key: ROBOFLOW_MODEL_IDS
-        value: harsh-bagadiya/floor-plan-detector-19-rfdetr-seg-medium-t1,floor-plan-nnoub-ngvnw/1
-      - key: ROBOFLOW_CONFIDENCE
-        value: "0.25"
       - key: BLENDER_WORKER_URL
         sync: false
       - key: RENDER_WORKER_TOKEN
