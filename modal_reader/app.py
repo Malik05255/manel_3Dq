@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -40,15 +38,6 @@ _R2G_LABELS = {
     10: ("service", "خدمات"),
     11: ("outside", "خارجي"),
 }
-
-
-def _auth_header(value: str | None) -> None:
-    from fastapi import HTTPException
-
-    expected = os.getenv("MODAL_READER_TOKEN", "").strip()
-    supplied = value[7:].strip() if value and value.startswith("Bearer ") else ""
-    if not expected or supplied != expected:
-        raise HTTPException(401, "invalid reader token")
 
 
 def _decode_image(payload: dict[str, Any]) -> bytes:
@@ -236,11 +225,9 @@ def _cloud_ocr(image_bytes: bytes) -> list[dict[str, Any]]:
     gpu="T4",
     timeout=300,
     scaledown_window=60,
-    secrets=[modal.Secret.from_name("manzili-reader")],
 )
-@modal.fastapi_endpoint(method="POST")
-def parse_floorplan(payload: dict[str, Any], authorization: str | None = None) -> dict[str, Any]:
-    _auth_header(authorization)
+@modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
+def parse_floorplan(payload: dict[str, Any]) -> dict[str, Any]:
     image_bytes = _decode_image(payload)
     predictions = _run_raster2seq(image_bytes)
     rooms = _rooms(predictions)
@@ -265,6 +252,6 @@ def parse_floorplan(payload: dict[str, Any], authorization: str | None = None) -
             "Cloud reader uses Raster2Seq room polygons and cloud OCR; confidence is intentionally uncalibrated.",
             "Door/window extraction is not enabled in this first cloud-only reader revision.",
         ],
-        "reader_path": "modal-cloud-only",
+        "reader_path": "modal-raster2seq-cloud-only",
         "local_inference": False,
     }
