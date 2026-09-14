@@ -16,6 +16,7 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     env:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
@@ -43,4 +44,6 @@ jobs:
       - name: Install Modal CLI and deploy-time imports
         run: python -m pip install --upgrade modal fastapi
       - name: Deploy cloud-only floor-plan reader
-        run: modal deploy -m modal_reader.app --stream-logs
+        run: modal deploy -m modal_reader.app --strategy rolling
+      - name: Verify deployed app is registered
+        run: modal app list --json | python -c 'import json,sys; apps=json.load(sys.stdin); names={str(x.get("name", "")) for x in apps}; assert "manzili-hai-floorplan-reader" in names, names'
