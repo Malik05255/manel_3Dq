@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from .cubicasa_model import model_status
+from .cubicasa_model import load_cubicasa_runtime, model_status
 from .ocr_reader import cloud_ocr_engine_name
 from .parser_v3 import parse_floorplan
 
@@ -31,11 +31,19 @@ def _authorize(authorization: str | None) -> None:
         raise HTTPException(401, "invalid reader bearer token")
 
 
+@app.on_event("startup")
+def warm_reader() -> None:
+    """Fail deployment instead of silently serving a reader without its real model."""
+    runtime = load_cubicasa_runtime()
+    if runtime is None:
+        raise RuntimeError(f"CubiCasa model failed to load: {model_status()}")
+
+
 @app.get("/health")
 @app.get("/readyz")
 async def health() -> dict[str, Any]:
     runtime = model_status()
-    ready = bool(runtime.get("configured"))
+    ready = bool(runtime.get("configured")) and load_cubicasa_runtime() is not None
     return {
         "ok": ready,
         "ready": ready,
@@ -57,7 +65,7 @@ async def parse(
     _authorize(authorization)
     if x_manzili_reader_contract not in {None, "v2"}:
         raise HTTPException(400, "unsupported reader contract")
-    if not bool(model_status().get("configured")):
+    if load_cubicasa_runtime() is None:
         raise HTTPException(503, "CubiCasa segmentation model is not loaded")
 
     try:
