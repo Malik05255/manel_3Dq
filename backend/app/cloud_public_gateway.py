@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hmac
+import os
 import threading
 import time
 from collections import defaultdict, deque
@@ -17,8 +19,9 @@ from .cloud_gateway import (
     _modal_request_headers,
     app,
 )
+from .reader_provider import reader_provider, request_reader
 
-_ALLOWED_CLIENTS = {"android-cloud-only-v1"}
+_ALLOWED_CLIENTS = {"android-cloud-only-v1", "android-reader-v2"}
 _WINDOW_SECONDS = 60.0
 _PER_CLIENT_LIMIT = 12
 _GLOBAL_LIMIT = 90
@@ -32,6 +35,17 @@ def _require_android_client(value: str | None) -> str:
     if client not in _ALLOWED_CLIENTS:
         raise HTTPException(403, "unsupported parser client")
     return client
+
+
+def _require_reader_service(authorization: str | None) -> None:
+    expected = os.getenv("READER_PROVIDER_TOKEN", "").strip()
+    if not expected:
+        raise HTTPException(503, "reader evidence token is not configured")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "missing reader evidence bearer token")
+    supplied = authorization[7:].strip()
+    if not hmac.compare_digest(supplied, expected):
+        raise HTTPException(401, "invalid reader evidence bearer token")
 
 
 def _client_key(request: Request, client: str) -> str:
@@ -72,25 +86,21 @@ async def public_parser_status(
     x_manzili_parser_client: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _require_android_client(x_manzili_parser_client)
-    ready = _modal_ready()
+    provider = reader_provider()
+    ready = _modal_ready() if provider.name == "modal-raster2seq-legacy" else provider.ready
     return {
         "ready": ready,
-        "reader": "modal-raster2seq-cloud-only",
-        "preferred_path": "modal-raster2seq-cloud-only" if ready else "unavailable",
-        "modal_reader_configured": ready,
+        "reader": provider.name,
+        "preferred_path": provider.name if ready else "unavailable",
+        "reader_configured": ready,
+        "modal_reader_configured": provider.name == "modal-raster2seq-legacy" and ready,
+        "legacy_evidence_configured": _modal_ready(),
         "local_inference": False,
-        "detail": "" if ready else "Modal reader is not configured on Render",
+        "detail": "" if ready else "Floor-plan reader provider is not configured on the gateway",
     }
 
 
-@app.post("/v1/public/parse-floorplan")
-async def public_parse_floorplan(
-    payload: ParseRequest,
-    request: Request,
-    x_manzili_parser_client: str | None = Header(default=None),
-) -> dict[str, Any]:
-    client = _require_android_client(x_manzili_parser_client)
-    _enforce_rate_limit(request, client)
+async def _request_legacy_modal(payload: ParseRequest) -> dict[str, Any]:
     modal_url, _ = _modal_config()
     if not _modal_ready():
         raise HTTPException(503, "Modal reader is not configured")
@@ -107,6 +117,34 @@ async def public_parse_floorplan(
     if not isinstance(result, dict):
         raise HTTPException(502, "Cloud reader returned an invalid response")
     result["page_index"] = payload.page_index
-    result["reader_path"] = "modal-raster2seq-cloud-only"
+    result["reader_path"] = "modal-raster2seq-legacy-evidence"
     result["local_inference"] = False
     return result
+
+
+@app.post("/v1/internal/legacy-floorplan-evidence")
+async def internal_legacy_floorplan_evidence(
+    payload: ParseRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Private migration evidence endpoint used only by HAI Reader V2.
+
+    Modal/Raster2Seq is deliberately demoted to evidence. HAI Reader V2 owns
+    wall validation, fusion, confidence gates and the final response.
+    """
+    _require_reader_service(authorization)
+    return await _request_legacy_modal(payload)
+
+
+@app.post("/v1/public/parse-floorplan")
+async def public_parse_floorplan(
+    payload: ParseRequest,
+    request: Request,
+    x_manzili_parser_client: str | None = Header(default=None),
+) -> dict[str, Any]:
+    client = _require_android_client(x_manzili_parser_client)
+    _enforce_rate_limit(request, client)
+    provider = reader_provider()
+    if provider.name == "modal-raster2seq-legacy":
+        return await _request_legacy_modal(payload)
+    return await request_reader(payload.image_base64, payload.page_index)

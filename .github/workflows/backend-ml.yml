@@ -1,56 +1,115 @@
-name: Backend ML Validation
+name: Backend Reader V2 Validation
 
 on:
   push:
-    branches: [ main, 'codex/**' ]
+    branches: [ main, 'codex/**', 'feat/**' ]
     paths:
       - 'backend/app/cubicasa_model.py'
+      - 'backend/app/ocr_reader.py'
       - 'backend/app/parser.py'
-      - 'backend/app/main.py'
-      - 'backend/scripts/fetch_floorplan_model.py'
-      - 'backend/requirements-ml-cpu.txt'
-      - 'backend/Dockerfile.ml'
+      - 'backend/app/parser_v2.py'
+      - 'backend/app/parser_accuracy.py'
+      - 'backend/app/parser_quality.py'
+      - 'backend/app/roboflow_parser.py'
+      - 'backend/app/reader_main.py'
+      - 'backend/app/wall_support.py'
+      - 'backend/tests/test_wall_support.py'
+      - 'backend/requirements.txt'
+      - 'backend/Dockerfile.reader'
+      - 'render.yaml'
+      - '.github/workflows/backend-ml.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'backend/app/cubicasa_model.py'
+      - 'backend/app/ocr_reader.py'
+      - 'backend/app/parser.py'
+      - 'backend/app/parser_v2.py'
+      - 'backend/app/parser_accuracy.py'
+      - 'backend/app/parser_quality.py'
+      - 'backend/app/roboflow_parser.py'
+      - 'backend/app/reader_main.py'
+      - 'backend/app/wall_support.py'
+      - 'backend/tests/test_wall_support.py'
+      - 'backend/requirements.txt'
+      - 'backend/Dockerfile.reader'
       - 'render.yaml'
       - '.github/workflows/backend-ml.yml'
   workflow_dispatch:
 
 concurrency:
-  group: manzili-hai-backend-ml-${{ github.ref }}
+  group: manzili-hai-reader-v2-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  validate-model:
+  validate-reader:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: backend/requirements-ml-cpu.txt
-      - name: Install CPU inference stack
-        run: pip install -r requirements-ml-cpu.txt
-      - name: Download and verify model weights
-        run: python scripts/fetch_floorplan_model.py
-      - name: Run real segmentation inference smoke test
+          cache-dependency-path: backend/requirements.txt
+      - name: Install Arabic English OCR
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+        working-directory: .
+      - name: Install reader v2 dependencies
+        run: pip install -r requirements.txt pytest==8.4.1
+      - name: Import hybrid reader service
         run: |
           python - <<'PY'
+          from app.ocr_reader import cloud_ocr_engine_name
+          from app.reader_main import app
+          assert app.title == 'Manzili HAI Reader V2'
+          assert app.version == '2.1.0'
+          assert any(getattr(route, 'path', '') == '/v2/parse' for route in app.routes)
+          assert cloud_ocr_engine_name() == 'tesseract-ara-eng'
+          print('reader service import ok, OCR=tesseract-ara-eng')
+          PY
+      - name: Test wall source-image support gate
+        run: PYTHONPATH=. pytest -q tests/test_wall_support.py
+      - name: Run deterministic parser and external-evidence smoke tests
+        run: |
+          python - <<'PY'
+          import base64
+          import cv2
           import numpy as np
-          from app.cubicasa_model import CLASS_NAMES, load_cubicasa_runtime, model_status
-          runtime = load_cubicasa_runtime()
-          assert runtime is not None, 'CubiCasa runtime did not load'
-          status = model_status()
-          assert status.get('configured') is True, status
-          image = np.full((256, 384, 3), 255, dtype=np.uint8)
-          image[40:215, 45:52] = 0
-          image[40:47, 45:330] = 0
-          prediction = runtime.predict(image)
-          assert prediction.shape == image.shape[:2]
-          assert prediction.dtype == np.uint8
-          assert int(prediction.min()) >= 0
-          assert int(prediction.max()) < len(CLASS_NAMES)
-          print('model smoke test ok', prediction.shape, np.unique(prediction).tolist())
+          from app.parser_v2 import parse_floorplan
+
+          image = np.full((420, 620, 3), 255, dtype=np.uint8)
+          cv2.rectangle(image, (70, 60), (550, 350), (0, 0, 0), 8)
+          cv2.line(image, (310, 60), (310, 350), (0, 0, 0), 8)
+          cv2.putText(image, '4.00 m', (110, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
+          ok, encoded = cv2.imencode('.png', image)
+          assert ok
+          payload = base64.b64encode(encoded.tobytes()).decode('ascii')
+
+          result = parse_floorplan(payload)
+          assert isinstance(result, dict)
+          assert 'walls' in result and 'rooms' in result and 'warnings' in result
+          assert '+wall-support-v1+' in str(result.get('model_used', ''))
+          assert result.get('ocr_meta', {}).get('engine') == 'tesseract-ara-eng'
+          assert 'wall_validation_meta' in result
+
+          evidence = {
+              'model_used': 'legacy-test-evidence',
+              'confidence': 72,
+              'rooms': [],
+              'walls': [],
+              'openings': [],
+              'ocr_lines': [],
+              'warnings': ['legacy-test'],
+          }
+          fused = parse_floorplan(payload, external_evidence=evidence)
+          meta = fused.get('external_evidence_meta', {})
+          assert meta.get('used') is True
+          assert meta.get('model') == 'legacy-test-evidence'
+          assert 'evidence:legacy-test-evidence' in str(fused.get('model_used', ''))
+          assert any('secondary evidence' in str(item) for item in fused.get('warnings', []))
+          assert 'wall_validation_meta' in fused
+          print('reader smoke tests ok', len(fused['walls']), len(fused['rooms']))
           PY
