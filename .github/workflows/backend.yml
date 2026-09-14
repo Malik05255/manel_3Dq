@@ -52,6 +52,7 @@ jobs:
           grep -q 'Dockerfile.reader' render.yaml
           grep -q 'ROBOFLOW_API_KEY' render.yaml
           grep -q 'FLOORPLAN_TILED_INFERENCE' render.yaml
+          grep -q 'pip install --no-cache-dir -r requirements.txt' backend/Dockerfile.reader
       - name: Verify reader migration contract
         shell: bash
         run: |
@@ -61,6 +62,6 @@ jobs:
           grep -q 'android-reader-v2' backend/app/cloud_public_gateway.py
           grep -q 'request_reader' backend/app/cloud_public_gateway.py
           grep -q 'READER_PROVIDER_URL' backend/app/reader_provider.py
-          grep -q 'roboflow-first+wall-segmentation-verifier' backend/app/reader_main.py
+          grep -q 'roboflow-first+opencv-verifier+geometry-quality-gates' backend/app/reader_main.py
           grep -q 'raster2graph-512' modal_reader/app.py
           grep -q 'requires_proxy_auth=True' modal_reader/app.py
