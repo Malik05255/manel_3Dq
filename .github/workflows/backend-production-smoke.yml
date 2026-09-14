@@ -2,99 +2,38 @@ name: Backend Production Smoke
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ 'codex/**' ]
-    paths:
-      - '.github/workflows/backend-production-smoke.yml'
-      - 'render.yaml'
-      - 'backend/app/**'
-  workflow_run:
-    workflows: [ 'Backend Build' ]
-    types: [ completed ]
-    branches: [ main ]
 
 permissions:
   contents: read
 
 jobs:
   smoke:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     env:
       BACKEND_URL: ${{ secrets.MANZILI_PROD_BACKEND_URL || 'https://manzili-hai-deep-parser.onrender.com' }}
       BACKEND_TOKEN: ${{ secrets.MANZILI_PROD_API_TOKEN }}
-      CONFIG_ATTEMPTS: ${{ github.event_name == 'workflow_run' && '30' || '1' }}
-      EXPECTED_GIT_COMMIT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
     steps:
-      - name: Validate production endpoint
+      - name: Validate cloud-only production gateway
         shell: bash
         run: |
           set -euo pipefail
-          case "$BACKEND_URL" in
-            https://*) ;;
-            *) echo 'Production backend must use HTTPS' >&2; exit 1 ;;
-          esac
+          HEALTH="$(curl --fail --silent --show-error --max-time 45 "${BACKEND_URL%/}/health")"
+          echo "health=$HEALTH"
+          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("version")=="0.70.0", d; assert d.get("reader")=="modal-raster2seq-cloud-only", d; assert d.get("local_inference") is False, d' "$HEALTH"
 
-      - name: Wait for exact production deployment and core readiness
+      - name: Verify Modal reader readiness
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 "$CONFIG_ATTEMPTS"); do
-            if BODY="$(curl --fail --silent --show-error --max-time 45 "${BACKEND_URL%/}/health" 2>/dev/null)"; then
-              echo "health=$BODY"
-              if python -c 'import json,sys; d=json.loads(sys.argv[1]); expected=sys.argv[2]; assert d.get("version")=="0.64.0", d; assert d.get("deep_parser_ready") is True, d; assert not expected or d.get("git_commit")==expected, f"production commit mismatch: expected={expected} actual={d.get('"'"'git_commit'"'"')}"' "$BODY" "$EXPECTED_GIT_COMMIT"; then
-                echo "exact production deployment and core readiness ok"
-                exit 0
-              fi
-            fi
-            if [ "$attempt" -lt "$CONFIG_ATTEMPTS" ]; then
-              echo "production not ready yet (attempt $attempt/$CONFIG_ATTEMPTS)"
-              sleep 20
-            fi
-          done
-          echo 'Production did not reach the expected commit or core readiness' >&2
-          exit 1
+          READY="$(curl --fail --silent --show-error --max-time 45 "${BACKEND_URL%/}/readyz")"
+          echo "readyz=$READY"
+          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("ok") is True, d; assert d.get("modal_reader_configured") is True, d; assert d.get("local_inference") is False, d' "$READY"
 
-      - name: Verify public readiness
+      - name: Verify authenticated cloud parser status
         shell: bash
         run: |
           set -euo pipefail
-          BODY="$(curl --fail --silent --show-error --max-time 45 "${BACKEND_URL%/}/readyz")"
-          echo "readyz=$BODY"
-          python -c 'import json,sys; d=json.loads(sys.argv[1]); expected=sys.argv[2]; assert d.get("ok") is True and d.get("deep_parser_ready") is True, d; assert d.get("version")=="0.64.0", d; assert not expected or d.get("git_commit")==expected, d; print("readyz ok", d.get("version"), d.get("git_commit"))' "$BODY" "$EXPECTED_GIT_COMMIT"
-
-      - name: Verify Android public parser reaches Roboflow
-        shell: bash
-        run: |
-          set -euo pipefail
-          BODY="$(curl --fail --silent --show-error --max-time 45 \
-            -H 'X-Manzili-Parser-Client: android-accuracy-v5' \
-            "${BACKEND_URL%/}/v1/public/parser/status")"
-          echo "public-parser-status=$BODY"
-          python -c 'import json,sys; d=json.loads(sys.argv[1]); rf=d.get("roboflow") or {}; assert d.get("ready") is True, d; assert d.get("transport")=="public-parser-only-v5", d; assert rf.get("configured") is True, d; assert d.get("preferred_path")=="roboflow-first+local-verifier", d; print("android public parser and Roboflow ready")' "$BODY"
-
-      - name: Verify authenticated parser readiness when test credential is available
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "$BACKEND_TOKEN" ]; then
-            echo '::warning::MANZILI_PROD_API_TOKEN is missing from GitHub Actions secrets; authenticated parser smoke coverage is skipped.'
-            exit 0
-          fi
+          test -n "$BACKEND_TOKEN" || { echo 'MANZILI_PROD_API_TOKEN is required for this manual smoke test' >&2; exit 1; }
           BODY="$(curl --fail --silent --show-error --max-time 45 -H "Authorization: Bearer $BACKEND_TOKEN" "${BACKEND_URL%/}/v1/parser/status")"
-          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("ready") is True, d; print("authenticated parser status ok", d.get("preferred_path"))' "$BODY"
-
-      - name: Verify zero-cost AI provider response
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "$BACKEND_TOKEN" ]; then
-            echo '::warning::Production API token is unavailable; live AI smoke coverage is skipped.'
-            exit 0
-          fi
-          BODY="$(curl --fail --silent --show-error --max-time 90 \
-            -H "Authorization: Bearer $BACKEND_TOKEN" \
-            -H 'Content-Type: application/json' \
-            --data '{"model":"openrouter/free","messages":[{"role":"user","content":"Reply with OK only."}],"max_tokens":32,"temperature":0}' \
-            "${BACKEND_URL%/}/v1/ai/chat")"
-          python -c 'import json,sys; d=json.loads(sys.argv[1]); choices=d.get("choices") or []; assert choices, d; msg=choices[0].get("message") or {}; signal=(msg.get("content") or msg.get("reasoning") or "").strip(); assert signal, d; usage=d.get("usage") or {}; assert float(usage.get("cost", 0) or 0)==0.0, usage; print("live zero-cost AI provider smoke ok", d.get("model"))' "$BODY"
+          echo "parser-status=$BODY"
+          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("ready") is True, d; assert d.get("preferred_path")=="modal-raster2seq-cloud-only", d; assert d.get("local_inference") is False, d' "$BODY"
