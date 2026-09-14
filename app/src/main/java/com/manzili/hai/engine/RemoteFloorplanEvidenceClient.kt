@@ -104,6 +104,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
     private val settings = HaiSettings(context)
     private val renderer = PdfPageRendererEngine(context)
     private val http = OkHttpClient.Builder()
+        .dns(ResilientDns())
         .connectTimeout(18, TimeUnit.SECONDS)
         .readTimeout(300, TimeUnit.SECONDS)
         .callTimeout(330, TimeUnit.SECONDS)
