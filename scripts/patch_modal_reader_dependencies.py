@@ -4,6 +4,10 @@ path = Path("modal_reader/app.py")
 text = path.read_text()
 
 replacements = {
+    'import modal\n': (
+        'import modal\n'
+        'from fastapi import Header, HTTPException\n'
+    ),
     '.run_commands("pip install -r requirements.txt")': (
         '.run_commands("sed -i \'s/^numpy==1.26.4$/numpy==1.24.4/; '
         's/^opencv-python$/opencv-python-headless==4.8.1.78/\' requirements.txt '
@@ -22,7 +26,8 @@ replacements = {
         '"easyocr==1.7.2", '
         '"opencv-python-headless==4.8.1.78", '
         '"numpy==1.24.4", '
-        '"scipy==1.8.1"'
+        '"scipy==1.8.1", '
+        '"cryptography==45.0.7"'
         ')'
     ),
 }
@@ -31,5 +36,72 @@ for old, new in replacements.items():
     if old not in text:
         raise SystemExit(f"expected Modal reader build command not found: {old}")
     text = text.replace(old, new, 1)
+
+marker = "@app.function(\n    image=reader_image,\n    gpu=\"T4\","
+security = '''_GATEWAY_PUBLIC_KEY_B64 = "u80Vwa7ILcrcbz6au3oUozEqFUd2ikchwNoi7flImg4"
+
+
+def _verify_gateway_signature(
+    payload: dict[str, Any],
+    timestamp: str | None,
+    nonce: str | None,
+    signature: str | None,
+) -> None:
+    import time
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    if not timestamp or not nonce or not signature:
+        raise HTTPException(401, "missing gateway signature")
+    try:
+        unix_time = int(timestamp)
+    except ValueError as exc:
+        raise HTTPException(401, "invalid gateway timestamp") from exc
+    if abs(int(time.time()) - unix_time) > 120:
+        raise HTTPException(401, "expired gateway signature")
+    try:
+        public_raw = base64.urlsafe_b64decode(
+            _GATEWAY_PUBLIC_KEY_B64 + "=" * (-len(_GATEWAY_PUBLIC_KEY_B64) % 4)
+        )
+        signature_raw = base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4))
+        canonical = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        message = timestamp.encode("ascii") + b"." + nonce.encode("ascii") + b"." + canonical
+        Ed25519PublicKey.from_public_bytes(public_raw).verify(signature_raw, message)
+    except (ValueError, InvalidSignature) as exc:
+        raise HTTPException(401, "invalid gateway signature") from exc
+
+
+'''
+if marker not in text:
+    raise SystemExit("Modal function marker not found")
+text = text.replace(marker, security + marker, 1)
+
+old_endpoint = '''@modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
+def parse_floorplan(payload: dict[str, Any]) -> dict[str, Any]:
+    image_bytes = _decode_image(payload)
+'''
+new_endpoint = '''@modal.fastapi_endpoint(method="POST", requires_proxy_auth=False)
+def parse_floorplan(
+    payload: dict[str, Any],
+    x_manzili_timestamp: str | None = Header(default=None),
+    x_manzili_nonce: str | None = Header(default=None),
+    x_manzili_signature: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _verify_gateway_signature(
+        payload,
+        x_manzili_timestamp,
+        x_manzili_nonce,
+        x_manzili_signature,
+    )
+    image_bytes = _decode_image(payload)
+'''
+if old_endpoint not in text:
+    raise SystemExit("Modal endpoint signature not found")
+text = text.replace(old_endpoint, new_endpoint, 1)
 
 path.write_text(text)
