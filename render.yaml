@@ -44,6 +44,10 @@ services:
     envVars:
       - key: READER_SERVICE_TOKEN
         sync: false
+      - key: LEGACY_EVIDENCE_URL
+        value: https://manzili-hai-deep-parser.onrender.com/v1/internal/legacy-floorplan-evidence
+      - key: LEGACY_EVIDENCE_TOKEN
+        sync: false
       - key: ROBOFLOW_API_KEY
         sync: false
       - key: ROBOFLOW_MODEL_IDS
