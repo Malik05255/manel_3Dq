@@ -4,7 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material3.CircularProgressIndicator
@@ -26,11 +26,14 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
 /**
- * Global HAI summon bubble.
- * One gesture recognizer owns both tap and drag so dragging never fights the click handler.
+ * HAI action pill.
+ * - Single tap: execute HAI action.
+ * - Long press: pick the pill up, then drag it freely.
+ * A normal finger move never drags the pill before the long-press threshold.
  */
 @Composable
 fun FloatingHaiButton(
@@ -40,60 +43,83 @@ fun FloatingHaiButton(
 ) {
     BoxWithConstraints(modifier.fillMaxSize().zIndex(1000f)) {
         val density = LocalDensity.current
-        val bubbleDp = 58.dp
-        val bubblePx = with(density) { bubbleDp.toPx() }
-        val maxX = (with(density) { maxWidth.toPx() } - bubblePx).coerceAtLeast(0f)
-        val maxY = (with(density) { maxHeight.toPx() } - bubblePx).coerceAtLeast(0f)
+        val buttonWidth = 74.dp
+        val buttonHeight = 54.dp
+        val buttonWidthPx = with(density) { buttonWidth.toPx() }
+        val buttonHeightPx = with(density) { buttonHeight.toPx() }
+        val maxX = (with(density) { maxWidth.toPx() } - buttonWidthPx).coerceAtLeast(0f)
+        val maxY = (with(density) { maxHeight.toPx() } - buttonHeightPx).coerceAtLeast(0f)
 
         var savedX by rememberSaveable { mutableStateOf<Float?>(null) }
         var savedY by rememberSaveable { mutableStateOf<Float?>(null) }
+        var lifted by remember { mutableStateOf(false) }
 
-        val x = (savedX ?: maxX * .82f).coerceIn(0f, maxX)
-        val y = (savedY ?: maxY * .36f).coerceIn(0f, maxY)
+        val x = (savedX ?: maxX * .80f).coerceIn(0f, maxX)
+        val y = (savedY ?: maxY * .34f).coerceIn(0f, maxY)
+        val shape = RoundedCornerShape(22.dp)
 
         Surface(
             modifier = Modifier
                 .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
-                .size(bubbleDp)
+                .size(buttonWidth, buttonHeight)
                 .zIndex(1001f)
-                .shadow(11.dp, CircleShape)
+                .shadow(if (lifted) 18.dp else 10.dp, shape)
                 .pointerInput(busy, maxX, maxY) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val pointerId = down.id
-                        var dragging = false
-                        var travel = Offset.Zero
-                        var currentX = (savedX ?: maxX * .82f).coerceIn(0f, maxX)
-                        var currentY = (savedY ?: maxY * .36f).coerceIn(0f, maxY)
+                        var totalTravel = Offset.Zero
+                        var releasedBeforeLongPress = false
+                        var currentX = (savedX ?: maxX * .80f).coerceIn(0f, maxX)
+                        var currentY = (savedY ?: maxY * .34f).coerceIn(0f, maxY)
 
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == pointerId } ?: break
-                            if (!change.pressed) break
-                            val delta = change.positionChange()
-                            travel += delta
-                            if (!dragging && travel.getDistance() >= viewConfiguration.touchSlop) {
-                                dragging = true
+                        val longPressed = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == pointerId }
+                                    ?: return@withTimeoutOrNull false
+                                totalTravel += change.positionChange()
+                                if (!change.pressed) {
+                                    releasedBeforeLongPress = true
+                                    return@withTimeoutOrNull false
+                                }
                             }
-                            if (dragging) {
-                                change.consume()
-                                currentX = (currentX + delta.x).coerceIn(0f, maxX)
-                                currentY = (currentY + delta.y).coerceIn(0f, maxY)
-                                savedX = currentX
-                                savedY = currentY
+                        } == null
+
+                        if (!longPressed) {
+                            if (releasedBeforeLongPress && totalTravel.getDistance() < viewConfiguration.touchSlop && !busy) {
+                                onClick()
                             }
+                            return@awaitEachGesture
                         }
 
-                        if (!dragging && !busy) onClick()
+                        lifted = true
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                                if (!change.pressed) break
+                                val delta = change.positionChange()
+                                if (delta != Offset.Zero) {
+                                    change.consume()
+                                    currentX = (currentX + delta.x).coerceIn(0f, maxX)
+                                    currentY = (currentY + delta.y).coerceIn(0f, maxY)
+                                    savedX = currentX
+                                    savedY = currentY
+                                }
+                            }
+                        } finally {
+                            lifted = false
+                        }
                     }
                 },
-            shape = CircleShape,
+            shape = shape,
             color = Color(0xFF5E4BDD),
-            tonalElevation = 8.dp,
-            shadowElevation = 8.dp
+            tonalElevation = if (lifted) 12.dp else 7.dp,
+            shadowElevation = if (lifted) 14.dp else 8.dp
         ) {
             Box(
-                Modifier.fillMaxSize().background(Color(0xFF5E4BDD), CircleShape),
+                Modifier.fillMaxSize().background(Color(0xFF5E4BDD), shape),
                 contentAlignment = Alignment.Center
             ) {
                 if (busy) {
@@ -103,14 +129,15 @@ fun FloatingHaiButton(
                         strokeWidth = 2.2.dp
                     )
                 } else {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             Icons.Rounded.AutoAwesome,
-                            contentDescription = "استدع HAI",
+                            contentDescription = "HAI",
                             tint = Color.White,
                             modifier = Modifier.size(18.dp)
                         )
-                        Text("HAI", color = Color.White, fontWeight = FontWeight.Black, fontSize = 9.5.sp)
+                        Spacer(Modifier.width(5.dp))
+                        Text("HAI", color = Color.White, fontWeight = FontWeight.Black, fontSize = 11.sp)
                     }
                 }
             }
