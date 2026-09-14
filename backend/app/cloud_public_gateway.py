@@ -5,20 +5,12 @@ import time
 from collections import defaultdict, deque
 from typing import Any
 
-import httpx
 from fastapi import Header, HTTPException, Request
 
-from .cloud_gateway import (
-    ParseRequest,
-    _gateway_public_key_b64,
-    _modal_body,
-    _modal_config,
-    _modal_ready,
-    _modal_request_headers,
-    app,
-)
+from .cloud_gateway import ParseRequest, _gateway_public_key_b64, app
+from .reader_provider import reader_provider, request_reader
 
-_ALLOWED_CLIENTS = {"android-cloud-only-v1"}
+_ALLOWED_CLIENTS = {"android-cloud-only-v1", "android-reader-v2"}
 _WINDOW_SECONDS = 60.0
 _PER_CLIENT_LIMIT = 12
 _GLOBAL_LIMIT = 90
@@ -72,14 +64,15 @@ async def public_parser_status(
     x_manzili_parser_client: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _require_android_client(x_manzili_parser_client)
-    ready = _modal_ready()
+    provider = reader_provider()
     return {
-        "ready": ready,
-        "reader": "modal-raster2seq-cloud-only",
-        "preferred_path": "modal-raster2seq-cloud-only" if ready else "unavailable",
-        "modal_reader_configured": ready,
+        "ready": provider.ready,
+        "reader": provider.name,
+        "preferred_path": provider.name if provider.ready else "unavailable",
+        "reader_configured": provider.ready,
+        "modal_reader_configured": provider.name == "modal-raster2seq-legacy" and provider.ready,
         "local_inference": False,
-        "detail": "" if ready else "Modal reader is not configured on Render",
+        "detail": "" if provider.ready else "Floor-plan reader provider is not configured on the gateway",
     }
 
 
@@ -91,22 +84,4 @@ async def public_parse_floorplan(
 ) -> dict[str, Any]:
     client = _require_android_client(x_manzili_parser_client)
     _enforce_rate_limit(request, client)
-    modal_url, _ = _modal_config()
-    if not _modal_ready():
-        raise HTTPException(503, "Modal reader is not configured")
-    body = _modal_body(payload)
-    async with httpx.AsyncClient(timeout=330) as http:
-        response = await http.post(
-            modal_url,
-            content=body,
-            headers=_modal_request_headers(body),
-        )
-    if response.status_code >= 400:
-        raise HTTPException(response.status_code, response.text[:1200])
-    result = response.json()
-    if not isinstance(result, dict):
-        raise HTTPException(502, "Cloud reader returned an invalid response")
-    result["page_index"] = payload.page_index
-    result["reader_path"] = "modal-raster2seq-cloud-only"
-    result["local_inference"] = False
-    return result
+    return await request_reader(payload.image_base64, payload.page_index)
