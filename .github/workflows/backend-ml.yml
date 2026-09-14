@@ -2,14 +2,30 @@ name: Backend ML Validation
 
 on:
   push:
-    branches: [ main, 'codex/**' ]
+    branches: [ main, 'codex/**', 'feat/**' ]
     paths:
       - 'backend/app/cubicasa_model.py'
       - 'backend/app/parser.py'
-      - 'backend/app/main.py'
+      - 'backend/app/parser_v2.py'
+      - 'backend/app/roboflow_parser.py'
+      - 'backend/app/reader_main.py'
       - 'backend/scripts/fetch_floorplan_model.py'
       - 'backend/requirements-ml-cpu.txt'
       - 'backend/Dockerfile.ml'
+      - 'backend/Dockerfile.reader'
+      - 'render.yaml'
+      - '.github/workflows/backend-ml.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'backend/app/cubicasa_model.py'
+      - 'backend/app/parser.py'
+      - 'backend/app/parser_v2.py'
+      - 'backend/app/roboflow_parser.py'
+      - 'backend/app/reader_main.py'
+      - 'backend/scripts/fetch_floorplan_model.py'
+      - 'backend/requirements-ml-cpu.txt'
+      - 'backend/Dockerfile.reader'
       - 'render.yaml'
       - '.github/workflows/backend-ml.yml'
   workflow_dispatch:
@@ -25,7 +41,7 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -35,6 +51,14 @@ jobs:
         run: pip install -r requirements-ml-cpu.txt
       - name: Download and verify model weights
         run: python scripts/fetch_floorplan_model.py
+      - name: Import hybrid reader service
+        run: |
+          python - <<'PY'
+          from app.reader_main import app
+          assert app.title == 'Manzili HAI Reader V2'
+          assert any(getattr(route, 'path', '') == '/v2/parse' for route in app.routes)
+          print('reader service import ok')
+          PY
       - name: Run real segmentation inference smoke test
         run: |
           python - <<'PY'
