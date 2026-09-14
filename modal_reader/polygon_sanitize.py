@@ -183,9 +183,10 @@ def sanitize_polygon(points: list[dict[str, float]]) -> tuple[list[dict[str, flo
 def wall_edges_from_polygon(points: list[dict[str, float]]) -> list[tuple[dict[str, float], dict[str, float]]]:
     """Create only sane consecutive edges from a sanitized polygon.
 
-    A very long diagonal that is also a strong median-length outlier is treated
-    as a broken cycle edge rather than a wall. Short/intentional diagonal walls
-    remain valid.
+    Raster2Seq occasionally emits a cycle jump across most of the page. Such a
+    jump is a diagonal spanning most of the room bounding box and is also longer
+    than its local/global edge context. Short architectural diagonal walls are
+    retained.
     """
 
     if len(points) < 3:
@@ -208,15 +209,19 @@ def wall_edges_from_polygon(points: list[dict[str, float]]) -> list[tuple[dict[s
     bbox_diagonal = math.hypot(max_x - min_x, max_y - min_y)
 
     output: list[tuple[dict[str, float], dict[str, float]]] = []
-    for start, end, length in raw:
+    for index, (start, end, length) in enumerate(raw):
         dx = abs(end["x"] - start["x"])
         dy = abs(end["y"] - start["y"])
         diagonal = dx > 0.18 * max(length, 1e-6) and dy > 0.18 * max(length, 1e-6)
+        previous_length = raw[(index - 1) % len(raw)][2]
+        next_length = raw[(index + 1) % len(raw)][2]
+        local_outlier = length > max(previous_length, next_length) * 2.2
+        global_outlier = length > median * 1.08
         suspicious_jump = (
             diagonal
-            and len(raw) >= 4
-            and length > max(8.0, median * 3.5)
-            and length > bbox_diagonal * 0.62
+            and len(raw) >= 5
+            and length > max(10.0, bbox_diagonal * 0.62)
+            and (local_outlier or global_outlier)
         )
         if not suspicious_jump:
             output.append((start, end))
