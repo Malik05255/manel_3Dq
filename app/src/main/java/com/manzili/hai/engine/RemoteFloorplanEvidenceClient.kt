@@ -104,16 +104,36 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
     private val settings = HaiSettings(context)
     private val renderer = PdfPageRendererEngine(context)
     private val http = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(18, TimeUnit.SECONDS)
         .readTimeout(300, TimeUnit.SECONDS)
         .callTimeout(330, TimeUnit.SECONDS)
         .build()
 
-    private val parserClient = "android-cloud-only-v1"
+    private val parserClient = "android-reader-v2"
+    private val bridgeBaseUrl = "https://abavsspydbpkudhswmzp.supabase.co/functions/v1/hai-floorplan-gateway"
+
+    @Volatile
+    private var activeBaseUrl: String? = null
+
+    /**
+     * The Render gateway remains the preferred production path. The Supabase edge bridge is a
+     * transport-only DNS failover so Android devices that cannot resolve an onrender.com host do
+     * not lose floor-plan analysis entirely. Both paths terminate at the same cloud gateway.
+     */
+    private fun candidateBaseUrls(): List<String> = buildList {
+        settings.backendBaseUrl.trim().trimEnd('/').takeIf { it.startsWith("https://") }?.let(::add)
+        add(bridgeBaseUrl)
+    }.distinct()
+
+    private fun statusUrl(baseUrl: String): String =
+        if (baseUrl == bridgeBaseUrl) baseUrl else "$baseUrl/v1/public/parser/status"
+
+    private fun parseUrl(baseUrl: String): String =
+        if (baseUrl == bridgeBaseUrl) baseUrl else "$baseUrl/v1/public/parse-floorplan"
 
     /** Parser access is intentionally public-through-gateway; no device secret is required. */
     val available: Boolean
-        get() = settings.backendBaseUrl.startsWith("https://")
+        get() = candidateBaseUrls().isNotEmpty()
 
     private fun Request.Builder.withCloudHeaders(): Request.Builder {
         header("X-Manzili-Parser-Client", parserClient)
@@ -148,26 +168,59 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
 
     suspend fun readiness(): Readiness {
         if (!available) return Readiness(false, "none", false, "none", "رابط خدمة القراءة السحابية غير مهيأ")
-        val request = Request.Builder()
-            .url("${settings.backendBaseUrl}/v1/public/parser/status")
-            .withCloudHeaders()
-            .get()
-            .build()
-        return runCatching {
-            val response = executeCancellable(request)
-            if (!response.successful) {
-                Readiness(false, "status-${response.code}", false, "modal-cloud-only", response.body.take(220))
-            } else {
-                val root = JSONObject(response.body)
-                Readiness(
-                    ready = root.optBoolean("ready", false),
-                    preferredPath = root.optString("preferred_path", "modal-cloud-only"),
-                    configured = root.optBoolean("modal_reader_configured", root.optBoolean("ready", false)),
-                    modelLabel = root.optString("reader", "modal-cloud-only"),
-                    detail = root.optString("detail", "")
-                )
+
+        var lastDetail = ""
+        for (baseUrl in candidateBaseUrls()) {
+            val request = Request.Builder()
+                .url(statusUrl(baseUrl))
+                .withCloudHeaders()
+                .get()
+                .build()
+
+            val response = try {
+                executeCancellable(request)
+            } catch (_: IOException) {
+                lastDetail = if (baseUrl == bridgeBaseUrl) {
+                    "تعذر الاتصال بمسار القراءة الاحتياطي"
+                } else {
+                    "تعذر حل عنوان خادم القراءة الأساسي؛ يجري استخدام المسار الاحتياطي"
+                }
+                continue
             }
-        }.getOrElse { Readiness(false, "network", false, "modal-cloud-only", it.message.orEmpty()) }
+
+            if (!response.successful) {
+                lastDetail = "خدمة القراءة أعادت HTTP ${response.code}"
+                continue
+            }
+
+            val root = runCatching { JSONObject(response.body) }.getOrElse {
+                lastDetail = "استجابة خدمة القراءة غير صالحة"
+                continue
+            }
+            val ready = root.optBoolean("ready", false)
+            if (!ready) {
+                lastDetail = root.optString("detail", "خدمة القراءة غير جاهزة")
+                continue
+            }
+
+            activeBaseUrl = baseUrl
+            return Readiness(
+                ready = true,
+                preferredPath = root.optString("preferred_path", "hai-reader-v2"),
+                configured = root.optBoolean("reader_configured", root.optBoolean("modal_reader_configured", true)),
+                modelLabel = root.optString("reader", "hai-reader-v2"),
+                detail = if (baseUrl == bridgeBaseUrl) "تم الاتصال عبر المسار الاحتياطي" else root.optString("detail", "")
+            )
+        }
+
+        activeBaseUrl = null
+        return Readiness(
+            ready = false,
+            preferredPath = "network-failover",
+            configured = false,
+            modelLabel = "hai-reader-v2",
+            detail = lastDetail.ifBlank { "تعذر الوصول إلى خدمة القراءة عبر المسارين الأساسي والاحتياطي" }
+        )
     }
 
     suspend fun analyze(
@@ -180,7 +233,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
 
         val state = readiness()
         require(state.ready) { "خدمة القراءة السحابية غير جاهزة: ${state.detail.ifBlank { state.preferredPath }}" }
-        onProgress(AnalysisProgress(8, "تم الاتصال بالخدمة السحابية"))
+        onProgress(AnalysisProgress(8, if (activeBaseUrl == bridgeBaseUrl) "تم الاتصال بالمسار السحابي الاحتياطي" else "تم الاتصال بالخدمة السحابية"))
 
         val images = withContext(Dispatchers.IO) {
             renderer.render(uri, maxPdfPages.coerceIn(1, 12), targetMaxPx = 3200, jpegQuality = 96)
@@ -205,15 +258,43 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
 
     private suspend fun requestPage(pageIndex: Int, base64: String): PageResult {
         val body = JSONObject().put("image_base64", base64).put("page_index", pageIndex)
-        val req = Request.Builder()
-            .url("${settings.backendBaseUrl}/v1/public/parse-floorplan")
-            .withCloudHeaders()
-            .header("Content-Type", "application/json")
-            .post(body.toString().toRequestBody("application/json".toMediaType()))
-            .build()
-        val response = executeCancellable(req)
-        if (!response.successful) error("Cloud reader (${response.code}): ${response.body.take(320)}")
-        return parse(pageIndex, JSONObject(response.body))
+        val orderedTargets = buildList {
+            activeBaseUrl?.let(::add)
+            addAll(candidateBaseUrls())
+        }.distinct()
+
+        var lastDetail = ""
+        for (baseUrl in orderedTargets) {
+            val req = Request.Builder()
+                .url(parseUrl(baseUrl))
+                .withCloudHeaders()
+                .header("Content-Type", "application/json")
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val response = try {
+                executeCancellable(req)
+            } catch (_: IOException) {
+                lastDetail = if (baseUrl == bridgeBaseUrl) {
+                    "تعذر الاتصال بمسار القراءة الاحتياطي"
+                } else {
+                    "تعذر حل عنوان خادم القراءة الأساسي"
+                }
+                continue
+            }
+
+            if (response.successful) {
+                activeBaseUrl = baseUrl
+                return parse(pageIndex, JSONObject(response.body))
+            }
+
+            lastDetail = "خدمة القراءة أعادت HTTP ${response.code}"
+            if (response.code !in setOf(408, 425, 429, 500, 502, 503, 504)) {
+                continue
+            }
+        }
+
+        error("تعذر تحليل المخطط بعد تجربة المسارين الأساسي والاحتياطي. $lastDetail")
     }
 
     private fun parse(pageIndex: Int, root: JSONObject): PageResult {
