@@ -70,7 +70,7 @@ jobs:
           print('reader service import ok, OCR=tesseract-ara-eng')
           PY
       - name: Test wall source-image support gate
-        run: pytest -q tests/test_wall_support.py
+        run: PYTHONPATH=. pytest -q tests/test_wall_support.py
       - name: Run deterministic parser fallback smoke test
         run: |
           python - <<'PY'
