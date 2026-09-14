@@ -30,15 +30,64 @@ replacements = {
         '"cryptography==45.0.7"'
         ')'
     ),
+    '    h, w = image.shape[:2]\n'
+    '    reader = easyocr.Reader(["ar", "en"], gpu=True, verbose=False)\n': (
+        '    h, w = image.shape[:2]\n'
+        '    max_side = max(h, w)\n'
+        '    if max_side > 2800:\n'
+        '        scale = 2800.0 / float(max_side)\n'
+        '        image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)\n'
+        '        h, w = image.shape[:2]\n'
+        '    reader = easyocr.Reader(["ar", "en"], gpu=True, verbose=False)\n'
+    ),
+    '    ocr_lines = _cloud_ocr(image_bytes)\n'
+    '    metric = metric_evidence(ocr_lines)\n': (
+        '    ocr_error: str | None = None\n'
+        '    try:\n'
+        '        ocr_lines = _cloud_ocr(image_bytes)\n'
+        '    except Exception as exc:\n'
+        '        ocr_lines = []\n'
+        '        ocr_error = " ".join(str(exc).split())[:500]\n'
+        '    metric = metric_evidence(ocr_lines)\n'
+    ),
+    '    if opening_error:\n'
+    '        warnings.append("Door/window cloud pass failed: " + opening_error)\n': (
+        '    if opening_error:\n'
+        '        warnings.append("Door/window cloud pass failed: " + opening_error)\n'
+        '    if ocr_error:\n'
+        '        warnings.append("Cloud OCR failed without blocking geometry: " + ocr_error)\n'
+    ),
 }
 
 for old, new in replacements.items():
     if old not in text:
-        raise SystemExit(f"expected Modal reader build command not found: {old}")
+        raise SystemExit(f"expected Modal reader build/source fragment not found: {old}")
     text = text.replace(old, new, 1)
 
-marker = "@app.function(\n    image=reader_image,\n    gpu=\"T4\","
-security = '''_GATEWAY_KEY_URL = "https://manzili-hai-deep-parser.onrender.com/v1/public/gateway-key"
+old_endpoint = '''@app.function(
+    image=reader_image,
+    gpu="T4",
+    timeout=300,
+    scaledown_window=60,
+)
+@modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
+def parse_floorplan(payload: dict[str, Any]) -> dict[str, Any]:
+'''
+new_gpu_function = '''@app.function(
+    image=reader_image,
+    gpu="T4",
+    timeout=600,
+    scaledown_window=120,
+)
+def _parse_floorplan_gpu(payload: dict[str, Any]) -> dict[str, Any]:
+'''
+if old_endpoint not in text:
+    raise SystemExit("Modal GPU endpoint signature not found")
+text = text.replace(old_endpoint, new_gpu_function, 1)
+
+security_and_web = r'''
+
+_GATEWAY_KEY_URL = "https://manzili-hai-deep-parser.onrender.com/v1/public/gateway-key"
 _GATEWAY_PUBLIC_KEY_B64: str | None = None
 
 
@@ -96,17 +145,21 @@ def _verify_gateway_signature(
         raise HTTPException(401, "invalid gateway signature") from exc
 
 
-'''
-if marker not in text:
-    raise SystemExit("Modal function marker not found")
-text = text.replace(marker, security + marker, 1)
+web_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install("fastapi==0.115.12", "cryptography==45.0.7")
+)
 
-old_endpoint = '''@modal.fastapi_endpoint(method="POST", requires_proxy_auth=True)
-def parse_floorplan(payload: dict[str, Any]) -> dict[str, Any]:
-    image_bytes = _decode_image(payload)
-'''
-new_endpoint = '''@modal.fastapi_endpoint(method="POST", requires_proxy_auth=False)
-def parse_floorplan(
+
+@app.function(
+    image=web_image,
+    timeout=620,
+    cpu=1.0,
+    memory=1024,
+)
+@modal.concurrent(max_inputs=8)
+@modal.fastapi_endpoint(method="POST", requires_proxy_auth=False)
+async def parse_floorplan(
     payload: dict[str, Any],
     x_manzili_timestamp: str | None = Header(default=None),
     x_manzili_nonce: str | None = Header(default=None),
@@ -118,10 +171,23 @@ def parse_floorplan(
         x_manzili_nonce,
         x_manzili_signature,
     )
-    image_bytes = _decode_image(payload)
+    if not str(payload.get("image_base64") or "").strip():
+        raise HTTPException(422, "image_base64 is required")
+    try:
+        return await _parse_floorplan_gpu.remote.aio(payload)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        detail = " ".join(str(exc).split())
+        if not detail:
+            detail = repr(exc)
+        detail = detail[-1800:]
+        print(f"GPU reader failed: {type(exc).__name__}: {detail}", flush=True)
+        raise HTTPException(
+            502,
+            f"modal-gpu-inference:{type(exc).__name__}:{detail}",
+        ) from exc
 '''
-if old_endpoint not in text:
-    raise SystemExit("Modal endpoint signature not found")
-text = text.replace(old_endpoint, new_endpoint, 1)
 
+text = text.rstrip() + security_and_web + "\n"
 path.write_text(text)
