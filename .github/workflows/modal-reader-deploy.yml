@@ -20,7 +20,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     env:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
@@ -51,6 +51,100 @@ jobs:
         run: modal deploy -m modal_reader.app --strategy recreate
       - name: Show deployed app history
         run: modal app history manzili-hai-floorplan-reader --json
+      - name: End-to-end public parser smoke test
+        env:
+          SMOKE_URL: https://manzili-hai-deep-parser.onrender.com/v1/public/parse-floorplan
+        run: |
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import struct
+          import urllib.error
+          import urllib.request
+          import zlib
+
+          width = height = 256
+          pixels = bytearray([255]) * (width * height * 3)
+
+          def black(x, y):
+              if 0 <= x < width and 0 <= y < height:
+                  i = (y * width + x) * 3
+                  pixels[i:i + 3] = b'\x00\x00\x00'
+
+          def wall_rect(x0, y0, x1, y1, thickness=8):
+              for y in range(y0, y1 + 1):
+                  for x in range(x0, x1 + 1):
+                      if (
+                          y < y0 + thickness
+                          or y > y1 - thickness
+                          or x < x0 + thickness
+                          or x > x1 - thickness
+                      ):
+                          black(x, y)
+
+          wall_rect(20, 20, 235, 235)
+          for x in range(124, 132):
+              for y in range(28, 228):
+                  if not 104 <= y <= 150:
+                      black(x, y)
+          for y in range(124, 132):
+              for x in range(28, 228):
+                  if not 104 <= x <= 150:
+                      black(x, y)
+
+          raw = b''.join(
+              b'\x00' + bytes(pixels[y * width * 3:(y + 1) * width * 3])
+              for y in range(height)
+          )
+
+          def chunk(kind, data):
+              return (
+                  struct.pack('>I', len(data))
+                  + kind
+                  + data
+                  + struct.pack('>I', zlib.crc32(kind + data) & 0xFFFFFFFF)
+              )
+
+          png = (
+              b'\x89PNG\r\n\x1a\n'
+              + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+              + chunk(b'IDAT', zlib.compress(raw, 9))
+              + chunk(b'IEND', b'')
+          )
+          payload = json.dumps(
+              {
+                  'image_base64': base64.b64encode(png).decode('ascii'),
+                  'source_name': 'ci-smoke.png',
+                  'project_type': 'villa_two_floors',
+              }
+          ).encode('utf-8')
+          request = urllib.request.Request(
+              os.environ['SMOKE_URL'],
+              data=payload,
+              method='POST',
+              headers={
+                  'Content-Type': 'application/json',
+                  'X-Manzili-Parser-Client': 'android-cloud-only-v1',
+              },
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=480) as response:
+                  body = response.read().decode('utf-8', errors='replace')
+                  print('HTTP', response.status)
+          except urllib.error.HTTPError as exc:
+              body = exc.read().decode('utf-8', errors='replace')
+              print('HTTP', exc.code)
+              print(body[:8000])
+              raise
+
+          print(body[:8000])
+          document = json.loads(body)
+          assert isinstance(document.get('rooms'), list), document.keys()
+          assert isinstance(document.get('walls'), list), document.keys()
+          assert isinstance(document.get('quality'), dict), document.keys()
+          assert isinstance(document.get('provenance'), dict), document.keys()
+          PY
       - name: Fetch recent Modal runtime logs
         if: always()
         run: modal app logs manzili-hai-floorplan-reader --tail 250 --timestamps --show-function-id --show-container-id
