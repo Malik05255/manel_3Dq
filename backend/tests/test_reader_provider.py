@@ -1,4 +1,4 @@
-from app.reader_provider import reader_provider
+from app.reader_provider import _normalize_reader_url, reader_provider
 
 
 def test_reader_provider_prefers_new_platform_env(monkeypatch):
@@ -11,6 +11,20 @@ def test_reader_provider_prefers_new_platform_env(monkeypatch):
     assert provider.ready is True
     assert provider.url == "https://reader.example.com/v2/parse"
     assert provider.name == "hai-segmentation-v2"
+
+
+def test_reader_provider_normalizes_service_root_to_v2_parse(monkeypatch):
+    monkeypatch.setenv("READER_PROVIDER_URL", "https://reader.example.com/")
+    monkeypatch.setenv("READER_PROVIDER_NAME", "hai-reader-v2")
+
+    provider = reader_provider()
+
+    assert provider.ready is True
+    assert provider.url == "https://reader.example.com/v2/parse"
+
+
+def test_normalize_reader_url_preserves_explicit_endpoint():
+    assert _normalize_reader_url("https://reader.example.com/custom/parse/") == "https://reader.example.com/custom/parse"
 
 
 def test_reader_provider_keeps_modal_as_migration_fallback(monkeypatch):
