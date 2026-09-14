@@ -17,12 +17,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Require Modal credentials
+      - name: Normalize and validate Modal credentials
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$MODAL_TOKEN_ID"
-          test -n "$MODAL_TOKEN_SECRET"
+          CLEAN_ID="$(printf '%s' "$MODAL_TOKEN_ID" | tr -d '[:space:]')"
+          CLEAN_SECRET="$(printf '%s' "$MODAL_TOKEN_SECRET" | tr -d '[:space:]')"
+          test -n "$CLEAN_ID"
+          test -n "$CLEAN_SECRET"
+          [[ "$CLEAN_ID" == ak-* ]] || { echo 'MODAL_TOKEN_ID must start with ak-' >&2; exit 1; }
+          [[ "$CLEAN_SECRET" == as-* ]] || { echo 'MODAL_TOKEN_SECRET must start with as-' >&2; exit 1; }
+          echo "::add-mask::$CLEAN_ID"
+          echo "::add-mask::$CLEAN_SECRET"
+          printf 'MODAL_TOKEN_ID=%s\n' "$CLEAN_ID" >> "$GITHUB_ENV"
+          printf 'MODAL_TOKEN_SECRET=%s\n' "$CLEAN_SECRET" >> "$GITHUB_ENV"
       - name: Install Modal CLI
         run: python -m pip install --upgrade modal
       - name: Deploy cloud-only floor-plan reader
