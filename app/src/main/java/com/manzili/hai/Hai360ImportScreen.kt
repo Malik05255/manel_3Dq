@@ -1,8 +1,10 @@
 package com.manzili.hai
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
-import androidx.activity.compose.BackHandler
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -26,38 +28,71 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.manzili.hai.engine.MultiFloorGeometryEngine
+import androidx.core.content.ContextCompat
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import com.manzili.hai.data.PendingAnalysisStore
 import com.manzili.hai.engine.RemoteFloorplanEvidenceClient
 import com.manzili.hai.engine.SaudiProjectTypeEngine
-import com.manzili.hai.model.FloorPlan
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import com.manzili.hai.work.FloorplanAnalysisWorker
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 @Composable
 internal fun Hai360ImportScreen(
     initialSource: Uri?,
+    activeWorkId: UUID?,
     onBack: () -> Unit,
     onSourceChanged: (Uri?) -> Unit,
-    onAnalyzed: (FloorPlan, SaudiProjectTypeEngine.Type) -> Unit
+    onWorkStarted: (UUID) -> Unit,
+    onWorkStopped: (UUID) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val remote = remember { RemoteFloorplanEvidenceClient(context) }
+    val workManager = remember { WorkManager.getInstance(context) }
+    val pendingStore = remember { PendingAnalysisStore(context) }
 
     var source by remember(initialSource) { mutableStateOf(initialSource) }
     var type by remember { mutableStateOf(SaudiProjectTypeEngine.Type.VILLA_TWO) }
-    var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var progress by remember { mutableIntStateOf(0) }
-    var progressLabel by remember { mutableStateOf("بدء العملية") }
-    var analysisJob by remember { mutableStateOf<Job?>(null) }
 
-    DisposableEffect(Unit) {
-        onDispose { analysisJob?.cancel() }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val workInfo by produceState<WorkInfo?>(initialValue = null, key1 = activeWorkId) {
+        val id = activeWorkId ?: return@produceState
+        workManager.getWorkInfoByIdFlow(id).collect { value = it }
     }
-    BackHandler(enabled = busy) { /* لا خروج أثناء التحليل إلا من زر الإلغاء الصريح. */ }
+
+    val busy = workInfo?.state in setOf(WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING, WorkInfo.State.BLOCKED)
+    val progress = workInfo?.progress?.getInt(FloorplanAnalysisWorker.KEY_PROGRESS, 0) ?: 0
+    val progressLabel = workInfo?.progress?.getString(FloorplanAnalysisWorker.KEY_LABEL)
+        ?: if (workInfo?.state == WorkInfo.State.ENQUEUED) "بانتظار اتصال الشبكة" else "بدء العملية"
+
+    LaunchedEffect(source) {
+        if (source != null && activeWorkId == null) {
+            // Wake the cloud gateway while the user is reviewing the selected file. This removes
+            // a large part of the free-tier cold-start delay without lowering analysis quality.
+            scope.launch { runCatching { remote.readiness() } }
+        }
+    }
+
+    LaunchedEffect(workInfo?.state, activeWorkId) {
+        val id = activeWorkId ?: return@LaunchedEffect
+        when (workInfo?.state) {
+            WorkInfo.State.FAILED -> {
+                error = workInfo?.outputData?.getString(FloorplanAnalysisWorker.KEY_ERROR)
+                    ?: pendingStore.failure(id)
+                    ?: "تعذر تحليل المخطط سحابيًا"
+                pendingStore.clear(id)
+                onWorkStopped(id)
+            }
+            WorkInfo.State.CANCELLED -> {
+                pendingStore.clear(id)
+                onWorkStopped(id)
+            }
+            else -> Unit
+        }
+    }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -148,46 +183,25 @@ internal fun Hai360ImportScreen(
             H360PrimaryButton(
                 text = "تحليل المخطط سحابيًا",
                 modifier = Modifier.fillMaxWidth(),
-                enabled = source != null && !busy,
+                enabled = source != null && !busy && activeWorkId == null,
                 icon = Icons.Rounded.CloudUpload
             ) {
                 val uri = source ?: return@H360PrimaryButton
-                busy = true
                 error = null
-                progress = 0
-                progressLabel = "بدء العملية"
-                analysisJob = scope.launch {
-                    try {
-                        if (!remote.available) error("خدمة القراءة السحابية غير مهيأة")
-                        val result = remote.analyze(uri, maxPdfPages = 8) { update ->
-                            progress = update.percent.coerceIn(0, 100)
-                            progressLabel = update.label
-                        }
-                        progress = 98
-                        progressLabel = "تثبيت الهندسة المقروءة"
-                        val plan = result.toFloorPlan(title = "مخطط مستورد")
-                        val typed = SaudiProjectTypeEngine.apply(plan, type)
-                        val normalized = MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(typed))
-                        progress = 100
-                        progressLabel = "اكتمل التحليل"
-                        delay(140)
-                        onAnalyzed(normalized, type)
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (failure: Throwable) {
-                        error = failure.message ?: "تعذر تحليل المخطط سحابيًا"
-                    } finally {
-                        busy = false
-                        analysisJob = null
-                    }
+                if (
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
+                val id = FloorplanAnalysisWorker.enqueue(context, uri, type, maxPages = 8)
+                onWorkStarted(id)
             }
             Spacer(Modifier.height(10.dp))
         }
 
         if (busy) {
             Box(Modifier.fillMaxSize()) {
-                // حاجز لمس مستقل تحت محتوى التقدم: يمنع أي نقرة من الوصول إلى منتقي الملفات أو الشاشة الأصلية.
                 Box(
                     Modifier
                         .matchParentSize()
@@ -215,6 +229,13 @@ internal fun Hai360ImportScreen(
                     Text("تحليل المخطط", color = H360Ink, fontSize = 20.sp, fontWeight = FontWeight.Black)
                     Spacer(Modifier.height(7.dp))
                     Text(progressLabel, color = H360Muted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "التحليل يعمل في الخلفية. تقدر تترك التطبيق وتستخدم الجوال بشكل طبيعي.",
+                        color = H360Muted,
+                        fontSize = 10.sp,
+                        maxLines = 2,
+                    )
                     Spacer(Modifier.height(20.dp))
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         LinearProgressIndicator(
@@ -229,10 +250,12 @@ internal fun Hai360ImportScreen(
                     Spacer(Modifier.height(22.dp))
                     OutlinedButton(
                         onClick = {
-                            analysisJob?.cancel()
-                            analysisJob = null
-                            busy = false
-                            progress = 0
+                            val id = activeWorkId
+                            if (id != null) {
+                                workManager.cancelWorkById(id)
+                                pendingStore.clear(id)
+                                onWorkStopped(id)
+                            }
                             onBack()
                         },
                         shape = RoundedCornerShape(18.dp),
