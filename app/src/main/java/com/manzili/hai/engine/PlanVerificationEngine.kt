@@ -21,7 +21,7 @@ object PlanVerificationEngine {
         val normalized = polygonReport.plan
         val issues = mutableListOf<Issue>()
         polygonReport.errors.forEach { issues += Issue("error", "مشكلة في هندسة المضلع", it) }
-        polygonReport.warnings.forEach { issues += Issue("warning", "تحويل هندسي", it) }
+        polygonReport.warnings.forEach { issues += Issue("warning", "تصحيح هندسي تلقائي", it) }
 
         val structuralCount = normalized.walls.size + normalized.rooms.size
         if (structuralCount == 0) {
@@ -32,9 +32,19 @@ object PlanVerificationEngine {
             issues += Issue("warning", "الغرف لم تُحسم بعد", "تمت قراءة الجدران، لكن لم تُستخرج مساحات مغلقة موثوقة بعد. لا تعتبر نسبة الثقة قراءة كاملة حتى يظهر عدد الغرف/المساحات.")
         }
 
-        normalized.rooms.filter { it.confidence < 70 }.forEach { issues += Issue("warning", "غرفة تحتاج تأكيد", "«${it.name}» ثقة القراءة ${it.confidence}%.", "room", it.id) }
-        normalized.walls.filter { it.confidence < 60 }.take(8).forEach { issues += Issue("warning", "جدار غير مؤكد", "الجدار ${it.id} ثقة القراءة ${it.confidence}%.", "wall", it.id) }
-        normalized.openings.filter { it.confidence < 65 }.take(8).forEach { issues += Issue("warning", "فتحة تحتاج تأكيد", "${openingLabel(it.type)} ${it.id} ثقة القراءة ${it.confidence}%.", "opening", it.id) }
+        val uncalibratedCloud = isUncalibratedCloud(normalized)
+        normalized.rooms.filter { it.confidence in 1..69 }.forEach { issues += Issue("warning", "غرفة تحتاج تأكيد", "«${it.name}» ثقة القراءة ${it.confidence}%.", "room", it.id) }
+        normalized.walls.filter { it.confidence in 1..59 }.take(8).forEach { issues += Issue("warning", "جدار غير مؤكد", "الجدار ${it.id} ثقة القراءة ${it.confidence}%.", "wall", it.id) }
+        normalized.openings.filter { it.confidence in 1..64 }.take(8).forEach { issues += Issue("warning", "فتحة تحتاج تأكيد", "${openingLabel(it.type)} ${it.id} ثقة القراءة ${it.confidence}%.", "opening", it.id) }
+        if (uncalibratedCloud && (normalized.rooms + emptyList()).isNotEmpty() &&
+            (normalized.rooms.map { it.confidence } + normalized.walls.map { it.confidence } + normalized.openings.map { it.confidence }).none { it > 0 }
+        ) {
+            issues += Issue(
+                "warning",
+                "النموذج لا يرسل احتمالًا معايرًا",
+                "النسبة المعروضة هنا تقيس اكتمال الهندسة وتماسكها وأدلة القياس، ولا تعامل القيمة 0 القادمة من النموذج على أنها 0% دقة."
+            )
+        }
         normalized.uncertainties.take(8).forEach { issues += Issue("warning", "معلومة غير محسومة", it) }
 
         val scale = calculateScaleConfidence(normalized)
@@ -62,8 +72,10 @@ object PlanVerificationEngine {
         val roomCount = plan.rooms.size
         val wallCount = plan.walls.size
         val openingCount = plan.openings.size
-        val values = plan.rooms.map { it.confidence } + plan.walls.map { it.confidence } + plan.openings.map { it.confidence }
-        val elementScore = if (values.isEmpty()) 0 else values.average().roundToInt().coerceIn(0, 100)
+        val rawValues = plan.rooms.map { it.confidence } + plan.walls.map { it.confidence } + plan.openings.map { it.confidence }
+        val calibratedValues = rawValues.filter { it > 0 }
+        val elementScore = if (calibratedValues.isEmpty()) 0 else calibratedValues.average().roundToInt().coerceIn(0, 100)
+        val uncalibratedCloud = isUncalibratedCloud(plan) && calibratedValues.isEmpty()
 
         val numericCount = PlanNumberEvidenceEngine.numericLabels(plan.dimensions).size
         val confirmedDimensions = plan.dimensions.count { isIndependentDimension(it) && it.confidence >= 70 }
@@ -89,9 +101,15 @@ object PlanVerificationEngine {
         val dimensionScore = (confirmedDimensions * 24).coerceAtMost(100)
         val evidenceScore = (wallSupportScore * .50 + numberScore * .20 + dimensionScore * .30).roundToInt()
 
-        var score = (elementScore * .20 + topologyScore * .34 + evidenceScore * .30 + scale * .16).roundToInt()
+        var score = if (uncalibratedCloud) {
+            // A model value of zero means "not calibrated" in the Modal contract, not "0% correct".
+            (topologyScore * .48 + evidenceScore * .34 + scale * .18).roundToInt()
+        } else {
+            (elementScore * .20 + topologyScore * .34 + evidenceScore * .30 + scale * .16).roundToInt()
+        }
 
         var cap = 100
+        if (uncalibratedCloud) cap = min(cap, 82)
         if (wallCount < 4) cap = min(cap, 55)
         if (roomCount == 0) cap = min(cap, 50)
         if (roomCount > 0 && wallCount < maxOf(4, roomCount)) cap = min(cap, 68)
@@ -135,8 +153,13 @@ object PlanVerificationEngine {
             id.startsWith("unit-") ||
             id.startsWith("pair-") ||
             id.startsWith("edge-") ||
+            (id.contains("cloud-dimension-") && dimension.axis in setOf("horizontal", "vertical") && dimension.sourceText.isNotBlank()) ||
             isUserConfirmedDimension(dimension)
     }
+
+    private fun isUncalibratedCloud(plan: FloorPlan): Boolean =
+        plan.sourceSummary.contains("Cloud-only floor-plan reader", ignoreCase = true) ||
+            plan.sourceSummary.contains("modal:raster2seq", ignoreCase = true)
 
     private fun isUserConfirmedDimension(dimension: PlanDimension): Boolean =
         dimension.sourceText.contains("تأكيد المستخدم") || dimension.sourceText.contains("إدخال المستخدم")
