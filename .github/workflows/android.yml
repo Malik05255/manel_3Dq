@@ -39,6 +39,7 @@ jobs:
           set -euo pipefail
           MANIFEST=app/src/main/AndroidManifest.xml
           LAUNCHER=app/src/main/java/com/manzili/hai/FocusedMainActivityV2.kt
+          IMPORT_SCREEN=app/src/main/java/com/manzili/hai/Hai360ImportScreen.kt
           PLAN_STORE=app/src/main/java/com/manzili/hai/data/ProjectPlanStore.kt
           SOURCE_STORE=app/src/main/java/com/manzili/hai/data/ProjectSourceStore.kt
           GLTF=app/src/main/java/com/manzili/hai/export/GltfPlanExporter.kt
@@ -58,7 +59,12 @@ jobs:
           grep -q 'manzili_hai_project_sources_secure_v1' "$SOURCE_STORE"
 
           grep -q 'BuildConfig.VERSION_NAME' "$GLTF"
-          grep -q 'android-accuracy-v5' "$REMOTE_PARSER"
+          grep -q 'android-cloud-only-v1' "$REMOTE_PARSER"
+          grep -q 'RemoteFloorplanEvidenceClient' "$IMPORT_SCREEN"
+          ! grep -q 'AdaptivePlanOcrEngine' "$IMPORT_SCREEN"
+          ! grep -q 'RasterFloorplanParserEngine' "$IMPORT_SCREEN"
+          ! grep -q 'MultiPageHaiPlanAnalyzer' "$IMPORT_SCREEN"
+          ! grep -q 'com.google.mlkit:text-recognition' app/build.gradle.kts
       - name: Run engine regression tests
         run: ./gradlew testDebugUnitTest
       - name: Run Android lint
