@@ -252,7 +252,11 @@ def vectorize_source_walls(image: np.ndarray) -> tuple[list[dict[str, Any]], dic
             "axis": item["axis"],
         })
 
-    authoritative = len(walls) >= 6 and (len(horizontal) + len(vertical)) >= 5
+    axis_count = len(horizontal) + len(vertical)
+    # Five axis-aligned centrelines already describe a closed rectangle plus one
+    # interior divider. Requiring six made valid small plans fall back to the old
+    # multi-source merge path unnecessarily.
+    authoritative = len(walls) >= 5 and axis_count >= 5
     meta.update({
         "mode": mode,
         "authoritative": authoritative,
