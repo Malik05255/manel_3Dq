@@ -2,7 +2,7 @@ name: Backend Build
 
 on:
   push:
-    branches: [ main, 'codex/**', 'android-light-rebuild', 'feat/**' ]
+    branches: [ main, 'codex/**', 'android-light-rebuild', 'feat/**', 'fix/**' ]
     paths:
       - 'backend/**'
       - 'modal_reader/**'
@@ -32,7 +32,7 @@ jobs:
       - name: Install cloud gateway dependencies
         run: pip install -r backend/requirements-gateway.txt pytest==8.4.1
       - name: Compile cloud surfaces
-        run: python -m compileall backend/app/cloud_gateway.py backend/app/cloud_public_gateway.py backend/app/reader_provider.py backend/app/reader_main.py modal_reader
+        run: python -m compileall backend/app/cloud_gateway.py backend/app/cloud_public_gateway.py backend/app/reader_provider.py backend/app/reader_main.py backend/app/source_vectorizer.py modal_reader
       - name: Run provider migration tests
         run: PYTHONPATH=backend pytest -q backend/tests/test_reader_provider.py
       - name: Run cloud metric evidence regressions
@@ -66,8 +66,9 @@ jobs:
           grep -q '/v1/internal/legacy-floorplan-evidence' backend/app/cloud_public_gateway.py
           grep -q 'READER_PROVIDER_URL' backend/app/reader_provider.py
           grep -q 'LEGACY_EVIDENCE_URL' backend/app/reader_main.py
-          grep -q 'roboflow+legacy-evidence+opencv+source-image-wall-gates' backend/app/reader_main.py
+          grep -q 'source-pixel-vectorizer+room/opening-evidence+strict-fallback-gates' backend/app/reader_main.py
           grep -q 'external_evidence' backend/app/parser_v2.py
-          grep -q 'validate_wall_image_support' backend/app/parser_v2.py
+          grep -q 'vectorize_source_walls' backend/app/parser_v2.py
+          grep -q 'source-first-authority' backend/app/parser_v2.py
           grep -q 'raster2graph-512' modal_reader/app.py
           grep -q 'requires_proxy_auth=True' modal_reader/app.py
