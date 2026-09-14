@@ -14,6 +14,7 @@ from .parser_v2 import parse_floorplan
 from .roboflow_parser import roboflow_status
 
 _ALLOWED_CLIENTS = {"android-accuracy-v4", "android-accuracy-v5"}
+_TRANSPORT = "public-parser-only-v5"
 _WINDOW_SECONDS = 60.0
 _PER_CLIENT_LIMIT = 12
 _GLOBAL_LIMIT = 90
@@ -74,6 +75,7 @@ async def public_parser_status(
             if local_ready
             else "unavailable"
         ),
+        "transport": _TRANSPORT,
         "detail": "Parser-only mobile route; AI, cloud projects, and 3D rendering remain authenticated.",
     }
 
@@ -91,5 +93,5 @@ async def public_parse_floorplan(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     result["page_index"] = payload.page_index
-    result["transport"] = "public-parser-only"
+    result["transport"] = _TRANSPORT
     return result

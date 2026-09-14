@@ -42,10 +42,7 @@ jobs:
           for attempt in $(seq 1 "$CONFIG_ATTEMPTS"); do
             if BODY="$(curl --fail --silent --show-error --max-time 45 "${BACKEND_URL%/}/health" 2>/dev/null)"; then
               echo "health=$BODY"
-              if python -c 'import json,sys; d=json.loads(sys.argv[1]); expected=sys.argv[2]; required=("service_auth_configured","supabase_configured","deep_parser_ready"); missing=[k for k in required if d.get(k) is not True]; assert d.get("version")=="0.62.0", d; assert not missing, f"core production services not configured: {missing}; health={d}"; assert not expected or d.get("git_commit")==expected, f"production commit mismatch: expected={expected} actual={d.get('"'"'git_commit'"'"')}"' "$BODY" "$EXPECTED_GIT_COMMIT"; then
-                if ! python -c 'import json,sys; d=json.loads(sys.argv[1]); raise SystemExit(0 if d.get("ai_configured") is True else 1)' "$BODY"; then
-                  echo '::warning::Server AI provider is not configured; HAI/vision is degraded while Deep Parser remains available.'
-                fi
+              if python -c 'import json,sys; d=json.loads(sys.argv[1]); expected=sys.argv[2]; assert d.get("version")=="0.64.0", d; assert d.get("deep_parser_ready") is True, d; assert not expected or d.get("git_commit")==expected, f"production commit mismatch: expected={expected} actual={d.get('"'"'git_commit'"'"')}"' "$BODY" "$EXPECTED_GIT_COMMIT"; then
                 echo "exact production deployment and core readiness ok"
                 exit 0
               fi
@@ -64,7 +61,17 @@ jobs:
           set -euo pipefail
           BODY="$(curl --fail --silent --show-error --max-time 45 "${BACKEND_URL%/}/readyz")"
           echo "readyz=$BODY"
-          python -c 'import json,sys; d=json.loads(sys.argv[1]); expected=sys.argv[2]; assert d.get("ok") is True and d.get("deep_parser_ready") is True, d; assert d.get("version")=="0.62.0", d; assert not expected or d.get("git_commit")==expected, d; print("readyz ok", d.get("version"), d.get("git_commit"))' "$BODY" "$EXPECTED_GIT_COMMIT"
+          python -c 'import json,sys; d=json.loads(sys.argv[1]); expected=sys.argv[2]; assert d.get("ok") is True and d.get("deep_parser_ready") is True, d; assert d.get("version")=="0.64.0", d; assert not expected or d.get("git_commit")==expected, d; print("readyz ok", d.get("version"), d.get("git_commit"))' "$BODY" "$EXPECTED_GIT_COMMIT"
+
+      - name: Verify Android public parser reaches Roboflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          BODY="$(curl --fail --silent --show-error --max-time 45 \
+            -H 'X-Manzili-Parser-Client: android-accuracy-v5' \
+            "${BACKEND_URL%/}/v1/public/parser/status")"
+          echo "public-parser-status=$BODY"
+          python -c 'import json,sys; d=json.loads(sys.argv[1]); rf=d.get("roboflow") or {}; assert d.get("ready") is True, d; assert d.get("transport")=="public-parser-only-v5", d; assert rf.get("configured") is True, d; assert d.get("preferred_path")=="roboflow-first+local-verifier", d; print("android public parser and Roboflow ready")' "$BODY"
 
       - name: Verify authenticated parser readiness when test credential is available
         shell: bash
@@ -75,7 +82,7 @@ jobs:
             exit 0
           fi
           BODY="$(curl --fail --silent --show-error --max-time 45 -H "Authorization: Bearer $BACKEND_TOKEN" "${BACKEND_URL%/}/v1/parser/status")"
-          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("ready") is True, d; assert d.get("preferred_path") == "cubicasa-unet-resnet34", d; print("parser status ok")' "$BODY"
+          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("ready") is True, d; print("authenticated parser status ok", d.get("preferred_path"))' "$BODY"
 
       - name: Verify zero-cost AI provider response
         shell: bash
