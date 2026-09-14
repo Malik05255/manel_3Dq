@@ -65,13 +65,14 @@ jobs:
           from app.ocr_reader import cloud_ocr_engine_name
           from app.reader_main import app
           assert app.title == 'Manzili HAI Reader V2'
+          assert app.version == '2.1.0'
           assert any(getattr(route, 'path', '') == '/v2/parse' for route in app.routes)
           assert cloud_ocr_engine_name() == 'tesseract-ara-eng'
           print('reader service import ok, OCR=tesseract-ara-eng')
           PY
       - name: Test wall source-image support gate
         run: PYTHONPATH=. pytest -q tests/test_wall_support.py
-      - name: Run deterministic parser fallback smoke test
+      - name: Run deterministic parser and external-evidence smoke tests
         run: |
           python - <<'PY'
           import base64
@@ -86,11 +87,29 @@ jobs:
           ok, encoded = cv2.imencode('.png', image)
           assert ok
           payload = base64.b64encode(encoded.tobytes()).decode('ascii')
+
           result = parse_floorplan(payload)
           assert isinstance(result, dict)
           assert 'walls' in result and 'rooms' in result and 'warnings' in result
           assert '+wall-support-v1+' in str(result.get('model_used', ''))
           assert result.get('ocr_meta', {}).get('engine') == 'tesseract-ara-eng'
           assert 'wall_validation_meta' in result
-          print('reader fallback smoke test ok', len(result['walls']), len(result['rooms']))
+
+          evidence = {
+              'model_used': 'legacy-test-evidence',
+              'confidence': 72,
+              'rooms': [],
+              'walls': [],
+              'openings': [],
+              'ocr_lines': [],
+              'warnings': ['legacy-test'],
+          }
+          fused = parse_floorplan(payload, external_evidence=evidence)
+          meta = fused.get('external_evidence_meta', {})
+          assert meta.get('used') is True
+          assert meta.get('model') == 'legacy-test-evidence'
+          assert 'evidence:legacy-test-evidence' in str(fused.get('model_used', ''))
+          assert any('secondary evidence' in str(item) for item in fused.get('warnings', []))
+          assert 'wall_validation_meta' in fused
+          print('reader smoke tests ok', len(fused['walls']), len(fused['rooms']))
           PY
