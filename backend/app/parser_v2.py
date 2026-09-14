@@ -68,60 +68,113 @@ def _room_label_count(lines: list[dict[str, Any]]) -> int:
     return count
 
 
-def parse_floorplan(image_base64: str) -> dict[str, Any]:
-    """Roboflow-first parser with local evidence, source-image wall validation and conservative confidence."""
+def _dict_items(source: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    value = source.get(key)
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _bounded_confidence(value: Any, ceiling: int = 100) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(ceiling, number))
+
+
+def parse_floorplan(
+    image_base64: str,
+    *,
+    external_evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Fuse independent evidence, then make source-image geometry the final authority.
+
+    External legacy/Modal output is accepted only as evidence. It never bypasses the
+    wall-support and consistency gates that protect review/3D from invented geometry.
+    """
     local = legacy_parse_floorplan(image_base64)
     roboflow = roboflow_floorplan(image_base64)
+    external = external_evidence if isinstance(external_evidence, dict) else {}
+    external_used = bool(external)
+
     image = _decode(image_base64)
     reader = cloud_ocr_reader()
 
-    seed_ocr = list(local.get("ocr_lines") or [])
+    external_ocr = _dict_items(external, "ocr_lines")
+    seed_ocr = external_ocr + _dict_items(local, "ocr_lines")
     ocr_lines, ocr_meta = adaptive_ocr(image, reader, seed_lines=seed_ocr)
     ocr_lines, rotated_passes = precision_rotated_ocr(image, reader, ocr_lines)
     ocr_lines = merge_ocr_lines(ocr_lines)
     dimensions = dimension_evidence(ocr_lines)
 
     local_model = str(local.get("model_used") or "unknown")
-    roboflow_used = bool(roboflow.get("used"))
-    model_used = (
-        f"{roboflow.get('model_used')}+verifier:{local_model}"
-        if roboflow_used
-        else local_model
+    external_model = str(
+        external.get("model_used")
+        or external.get("reader_path")
+        or "legacy-cloud-evidence"
     )
+    roboflow_used = bool(roboflow.get("used"))
+    model_parts: list[str] = []
+    if roboflow_used:
+        model_parts.append(str(roboflow.get("model_used") or "roboflow"))
+    if external_used:
+        model_parts.append(f"evidence:{external_model}")
+    model_parts.append(f"local:{local_model}")
+    model_used = "+".join(model_parts)
 
     wall_mask = architectural_wall_mask(image)
-    curve_confidence = 84 if roboflow_used else (82 if "cubicasa" in local_model else 73)
+    curve_confidence = 84 if roboflow_used else (82 if external_used or "cubicasa" in local_model else 73)
     curve_walls = extract_curve_segments(wall_mask, confidence=curve_confidence)
-    precision_confidence = 84 if roboflow_used else (82 if "cubicasa" in local_model else 76)
+    precision_confidence = 86 if roboflow_used else (83 if external_used or "cubicasa" in local_model else 76)
     precision_walls = precision_wall_evidence(image, confidence=precision_confidence)
 
+    external_walls = _dict_items(external, "walls")
     walls = merge_wall_evidence(
-        list(roboflow.get("walls") or [])
-        + list(local.get("walls") or [])
+        _dict_items(roboflow, "walls")
+        + external_walls
+        + _dict_items(local, "walls")
         + precision_walls
         + curve_walls
     )
     walls, rejected_walls = validate_wall_image_support(image, walls)
 
-    primary_rooms = list(roboflow.get("rooms") or [])
-    verifier_rooms = list(local.get("rooms") or [])
-    rooms = merge_room_evidence(primary_rooms, verifier_rooms) if roboflow_used else verifier_rooms
+    primary_rooms = _dict_items(roboflow, "rooms")
+    external_rooms = _dict_items(external, "rooms")
+    local_rooms = _dict_items(local, "rooms")
+    if roboflow_used:
+        verifier_rooms = (
+            merge_room_evidence(external_rooms, local_rooms)
+            if external_rooms
+            else local_rooms
+        )
+        rooms = merge_room_evidence(primary_rooms, verifier_rooms)
+    elif external_rooms:
+        rooms = merge_room_evidence(external_rooms, local_rooms)
+    else:
+        rooms = local_rooms
     rooms = _label_rooms_from_ocr(rooms, ocr_lines)
 
-    opening_seed = list(roboflow.get("openings") or []) + list(local.get("openings") or [])
+    opening_seed = (
+        _dict_items(roboflow, "openings")
+        + _dict_items(external, "openings")
+        + _dict_items(local, "openings")
+    )
     openings = assign_openings_to_walls(opening_seed, walls)
 
-    base_confidence = int(local.get("confidence") or 0)
+    base_confidence = _bounded_confidence(local.get("confidence"), 88)
+    if external_used:
+        base_confidence = max(base_confidence, _bounded_confidence(external.get("confidence"), 84))
     if roboflow_used:
         rf_confidences = [
-            int(item.get("confidence", 0))
-            for item in list(roboflow.get("walls") or [])
-            + list(roboflow.get("rooms") or [])
-            + list(roboflow.get("openings") or [])
-            if int(item.get("confidence", 0)) > 0
+            _bounded_confidence(item.get("confidence"), 92)
+            for item in _dict_items(roboflow, "walls")
+            + _dict_items(roboflow, "rooms")
+            + _dict_items(roboflow, "openings")
+            if _bounded_confidence(item.get("confidence"), 92) > 0
         ]
         if rf_confidences:
-            base_confidence = min(90, int(sum(rf_confidences) / len(rf_confidences)))
+            base_confidence = max(base_confidence, min(90, int(sum(rf_confidences) / len(rf_confidences))))
 
     quality = verification_scores(
         model_used=model_used,
@@ -140,15 +193,23 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
         dimensions=dimensions,
     )
 
-    warnings = list(local.get("warnings") or []) + list(roboflow.get("warnings") or [])
+    warnings = (
+        list(local.get("warnings") or [])
+        + list(external.get("warnings") or [])
+        + list(roboflow.get("warnings") or [])
+    )
+    if external_used:
+        warnings.append(
+            "Legacy cloud parsing was used only as secondary evidence; HAI Reader V2 revalidated geometry against the source image."
+        )
     if rejected_walls:
         warnings.append(
             f"Source-image validation rejected {len(rejected_walls)} unsupported long wall segment(s) before review/3D."
         )
     if roboflow_used:
         warnings.append(
-            f"Roboflow Universe is the primary floor-plan detector for this page ({len(primary_rooms)} room region(s), "
-            f"{len(roboflow.get('walls') or [])} wall segment(s)); local parsing is verifier/fallback evidence."
+            f"Roboflow Universe supplied primary detector evidence for this page ({len(primary_rooms)} room region(s), "
+            f"{len(_dict_items(roboflow, 'walls'))} wall segment(s))."
         )
     if ocr_meta.get("adaptive_retry"):
         warnings.append("Adaptive OCR automatically zoomed and re-read weak regions to recover small dimensions and room labels.")
@@ -180,14 +241,17 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
         warnings.append("Room fusion lost too much Roboflow primary evidence; result was downgraded for manual review.")
 
     ocr_meta = dict(ocr_meta)
-    ocr_meta["engine"] = cloud_ocr_engine_name()
+    native_ocr_engine = cloud_ocr_engine_name()
+    ocr_engine = "legacy-cloud-evidence" if native_ocr_engine == "unavailable" and external_ocr else native_ocr_engine
+    ocr_meta["engine"] = ocr_engine
     ocr_meta["rotated_passes"] = rotated_passes
     ocr_meta["dimension_evidence"] = len(dimensions)
     ocr_meta["room_label_count"] = label_count
+    ocr_meta["external_seed_lines"] = len(external_ocr)
 
-    result = dict(local)
+    result = dict(external) if external_used else dict(local)
     result.update({
-        "model_used": f"{model_used}+accuracy-v4+wall-support-v1+{ocr_meta['engine']}",
+        "model_used": f"{model_used}+accuracy-v5+wall-support-v1+{ocr_engine}",
         "confidence": int(quality["overall_verified"]),
         "walls": walls,
         "rooms": rooms,
@@ -200,14 +264,21 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
             "rejected": len(rejected_walls),
             "rejected_ids": [str(item.get("id") or "") for item in rejected_walls[:24]],
         },
+        "external_evidence_meta": {
+            "used": external_used,
+            "model": external_model if external_used else "none",
+            "rooms": len(external_rooms),
+            "walls": len(external_walls),
+            "ocr_lines": len(external_ocr),
+        },
         "roboflow_meta": {
             "used": roboflow_used,
             "models": list(roboflow.get("models") or []),
             "rooms": len(primary_rooms),
-            "walls": len(roboflow.get("walls") or []),
-            "openings": len(roboflow.get("openings") or []),
+            "walls": len(_dict_items(roboflow, "walls")),
+            "openings": len(_dict_items(roboflow, "openings")),
         },
         "quality": quality,
-        "warnings": list(dict.fromkeys(warnings)),
+        "warnings": list(dict.fromkeys(str(item) for item in warnings if str(item).strip())),
     })
     return result
