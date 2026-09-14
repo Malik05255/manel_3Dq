@@ -34,14 +34,12 @@ jobs:
       - name: Compile cloud surfaces
         run: python -m compileall backend/app/cloud_gateway.py backend/app/cloud_public_gateway.py backend/app/reader_provider.py backend/app/reader_main.py modal_reader
       - name: Run provider migration tests
-        working-directory: backend
-        run: pytest -q tests/test_reader_provider.py
+        run: PYTHONPATH=backend pytest -q backend/tests/test_reader_provider.py
       - name: Run cloud metric evidence regressions
         run: python -m unittest modal_reader.tests.test_metric_evidence
       - name: Import cloud gateway
-        working-directory: backend
         run: |
-          python -c "from app.cloud_public_gateway import app; assert app.title == 'Manzili HAI Cloud Gateway'; assert any(getattr(r, 'path', '') == '/v1/public/parse-floorplan' for r in app.routes)"
+          PYTHONPATH=backend python -c "from app.cloud_public_gateway import app; assert app.title == 'Manzili HAI Cloud Gateway'; assert any(getattr(r, 'path', '') == '/v1/public/parse-floorplan' for r in app.routes)"
       - name: Validate reader v2 deployment blueprint
         shell: bash
         run: |
