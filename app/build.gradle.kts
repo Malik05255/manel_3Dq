@@ -17,8 +17,8 @@ android {
         applicationId = "com.manzili.hai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 62
-        versionName = "0.62.0"
+        versionCode = 63
+        versionName = "0.63.0"
         buildConfigField("String", "SUPABASE_URL", "\"https://abavsspydbpkudhswmzp.supabase.co\"")
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_iuZnOH7ye1WITm-xc44TiQ_CNb2d2qB\"")
     }
