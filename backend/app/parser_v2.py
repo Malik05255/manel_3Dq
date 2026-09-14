@@ -23,6 +23,7 @@ from .parser_quality import (
     verification_scores,
 )
 from .roboflow_parser import merge_room_evidence, roboflow_floorplan
+from .wall_support import validate_wall_image_support
 
 
 _ROOM_WORDS = (
@@ -67,7 +68,7 @@ def _room_label_count(lines: list[dict[str, Any]]) -> int:
 
 
 def parse_floorplan(image_base64: str) -> dict[str, Any]:
-    """Roboflow-first parser with local CubiCasa/OpenCV/OCR verification and conservative confidence."""
+    """Roboflow-first parser with local evidence, source-image wall validation and conservative confidence."""
     local = legacy_parse_floorplan(image_base64)
     roboflow = roboflow_floorplan(image_base64)
     image = _decode(image_base64)
@@ -101,6 +102,7 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
         + precision_walls
         + curve_walls
     )
+    walls, rejected_walls = validate_wall_image_support(image, walls)
 
     primary_rooms = list(roboflow.get("rooms") or [])
     verifier_rooms = list(local.get("rooms") or [])
@@ -140,6 +142,10 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
     )
 
     warnings = list(local.get("warnings") or []) + list(roboflow.get("warnings") or [])
+    if rejected_walls:
+        warnings.append(
+            f"Source-image validation rejected {len(rejected_walls)} unsupported long wall segment(s) before review/3D."
+        )
     if roboflow_used:
         warnings.append(
             f"Roboflow Universe is the primary floor-plan detector for this page ({len(primary_rooms)} room region(s), "
@@ -183,7 +189,7 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
 
     result = dict(local)
     result.update({
-        "model_used": f"{model_used}+accuracy-v4",
+        "model_used": f"{model_used}+accuracy-v4+wall-support-v1",
         "confidence": int(quality["overall_verified"]),
         "walls": walls,
         "rooms": rooms,
@@ -191,6 +197,11 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
         "ocr_lines": ocr_lines,
         "dimension_evidence": dimensions,
         "ocr_meta": ocr_meta,
+        "wall_validation_meta": {
+            "kept": len(walls),
+            "rejected": len(rejected_walls),
+            "rejected_ids": [str(item.get("id") or "") for item in rejected_walls[:24]],
+        },
         "roboflow_meta": {
             "used": roboflow_used,
             "models": list(roboflow.get("models") or []),
