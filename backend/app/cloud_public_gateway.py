@@ -25,6 +25,7 @@ _ALLOWED_CLIENTS = {"android-cloud-only-v1", "android-reader-v2"}
 _WINDOW_SECONDS = 60.0
 _PER_CLIENT_LIMIT = 12
 _GLOBAL_LIMIT = 90
+_TRANSIENT_READER_FAILURES = {502, 503, 504}
 _rate_lock = threading.Lock()
 _per_client: dict[str, deque[float]] = defaultdict(deque)
 _global_requests: deque[float] = deque()
@@ -112,8 +113,20 @@ async def _request_legacy_modal(payload: ParseRequest) -> dict[str, Any]:
             headers=_modal_request_headers(body),
         )
     if response.status_code >= 400:
-        raise HTTPException(response.status_code, response.text[:1200])
-    result = response.json()
+        content_type = response.headers.get("content-type", "").lower()
+        detail = f"Legacy reader returned HTTP {response.status_code}"
+        if "application/json" in content_type:
+            try:
+                payload_json = response.json()
+                if isinstance(payload_json, dict) and isinstance(payload_json.get("detail"), str):
+                    detail = payload_json["detail"][:500]
+            except ValueError:
+                pass
+        raise HTTPException(response.status_code, detail)
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, "Legacy reader returned a non-JSON response") from exc
     if not isinstance(result, dict):
         raise HTTPException(502, "Cloud reader returned an invalid response")
     result["page_index"] = payload.page_index
@@ -136,6 +149,18 @@ async def internal_legacy_floorplan_evidence(
     return await _request_legacy_modal(payload)
 
 
+async def _emergency_legacy_fallback(payload: ParseRequest, reason: str) -> dict[str, Any]:
+    result = await _request_legacy_modal(payload)
+    warnings = list(result.get("warnings") or [])
+    warnings.append(
+        "HAI Reader V2 was temporarily unavailable; emergency legacy fallback was used for this analysis."
+    )
+    result["warnings"] = list(dict.fromkeys(warnings))
+    result["reader_path"] = "modal-raster2seq-emergency-fallback"
+    result["fallback_reason"] = reason[:240]
+    return result
+
+
 @app.post("/v1/public/parse-floorplan")
 async def public_parse_floorplan(
     payload: ParseRequest,
@@ -147,4 +172,10 @@ async def public_parse_floorplan(
     provider = reader_provider()
     if provider.name == "modal-raster2seq-legacy":
         return await _request_legacy_modal(payload)
-    return await request_reader(payload.image_base64, payload.page_index)
+
+    try:
+        return await request_reader(payload.image_base64, payload.page_index)
+    except HTTPException as exc:
+        if exc.status_code in _TRANSIENT_READER_FAILURES and _modal_ready():
+            return await _emergency_legacy_fallback(payload, str(exc.detail))
+        raise
