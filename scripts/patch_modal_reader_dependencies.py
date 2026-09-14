@@ -27,7 +27,8 @@ replacements = {
         '"opencv-python-headless==4.8.1.78", '
         '"numpy==1.24.4", '
         '"scipy==1.8.1", '
-        '"cryptography==45.0.7"'
+        '"cryptography==45.0.7", '
+        '"plotly==5.24.1"'
         ')'
     ),
     '    h, w = image.shape[:2]\n'
