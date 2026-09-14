@@ -3,7 +3,7 @@ services:
     name: manzili-hai-deep-parser
     runtime: python
     buildCommand: pip install -r backend/requirements-gateway.txt
-    startCommand: cd backend && uvicorn app.cloud_gateway:app --host 0.0.0.0 --port $PORT
+    startCommand: cd backend && uvicorn app.cloud_public_gateway:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /readyz
     autoDeployTrigger: commit
     envVars:
