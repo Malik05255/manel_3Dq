@@ -8,7 +8,14 @@ from typing import Any
 import httpx
 from fastapi import Header, HTTPException, Request
 
-from .cloud_gateway import ParseRequest, _modal_config, app
+from .cloud_gateway import (
+    ParseRequest,
+    _modal_body,
+    _modal_config,
+    _modal_ready,
+    _modal_request_headers,
+    app,
+)
 
 _ALLOWED_CLIENTS = {"android-cloud-only-v1"}
 _WINDOW_SECONDS = 60.0
@@ -56,8 +63,7 @@ async def public_parser_status(
     x_manzili_parser_client: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _require_android_client(x_manzili_parser_client)
-    modal_url, modal_token = _modal_config()
-    ready = bool(modal_url and modal_token)
+    ready = _modal_ready()
     return {
         "ready": ready,
         "reader": "modal-raster2seq-cloud-only",
@@ -76,21 +82,22 @@ async def public_parse_floorplan(
 ) -> dict[str, Any]:
     client = _require_android_client(x_manzili_parser_client)
     _enforce_rate_limit(request, client)
-    modal_url, modal_token = _modal_config()
-    if not modal_url or not modal_token:
+    modal_url, _, _ = _modal_config()
+    if not _modal_ready():
         raise HTTPException(503, "Modal reader is not configured")
+    body = _modal_body(payload)
     async with httpx.AsyncClient(timeout=330) as http:
         response = await http.post(
             modal_url,
-            json=payload.model_dump(),
-            headers={"Authorization": f"Bearer {modal_token}", "Content-Type": "application/json"},
+            content=body,
+            headers=_modal_request_headers(body),
         )
     if response.status_code >= 400:
         raise HTTPException(response.status_code, response.text[:1200])
-    body = response.json()
-    if not isinstance(body, dict):
+    result = response.json()
+    if not isinstance(result, dict):
         raise HTTPException(502, "Cloud reader returned an invalid response")
-    body["page_index"] = payload.page_index
-    body["reader_path"] = "modal-raster2seq-cloud-only"
-    body["local_inference"] = False
-    return body
+    result["page_index"] = payload.page_index
+    result["reader_path"] = "modal-raster2seq-cloud-only"
+    result["local_inference"] = False
+    return result
