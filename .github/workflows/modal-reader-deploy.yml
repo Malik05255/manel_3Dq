@@ -2,6 +2,13 @@ name: Modal Reader Deploy
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'modal_reader/**'
+      - 'scripts/patch_modal_reader_dependencies.py'
+      - '.github/workflows/modal-reader-deploy.yml'
 
 permissions:
   contents: read
