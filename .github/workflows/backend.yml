@@ -32,7 +32,7 @@ jobs:
       - name: Import FastAPI application
         working-directory: backend
         run: |
-          python -c "from app.main import app; assert app.title == 'Manzili HAI Backend'; assert app.version == '0.64.0'"
+          python -c "from app.public_main import app; assert app.title == 'Manzili HAI Backend'; assert app.version == '0.64.0'"
       - name: Validate deployment blueprint
         run: |
           set -euo pipefail
@@ -40,7 +40,7 @@ jobs:
           grep -q 'healthCheckPath: /readyz' render.yaml
           grep -q 'pip install -r backend/requirements-ml-cpu.txt' render.yaml
           grep -q 'python backend/scripts/fetch_floorplan_model.py' render.yaml
-          grep -q 'cd backend && uvicorn app.main:app' render.yaml
+          grep -q 'cd backend && uvicorn app.public_main:app' render.yaml
           grep -q 'FLOORPLAN_SAFETENSORS_MODEL' render.yaml
           grep -q 'MANZILI_API_TOKEN' render.yaml
           grep -q 'SUPABASE_URL' render.yaml
