@@ -1,4 +1,4 @@
-name: Backend ML Validation
+name: Backend Reader V2 Validation
 
 on:
   push:
@@ -7,11 +7,11 @@ on:
       - 'backend/app/cubicasa_model.py'
       - 'backend/app/parser.py'
       - 'backend/app/parser_v2.py'
+      - 'backend/app/parser_accuracy.py'
+      - 'backend/app/parser_quality.py'
       - 'backend/app/roboflow_parser.py'
       - 'backend/app/reader_main.py'
-      - 'backend/scripts/fetch_floorplan_model.py'
-      - 'backend/requirements-ml-cpu.txt'
-      - 'backend/Dockerfile.ml'
+      - 'backend/requirements.txt'
       - 'backend/Dockerfile.reader'
       - 'render.yaml'
       - '.github/workflows/backend-ml.yml'
@@ -21,21 +21,22 @@ on:
       - 'backend/app/cubicasa_model.py'
       - 'backend/app/parser.py'
       - 'backend/app/parser_v2.py'
+      - 'backend/app/parser_accuracy.py'
+      - 'backend/app/parser_quality.py'
       - 'backend/app/roboflow_parser.py'
       - 'backend/app/reader_main.py'
-      - 'backend/scripts/fetch_floorplan_model.py'
-      - 'backend/requirements-ml-cpu.txt'
+      - 'backend/requirements.txt'
       - 'backend/Dockerfile.reader'
       - 'render.yaml'
       - '.github/workflows/backend-ml.yml'
   workflow_dispatch:
 
 concurrency:
-  group: manzili-hai-backend-ml-${{ github.ref }}
+  group: manzili-hai-reader-v2-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  validate-model:
+  validate-reader:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -46,11 +47,9 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: backend/requirements-ml-cpu.txt
-      - name: Install CPU inference stack
-        run: pip install -r requirements-ml-cpu.txt
-      - name: Download and verify model weights
-        run: python scripts/fetch_floorplan_model.py
+          cache-dependency-path: backend/requirements.txt
+      - name: Install reader v2 dependencies
+        run: pip install -r requirements.txt
       - name: Import hybrid reader service
         run: |
           python - <<'PY'
@@ -59,22 +58,23 @@ jobs:
           assert any(getattr(route, 'path', '') == '/v2/parse' for route in app.routes)
           print('reader service import ok')
           PY
-      - name: Run real segmentation inference smoke test
+      - name: Run deterministic parser fallback smoke test
         run: |
           python - <<'PY'
+          import base64
+          import cv2
           import numpy as np
-          from app.cubicasa_model import CLASS_NAMES, load_cubicasa_runtime, model_status
-          runtime = load_cubicasa_runtime()
-          assert runtime is not None, 'CubiCasa runtime did not load'
-          status = model_status()
-          assert status.get('configured') is True, status
-          image = np.full((256, 384, 3), 255, dtype=np.uint8)
-          image[40:215, 45:52] = 0
-          image[40:47, 45:330] = 0
-          prediction = runtime.predict(image)
-          assert prediction.shape == image.shape[:2]
-          assert prediction.dtype == np.uint8
-          assert int(prediction.min()) >= 0
-          assert int(prediction.max()) < len(CLASS_NAMES)
-          print('model smoke test ok', prediction.shape, np.unique(prediction).tolist())
+          from app.parser_v2 import parse_floorplan
+
+          image = np.full((420, 620, 3), 255, dtype=np.uint8)
+          cv2.rectangle(image, (70, 60), (550, 350), (0, 0, 0), 8)
+          cv2.line(image, (310, 60), (310, 350), (0, 0, 0), 8)
+          ok, encoded = cv2.imencode('.png', image)
+          assert ok
+          payload = base64.b64encode(encoded.tobytes()).decode('ascii')
+          result = parse_floorplan(payload)
+          assert isinstance(result, dict)
+          assert 'walls' in result and 'rooms' in result and 'warnings' in result
+          assert str(result.get('model_used', '')).endswith('+accuracy-v4')
+          print('reader fallback smoke test ok', len(result['walls']), len(result['rooms']))
           PY
