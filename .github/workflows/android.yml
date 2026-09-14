@@ -48,8 +48,8 @@ jobs:
           grep -q 'android:name=".FocusedMainActivityV2"' "$MANIFEST"
           ! grep -q 'composable("4d")' "$LAUNCHER"
 
-          grep -q 'versionCode = 62' app/build.gradle.kts
-          grep -q 'versionName = "0.62.0"' app/build.gradle.kts
+          grep -q 'versionCode = 63' app/build.gradle.kts
+          grep -q 'versionName = "0.63.0"' app/build.gradle.kts
           grep -q 'android:allowBackup="false"' "$MANIFEST"
           grep -q 'android:usesCleartextTraffic="false"' "$MANIFEST"
 
@@ -59,7 +59,9 @@ jobs:
           grep -q 'manzili_hai_project_sources_secure_v1' "$SOURCE_STORE"
 
           grep -q 'BuildConfig.VERSION_NAME' "$GLTF"
-          grep -q 'android-cloud-only-v1' "$REMOTE_PARSER"
+          grep -q 'android-reader-v2' "$REMOTE_PARSER"
+          grep -q 'hai-floorplan-gateway' "$REMOTE_PARSER"
+          grep -q 'candidateBaseUrls' "$REMOTE_PARSER"
           grep -q 'RemoteFloorplanEvidenceClient' "$IMPORT_SCREEN"
           ! grep -q 'AdaptivePlanOcrEngine' "$IMPORT_SCREEN"
           ! grep -q 'RasterFloorplanParserEngine' "$IMPORT_SCREEN"
