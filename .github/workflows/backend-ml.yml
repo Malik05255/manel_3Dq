@@ -2,7 +2,7 @@ name: Backend Reader V2 Validation
 
 on:
   push:
-    branches: [ main, 'codex/**', 'feat/**' ]
+    branches: [ main, 'codex/**', 'feat/**', 'fix/**' ]
     paths:
       - 'backend/app/cubicasa_model.py'
       - 'backend/app/ocr_reader.py'
@@ -12,6 +12,7 @@ on:
       - 'backend/app/parser_quality.py'
       - 'backend/app/roboflow_parser.py'
       - 'backend/app/reader_main.py'
+      - 'backend/app/source_vectorizer.py'
       - 'backend/app/wall_support.py'
       - 'backend/tests/test_wall_support.py'
       - 'backend/requirements.txt'
@@ -29,6 +30,7 @@ on:
       - 'backend/app/parser_quality.py'
       - 'backend/app/roboflow_parser.py'
       - 'backend/app/reader_main.py'
+      - 'backend/app/source_vectorizer.py'
       - 'backend/app/wall_support.py'
       - 'backend/tests/test_wall_support.py'
       - 'backend/requirements.txt'
@@ -59,18 +61,18 @@ jobs:
         working-directory: .
       - name: Install reader v2 dependencies
         run: pip install -r requirements.txt pytest==8.4.1
-      - name: Import hybrid reader service
+      - name: Import source-first reader service
         run: |
           python - <<'PY'
           from app.ocr_reader import cloud_ocr_engine_name
           from app.reader_main import app
           assert app.title == 'Manzili HAI Reader V2'
-          assert app.version == '2.1.0'
+          assert app.version == '2.2.0'
           assert any(getattr(route, 'path', '') == '/v2/parse' for route in app.routes)
           assert cloud_ocr_engine_name() == 'tesseract-ara-eng'
-          print('reader service import ok, OCR=tesseract-ara-eng')
+          print('source-first reader service import ok, OCR=tesseract-ara-eng')
           PY
-      - name: Test wall source-image support gate
+      - name: Test source wall geometry gates
         run: PYTHONPATH=. pytest -q tests/test_wall_support.py
       - name: Run deterministic parser and external-evidence smoke tests
         run: |
@@ -81,8 +83,10 @@ jobs:
           from app.parser_v2 import parse_floorplan
 
           image = np.full((420, 620, 3), 255, dtype=np.uint8)
-          cv2.rectangle(image, (70, 60), (550, 350), (0, 0, 0), 8)
-          cv2.line(image, (310, 60), (310, 350), (0, 0, 0), 8)
+          wall_blue = (220, 145, 80)
+          cv2.rectangle(image, (70, 60), (550, 350), wall_blue, 10)
+          cv2.line(image, (310, 60), (310, 350), wall_blue, 10)
+          cv2.line(image, (80, 280), (300, 100), (15, 15, 15), 4)
           cv2.putText(image, '4.00 m', (110, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
           ok, encoded = cv2.imencode('.png', image)
           assert ok
@@ -91,15 +95,23 @@ jobs:
           result = parse_floorplan(payload)
           assert isinstance(result, dict)
           assert 'walls' in result and 'rooms' in result and 'warnings' in result
-          assert '+wall-support-v1+' in str(result.get('model_used', ''))
+          assert '+source-vector-v1+' in str(result.get('model_used', ''))
           assert result.get('ocr_meta', {}).get('engine') == 'tesseract-ara-eng'
-          assert 'wall_validation_meta' in result
+          assert result.get('source_vector_meta', {}).get('authoritative') is True
+          assert result.get('wall_validation_meta', {}).get('authority') == 'source-pixels'
 
           evidence = {
               'model_used': 'legacy-test-evidence',
               'confidence': 72,
               'rooms': [],
-              'walls': [],
+              'walls': [
+                  {
+                      'id': 'phantom-cloud-wall',
+                      'start': {'x': 10, 'y': 15},
+                      'end': {'x': 90, 'y': 85},
+                      'confidence': 99,
+                  }
+              ],
               'openings': [],
               'ocr_lines': [],
               'warnings': ['legacy-test'],
@@ -108,8 +120,8 @@ jobs:
           meta = fused.get('external_evidence_meta', {})
           assert meta.get('used') is True
           assert meta.get('model') == 'legacy-test-evidence'
-          assert 'evidence:legacy-test-evidence' in str(fused.get('model_used', ''))
-          assert any('secondary evidence' in str(item) for item in fused.get('warnings', []))
-          assert 'wall_validation_meta' in fused
+          assert all(item.get('id') != 'phantom-cloud-wall' for item in fused.get('walls', []))
+          assert any('cannot override source wall coordinates' in str(item) for item in fused.get('warnings', []))
+          assert fused.get('wall_validation_meta', {}).get('authority') == 'source-pixels'
           print('reader smoke tests ok', len(fused['walls']), len(fused['rooms']))
           PY
