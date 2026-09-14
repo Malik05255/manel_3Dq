@@ -5,16 +5,14 @@ import hmac
 import os
 from typing import Any
 
-import httpx
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .cubicasa_model import model_status
 from .ocr_reader import cloud_ocr_engine_name
-from .parser_v2 import parse_floorplan
-from .roboflow_parser import roboflow_status
+from .parser_v3 import parse_floorplan
 
-app = FastAPI(title="Manzili HAI Reader V2", version="2.2.0")
+app = FastAPI(title="Manzili HAI Reader V3", version="3.0.0")
 
 
 class ParseRequest(BaseModel):
@@ -33,50 +31,19 @@ def _authorize(authorization: str | None) -> None:
         raise HTTPException(401, "invalid reader bearer token")
 
 
-def _legacy_evidence_config() -> tuple[str, str]:
-    return (
-        os.getenv("LEGACY_EVIDENCE_URL", "").strip(),
-        os.getenv("LEGACY_EVIDENCE_TOKEN", "").strip() or os.getenv("READER_SERVICE_TOKEN", "").strip(),
-    )
-
-
-async def _fetch_legacy_evidence(payload: ParseRequest) -> tuple[dict[str, Any] | None, str | None]:
-    url, token = _legacy_evidence_config()
-    if not url:
-        return None, None
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    try:
-        async with httpx.AsyncClient(timeout=330) as client:
-            response = await client.post(url, json=payload.model_dump(), headers=headers)
-    except Exception as exc:
-        return None, f"Legacy cloud evidence was unavailable: {type(exc).__name__}."
-    if response.status_code >= 400:
-        return None, f"Legacy cloud evidence returned HTTP {response.status_code}; source-first parsing continued without it."
-    try:
-        body = response.json()
-    except Exception:
-        return None, "Legacy cloud evidence returned an invalid JSON response."
-    if not isinstance(body, dict):
-        return None, "Legacy cloud evidence returned an invalid response shape."
-    return body, None
-
-
 @app.get("/health")
 @app.get("/readyz")
 async def health() -> dict[str, Any]:
-    roboflow = roboflow_status()
-    local = model_status()
-    legacy_url, _ = _legacy_evidence_config()
+    runtime = model_status()
+    ready = bool(runtime.get("configured"))
     return {
-        "ok": True,
-        "reader": "hai-source-first-reader-v2",
+        "ok": ready,
+        "ready": ready,
+        "reader": "cubicasa-unet-resnet34-v3",
         "version": app.version,
-        "roboflow_configured": bool(roboflow.get("configured")),
-        "local_segmentation_configured": bool(local.get("configured")),
-        "legacy_evidence_configured": bool(legacy_url),
-        "strategy": "source-pixel-vectorizer+room/opening-evidence+strict-fallback-gates",
+        "local_segmentation_configured": ready,
+        "strategy": "semantic-segmentation-wall-centrelines+door-window-masks+ocr",
+        "model": runtime,
         "ocr": cloud_ocr_engine_name(),
     }
 
@@ -90,23 +57,17 @@ async def parse(
     _authorize(authorization)
     if x_manzili_reader_contract not in {None, "v2"}:
         raise HTTPException(400, "unsupported reader contract")
+    if not bool(model_status().get("configured")):
+        raise HTTPException(503, "CubiCasa segmentation model is not loaded")
 
-    external_evidence, evidence_warning = await _fetch_legacy_evidence(payload)
     try:
-        result = await asyncio.to_thread(
-            parse_floorplan,
-            payload.image_base64,
-            external_evidence=external_evidence,
-        )
+        result = await asyncio.to_thread(parse_floorplan, payload.image_base64)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-
-    if evidence_warning:
-        warnings = list(result.get("warnings") or [])
-        warnings.append(evidence_warning)
-        result["warnings"] = list(dict.fromkeys(warnings))
+    except Exception as exc:
+        raise HTTPException(500, f"CubiCasa reader failed: {type(exc).__name__}") from exc
 
     result["page_index"] = payload.page_index
-    result["reader_path"] = "hai-source-first-reader-v2"
+    result["reader_path"] = "cubicasa-unet-resnet34-v3"
     result["local_inference"] = False
     return result
