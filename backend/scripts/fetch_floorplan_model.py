@@ -38,7 +38,13 @@ def main() -> int:
         digest = sha256(temp_path)
         if digest != MODEL_SHA256:
             raise RuntimeError(f"model checksum mismatch: {digest}")
-        temp_path.replace(target)
+        # /tmp and /opt/render may live on different filesystems, so os.replace/Path.replace
+        # can fail with EXDEV. copy2 works across mounts; checksum the installed copy too.
+        shutil.copy2(temp_path, target)
+        installed_digest = sha256(target)
+        if installed_digest != MODEL_SHA256:
+            target.unlink(missing_ok=True)
+            raise RuntimeError(f"installed model checksum mismatch: {installed_digest}")
         print(f"Downloaded and verified CubiCasa model at {target}")
         return 0
     finally:
