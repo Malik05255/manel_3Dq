@@ -38,7 +38,26 @@ for old, new in replacements.items():
     text = text.replace(old, new, 1)
 
 marker = "@app.function(\n    image=reader_image,\n    gpu=\"T4\","
-security = '''_GATEWAY_PUBLIC_KEY_B64 = "u80Vwa7ILcrcbz6au3oUozEqFUd2ikchwNoi7flImg4"
+security = '''_GATEWAY_KEY_URL = "https://manzili-hai-deep-parser.onrender.com/v1/public/gateway-key"
+_GATEWAY_PUBLIC_KEY_B64: str | None = None
+
+
+def _gateway_public_key_b64() -> str:
+    global _GATEWAY_PUBLIC_KEY_B64
+    if _GATEWAY_PUBLIC_KEY_B64:
+        return _GATEWAY_PUBLIC_KEY_B64
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(_GATEWAY_KEY_URL, timeout=12) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        value = str(body.get("public_key") or "").strip()
+        if body.get("algorithm") != "Ed25519" or not value:
+            raise ValueError("invalid gateway key response")
+    except Exception as exc:
+        raise HTTPException(503, "gateway verification key unavailable") from exc
+    _GATEWAY_PUBLIC_KEY_B64 = value
+    return value
 
 
 def _verify_gateway_signature(
@@ -60,8 +79,9 @@ def _verify_gateway_signature(
     if abs(int(time.time()) - unix_time) > 120:
         raise HTTPException(401, "expired gateway signature")
     try:
+        public_key_b64 = _gateway_public_key_b64()
         public_raw = base64.urlsafe_b64decode(
-            _GATEWAY_PUBLIC_KEY_B64 + "=" * (-len(_GATEWAY_PUBLIC_KEY_B64) % 4)
+            public_key_b64 + "=" * (-len(public_key_b64) % 4)
         )
         signature_raw = base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4))
         canonical = json.dumps(
