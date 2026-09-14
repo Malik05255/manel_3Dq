@@ -7,6 +7,12 @@ services:
     healthCheckPath: /readyz
     autoDeployTrigger: commit
     envVars:
+      - key: READER_PROVIDER_URL
+        sync: false
+      - key: READER_PROVIDER_TOKEN
+        sync: false
+      - key: READER_PROVIDER_NAME
+        value: hai-reader-v2
       - key: MODAL_READER_URL
         sync: false
       - key: MODAL_READER_TOKEN
