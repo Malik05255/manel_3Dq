@@ -10,6 +10,7 @@ from fastapi import Header, HTTPException, Request
 
 from .cloud_gateway import (
     ParseRequest,
+    _gateway_public_key_b64,
     _modal_body,
     _modal_config,
     _modal_ready,
@@ -58,6 +59,14 @@ def _enforce_rate_limit(request: Request, client: str) -> None:
         bucket.append(now)
 
 
+@app.get("/v1/public/gateway-key")
+async def public_gateway_key() -> dict[str, Any]:
+    public_key = _gateway_public_key_b64()
+    if not public_key:
+        raise HTTPException(503, "gateway signing identity is not configured")
+    return {"algorithm": "Ed25519", "public_key": public_key}
+
+
 @app.get("/v1/public/parser/status")
 async def public_parser_status(
     x_manzili_parser_client: str | None = Header(default=None),
@@ -82,7 +91,7 @@ async def public_parse_floorplan(
 ) -> dict[str, Any]:
     client = _require_android_client(x_manzili_parser_client)
     _enforce_rate_limit(request, client)
-    modal_url, _, _ = _modal_config()
+    modal_url, _ = _modal_config()
     if not _modal_ready():
         raise HTTPException(503, "Modal reader is not configured")
     body = _modal_body(payload)
