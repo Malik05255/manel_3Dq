@@ -4,6 +4,7 @@ import com.manzili.hai.model.FloorPlan
 import com.manzili.hai.model.PlanPoint
 import com.manzili.hai.model.Room
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 
@@ -14,29 +15,51 @@ object PolygonGeometryEngine {
 
     fun normalize(plan: FloorPlan): FloorPlan {
         val rooms = plan.rooms.map { room ->
-            if (room.polygon.size >= 3) room.copy(polygon = clean(room.polygon)) else room.copy(polygon = rectangle(room))
+            val fallback = rectangle(room)
+            val source = if (room.polygon.size >= 3) room.polygon else fallback
+            room.copy(polygon = repairPolygon(source, fallback))
         }
-        val footprint = when {
-            plan.footprint.size >= 3 -> clean(plan.footprint)
-            plan.walls.isNotEmpty() -> bounding(plan.walls.flatMap { listOf(it.start, it.end) })
-            rooms.isNotEmpty() -> bounding(rooms.flatMap { it.polygon })
-            else -> fullBounds()
+
+        val inferredFootprintPoints = buildList {
+            plan.walls.forEach { wall ->
+                add(wall.start)
+                add(wall.end)
+            }
+            rooms.forEach { addAll(it.polygon) }
         }
+        val fallbackFootprint = if (inferredFootprintPoints.isNotEmpty()) bounding(inferredFootprintPoints) else fullBounds()
+        val footprintSource = if (plan.footprint.size >= 3) plan.footprint else fallbackFootprint
+        val footprint = repairPolygon(footprintSource, fallbackFootprint)
         return plan.copy(rooms = rooms, footprint = footprint)
     }
 
     fun inspect(plan: FloorPlan): Report {
-        val hadMissing = plan.rooms.filter { it.polygon.size < 3 }.map { it.name }
+        val missingPolygonNames = plan.rooms.filter { it.polygon.size < 3 }.map { it.name }
+        val crossingPolygonNames = plan.rooms
+            .filter { it.polygon.size >= 4 && selfIntersects(clean(it.polygon)) }
+            .map { it.name }
+        val invalidPolygonNames = plan.rooms
+            .filter { it.polygon.size >= 3 && !validPolygon(clean(it.polygon)) }
+            .map { it.name }
+
         val normalized = normalize(plan)
         val errors = mutableListOf<String>()
-        if (!validPolygon(normalized.footprint)) errors += "حدود المبنى ليست مضلعًا صالحًا."
+        if (!validPolygon(normalized.footprint) || selfIntersects(normalized.footprint)) {
+            errors += "حدود المبنى ليست مضلعًا صالحًا."
+        }
         normalized.rooms.forEach { room ->
             if (!validPolygon(room.polygon)) errors += "مضلع «${room.name}» غير صالح."
             if (selfIntersects(room.polygon)) errors += "مضلع «${room.name}» يتقاطع مع نفسه."
             if (room.polygon.any { it.x !in 0f..100f || it.y !in 0f..100f }) errors += "مضلع «${room.name}» خارج حدود المخطط."
-            if (normalized.footprint.size >= 3 && room.polygon.any { !pointInsideOrOn(it, normalized.footprint) }) errors += "جزء من «${room.name}» خرج عن حدود المبنى."
+            if (normalized.footprint.size >= 3 && room.polygon.any { !pointInsideOrOn(it, normalized.footprint) }) {
+                errors += "جزء من «${room.name}» خرج عن حدود المبنى."
+            }
         }
-        val warnings = hadMissing.map { "«$it» حُولت إلى مضلع رباعي من حدودها القديمة." }
+
+        val warnings = mutableListOf<String>()
+        missingPolygonNames.forEach { warnings += "«$it» حُولت إلى مضلع رباعي من حدودها القديمة." }
+        crossingPolygonNames.forEach { warnings += "تم إصلاح ترتيب رؤوس مضلع «$it» لمنع تقاطع الجدران." }
+        invalidPolygonNames.forEach { warnings += "تم استبدال هندسة «$it» غير الصالحة بحدود محافظة قابلة للمراجعة." }
         return Report(normalized, errors.distinct(), warnings.distinct())
     }
 
@@ -67,13 +90,62 @@ object PolygonGeometryEngine {
     }
 
     private fun rectangle(room: Room) = listOf(
-        PlanPoint(room.x, room.y),
-        PlanPoint((room.x + room.width).coerceIn(0f, 100f), room.y),
+        PlanPoint(room.x.coerceIn(0f, 100f), room.y.coerceIn(0f, 100f)),
+        PlanPoint((room.x + room.width).coerceIn(0f, 100f), room.y.coerceIn(0f, 100f)),
         PlanPoint((room.x + room.width).coerceIn(0f, 100f), (room.y + room.height).coerceIn(0f, 100f)),
-        PlanPoint(room.x, (room.y + room.height).coerceIn(0f, 100f))
+        PlanPoint(room.x.coerceIn(0f, 100f), (room.y + room.height).coerceIn(0f, 100f))
     )
 
-    private fun clean(points: List<PlanPoint>): List<PlanPoint> = points.map { PlanPoint(it.x.coerceIn(0f,100f), it.y.coerceIn(0f,100f)) }.distinct()
+    private fun pointDistance(a: PlanPoint, b: PlanPoint): Double =
+        hypot((a.x - b.x).toDouble(), (a.y - b.y).toDouble())
+
+    private fun clean(points: List<PlanPoint>): List<PlanPoint> {
+        val output = mutableListOf<PlanPoint>()
+        points.forEach { raw ->
+            val point = PlanPoint(raw.x.coerceIn(0f, 100f), raw.y.coerceIn(0f, 100f))
+            if (output.isEmpty() || pointDistance(output.last(), point) >= .05) output += point
+        }
+        if (output.size >= 2 && pointDistance(output.first(), output.last()) < .05) output.removeAt(output.lastIndex)
+        return output
+    }
+
+    private fun repairPolygon(points: List<PlanPoint>, fallback: List<PlanPoint>): List<PlanPoint> {
+        val cleaned = clean(points)
+        if (validPolygon(cleaned) && !selfIntersects(cleaned)) return cleaned
+
+        val untangled = untangle(cleaned)
+        if (validPolygon(untangled) && !selfIntersects(untangled)) return untangled
+
+        val safeFallback = clean(fallback)
+        if (validPolygon(safeFallback) && !selfIntersects(safeFallback)) return safeFallback
+        return fullBounds()
+    }
+
+    private fun untangle(points: List<PlanPoint>): List<PlanPoint> {
+        if (points.size < 4) return points
+        val current = points.toMutableList()
+        repeat(48) {
+            var crossing: Pair<Int, Int>? = null
+            loop@ for (i in current.indices) {
+                val a1 = current[i]
+                val a2 = current[(i + 1) % current.size]
+                for (j in i + 2 until current.size) {
+                    if (i == 0 && j == current.lastIndex) continue
+                    val b1 = current[j]
+                    val b2 = current[(j + 1) % current.size]
+                    if (segmentsCross(a1, a2, b1, b2)) {
+                        crossing = i to j
+                        break@loop
+                    }
+                }
+            }
+            val pair = crossing ?: return current
+            val reversed = current.subList(pair.first + 1, pair.second + 1).reversed()
+            for (offset in reversed.indices) current[pair.first + 1 + offset] = reversed[offset]
+        }
+        return current
+    }
+
     private fun snap(v: Float): Float = ((v.coerceIn(0f,100f) * 4f).toInt() / 4f)
 
     private fun bounding(points: List<PlanPoint>): List<PlanPoint> {
@@ -103,6 +175,7 @@ object PolygonGeometryEngine {
             val a1 = p[i]; val a2 = p[(i + 1) % p.size]
             for (j in i + 1 until p.size) {
                 if (j == i || j == (i + 1) % p.size || (j + 1) % p.size == i) continue
+                if (i == 0 && j == p.lastIndex) continue
                 val b1 = p[j]; val b2 = p[(j + 1) % p.size]
                 if (segmentsCross(a1,a2,b1,b2)) return true
             }
@@ -128,7 +201,9 @@ object PolygonGeometryEngine {
         for (i in poly.indices) {
             val pi = poly[i]; val pj = poly[j]
             if ((pi.y > point.y) != (pj.y > point.y)) {
-                val x = (pj.x-pi.x) * (point.y-pi.y) / (pj.y-pi.y).coerceAtLeast(.00001f) + pi.x
+                val denominator = pj.y - pi.y
+                val safeDenominator = if (abs(denominator) < .00001f) if (denominator < 0f) -.00001f else .00001f else denominator
+                val x = (pj.x-pi.x) * (point.y-pi.y) / safeDenominator + pi.x
                 if (point.x < x) inside = !inside
             }
             j = i
