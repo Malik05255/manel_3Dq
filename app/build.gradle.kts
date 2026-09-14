@@ -17,8 +17,8 @@ android {
         applicationId = "com.manzili.hai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 64
-        versionName = "0.64.0"
+        versionCode = 65
+        versionName = "0.65.0"
         buildConfigField("String", "SUPABASE_URL", "\"https://abavsspydbpkudhswmzp.supabase.co\"")
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_iuZnOH7ye1WITm-xc44TiQ_CNb2d2qB\"")
     }
@@ -68,6 +68,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
     implementation("io.github.sceneview:sceneview:2.2.1")
