@@ -128,7 +128,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
-                    if (continuation.isActive) continuation.resumeWith(Result.failure(e))
+                    if (continuation.isActive) continuation.resumeWith(kotlin.Result.failure(e))
                 }
 
                 override fun onResponse(call: Call, response: Response) {
