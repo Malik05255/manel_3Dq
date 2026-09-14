@@ -82,13 +82,13 @@ def _axis_and_side(line: dict[str, Any]) -> tuple[str, str, int] | None:
     vertical_shape = height >= width * 1.25
 
     if (near_top or near_bottom) and (not (near_left or near_right) or horizontal_shape):
-        return "horizontal", "top" if near_top else "bottom", 24 + (9 if horizontal_shape else 0)
+        return "horizontal", "top" if near_top else "bottom", 18 + (5 if horizontal_shape else 0)
     if (near_left or near_right) and (not (near_top or near_bottom) or vertical_shape):
-        return "vertical", "left" if near_left else "right", 24 + (9 if vertical_shape else 0)
+        return "vertical", "left" if near_left else "right", 18 + (5 if vertical_shape else 0)
     if horizontal_shape and (cy <= 28.0 or cy >= 72.0):
-        return "horizontal", "top" if cy < 50.0 else "bottom", 17
+        return "horizontal", "top" if cy < 50.0 else "bottom", 12
     if vertical_shape and (cx <= 28.0 or cx >= 72.0):
-        return "vertical", "left" if cx < 50.0 else "right", 17
+        return "vertical", "left" if cx < 50.0 else "right", 12
     return None
 
 
@@ -104,9 +104,9 @@ def dimension_candidates(ocr_lines: list[dict[str, Any]]) -> list[DimensionCandi
         value_m, explicit = parsed
         orientation, side, edge_score = axis
         ocr_conf = max(0, min(100, int(line.get("confidence", 0) or 0)))
-        score = 18 + edge_score + round(ocr_conf * 0.20)
+        score = 5 + edge_score + round(ocr_conf * 0.20)
         if explicit:
-            score += 22
+            score += 18
         if value_m >= 2.0:
             score += 5
         if not explicit:
@@ -116,7 +116,7 @@ def dimension_candidates(ocr_lines: list[dict[str, Any]]) -> list[DimensionCandi
                 axis=orientation,
                 value_m=value_m,
                 text=str(line.get("text") or "").strip(),
-                confidence=max(0, min(92, score)),
+                confidence=max(0, min(86, score)),
                 explicit_unit=explicit,
                 center_x=(float(line.get("left_pct", 0.0) or 0.0) + float(line.get("right_pct", 0.0) or 0.0)) / 2.0,
                 center_y=(float(line.get("top_pct", 0.0) or 0.0) + float(line.get("bottom_pct", 0.0) or 0.0)) / 2.0,
@@ -146,7 +146,7 @@ def _with_repeat_bonus(candidates: list[DimensionCandidate], axis: str) -> list[
                 axis=candidate.axis,
                 value_m=candidate.value_m,
                 text=candidate.text,
-                confidence=min(96, confidence),
+                confidence=min(92, confidence),
                 explicit_unit=candidate.explicit_unit,
                 center_x=candidate.center_x,
                 center_y=candidate.center_y,
@@ -188,7 +188,7 @@ def metric_evidence(ocr_lines: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "width_m": round(width.value_m, 4) if width else None,
         "height_m": round(height.value_m, 4) if height else None,
-        "confidence": int(max(0, min(96, confidence))),
+        "confidence": int(max(0, min(92, confidence))),
         "evidence_count": len(candidates),
         "dimensions": dimensions,
         "verified_for_3d": bool(width and height and confidence >= 65),

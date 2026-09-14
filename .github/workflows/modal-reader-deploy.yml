@@ -26,4 +26,4 @@ jobs:
       - name: Install Modal CLI
         run: python -m pip install --upgrade modal
       - name: Deploy cloud-only floor-plan reader
-        run: modal deploy modal_reader/app.py --stream-logs
+        run: modal deploy -m modal_reader.app --stream-logs

@@ -18,14 +18,16 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Install cloud gateway dependencies
         run: pip install -r backend/requirements-gateway.txt
       - name: Compile cloud surfaces
-        run: python -m compileall backend/app/cloud_gateway.py modal_reader/app.py
+        run: python -m compileall backend/app/cloud_gateway.py modal_reader
+      - name: Run cloud metric evidence regressions
+        run: python -m unittest modal_reader.tests.test_metric_evidence
       - name: Import cloud gateway
         working-directory: backend
         run: |
@@ -42,9 +44,14 @@ jobs:
           ! grep -q 'fetch_floorplan_model.py' render.yaml
           ! grep -q 'FLOORPLAN_SAFETENSORS_MODEL' render.yaml
           ! grep -q 'ROBOFLOW_' render.yaml
-      - name: Verify no local production inference
+      - name: Verify cloud reader production contract
         shell: bash
         run: |
           set -euo pipefail
           grep -q 'local_inference.*False' backend/app/cloud_gateway.py
-          grep -q 'Raster2Seq' modal_reader/app.py
+          grep -q 'raster2graph-512' modal_reader/app.py
+          grep -q 'cubicasa5k' modal_reader/app.py
+          grep -q '_CC5K_OPENING_LABELS' modal_reader/app.py
+          grep -q 'metric_evidence' modal_reader/app.py
+          grep -q 'requires_proxy_auth=True' modal_reader/app.py
+          grep -q 'verified_for_3d' modal_reader/metric_evidence.py

@@ -6,6 +6,7 @@ import com.manzili.hai.data.HaiSettings
 import com.manzili.hai.model.FloorLevel
 import com.manzili.hai.model.FloorPlan
 import com.manzili.hai.model.Opening
+import com.manzili.hai.model.PlanDimension
 import com.manzili.hai.model.PlanPoint
 import com.manzili.hai.model.Room
 import com.manzili.hai.model.Wall
@@ -34,6 +35,9 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         val walls: List<Wall>,
         val openings: List<Opening>,
         val ocrLines: List<PlanTextOcrEngine.SpatialLine>,
+        val dimensions: List<PlanDimension>,
+        val widthM: Double?,
+        val heightM: Double?,
         val modelUsed: String,
         val confidence: Int,
         val geometryConfidence: Int,
@@ -68,16 +72,22 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
                 )
             }
             val first = floors.first()
+            val metricPage = ordered
+                .filter { it.widthM != null && it.heightM != null }
+                .maxByOrNull { it.scaleConfidence }
             return FloorPlan(
                 title = title,
+                widthM = metricPage?.widthM,
+                heightM = metricPage?.heightM,
                 rooms = first.rooms,
                 walls = first.walls,
                 openings = first.openings,
                 uncertainties = warnings,
                 sourceSummary = "Cloud-only floor-plan reader: $modelUsed",
+                dimensions = ordered.flatMap { it.dimensions },
+                scaleConfidence = metricPage?.scaleConfidence ?: 0,
                 floors = floors,
-                activeFloorId = first.id,
-                scaleConfidence = ordered.maxOfOrNull { it.scaleConfidence } ?: 0
+                activeFloorId = first.id
             )
         }
     }
@@ -230,6 +240,28 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
             }
         }
 
+        val metric = root.optJSONObject("metric")
+        val widthM = metric?.optDouble("width_m", Double.NaN)?.takeIf { it.isFinite() && it > 0.5 }
+        val heightM = metric?.optDouble("height_m", Double.NaN)?.takeIf { it.isFinite() && it > 0.5 }
+        val dimensions = buildList {
+            val arr = metric?.optJSONArray("dimensions") ?: return@buildList
+            for (i in 0 until arr.length()) {
+                val d = arr.optJSONObject(i) ?: continue
+                val valueM = d.optDouble("value_m", Double.NaN)
+                if (!valueM.isFinite() || valueM <= 0.0) continue
+                val axis = d.optString("axis", "unknown")
+                add(PlanDimension(
+                    id = prefix + "cloud-dimension-$i",
+                    label = "${"%.2f".format(valueM)} م",
+                    valueM = valueM,
+                    axis = axis,
+                    confidence = d.optInt("confidence", 0).coerceIn(0, 100),
+                    sourceText = d.optString("text", ""),
+                    pageIndex = pageIndex
+                ))
+            }
+        }
+
         val warnings = buildList {
             val arr = root.optJSONArray("warnings") ?: return@buildList
             for (i in 0 until arr.length()) arr.optString(i).takeIf { it.isNotBlank() }?.let(::add)
@@ -241,6 +273,9 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
             walls = walls,
             openings = openings,
             ocrLines = ocr,
+            dimensions = dimensions,
+            widthM = widthM,
+            heightM = heightM,
             modelUsed = root.optString("model_used", "modal-cloud-reader"),
             confidence = root.optInt("confidence", 0).coerceIn(0, 100),
             geometryConfidence = quality?.optInt("geometry", 0)?.coerceIn(0, 100) ?: 0,

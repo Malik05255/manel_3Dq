@@ -11,6 +11,8 @@ from typing import Any
 
 import modal
 
+from modal_reader.metric_evidence import metric_evidence
+
 app = modal.App("manzili-hai-floorplan-reader")
 
 reader_image = (
@@ -28,6 +30,7 @@ reader_image = (
         "print(download_checkpoint('cubicasa5k'))\""
     )
     .run_commands("python -c \"import easyocr; easyocr.Reader(['ar','en'], gpu=False)\"")
+    .add_local_python_source("modal_reader")
 )
 
 _R2G_LABELS = {
@@ -171,8 +174,6 @@ def _run_cloud_models(
                 image_size=_CC5K_SIZE,
             )
         except Exception as exc:
-            # Room reconstruction is the primary result. Do not discard a usable page solely
-            # because the independent door/window pass failed; surface the failure explicitly.
             opening_predictions = []
             opening_error = str(exc)[:500]
 
@@ -311,8 +312,6 @@ def _nearest_wall_id(x: float, y: float, walls: list[dict[str, Any]]) -> str | N
         if distance < best_distance:
             best_distance = distance
             best_wall = wall
-    # 2.5 normalized plan units is intentionally conservative. If no wall is sufficiently
-    # close, leave wallId unset rather than fabricating an association.
     if best_wall is None or best_distance > 2.5:
         return None
     wall_id = str(best_wall.get("id") or "").strip()
@@ -409,6 +408,30 @@ def _cloud_ocr(image_bytes: bytes) -> list[dict[str, Any]]:
     return output[:500]
 
 
+def _polygon_area_m2(polygon: list[dict[str, Any]], width_m: float, height_m: float) -> float:
+    if len(polygon) < 3 or width_m <= 0.0 or height_m <= 0.0:
+        return 0.0
+    area = 0.0
+    for index, current in enumerate(polygon):
+        nxt = polygon[(index + 1) % len(polygon)]
+        x1 = float(current.get("x", 0.0)) / 100.0 * width_m
+        y1 = float(current.get("y", 0.0)) / 100.0 * height_m
+        x2 = float(nxt.get("x", 0.0)) / 100.0 * width_m
+        y2 = float(nxt.get("y", 0.0)) / 100.0 * height_m
+        area += x1 * y2 - x2 * y1
+    return abs(area) / 2.0
+
+
+def _apply_verified_room_areas(rooms: list[dict[str, Any]], metric: dict[str, Any]) -> None:
+    if not metric.get("verified_for_3d"):
+        return
+    width_m = float(metric.get("width_m") or 0.0)
+    height_m = float(metric.get("height_m") or 0.0)
+    for room in rooms:
+        area = _polygon_area_m2(room.get("polygon") or [], width_m, height_m)
+        room["area_m2"] = round(area, 3) if area > 0.0 else 0.0
+
+
 @app.function(
     image=reader_image,
     gpu="T4",
@@ -423,20 +446,26 @@ def parse_floorplan(payload: dict[str, Any]) -> dict[str, Any]:
     walls = _walls_from_rooms(rooms)
     openings = _openings(opening_predictions, source_w, source_h, walls)
     ocr_lines = _cloud_ocr(image_bytes)
+    metric = metric_evidence(ocr_lines)
+    _apply_verified_room_areas(rooms, metric)
 
     warnings = [
-        "Cloud reader uses Raster2Seq room polygons and cloud OCR; confidence is intentionally uncalibrated.",
+        "Cloud reader uses Raster2Seq room polygons and cloud OCR; geometry confidence is intentionally uncalibrated.",
         "Doors/windows are an independent CubiCasa5K Raster2Seq pass; wall association is proximity-based and remains uncalibrated.",
     ]
     if opening_error:
         warnings.append("Door/window cloud pass failed: " + opening_error)
     elif not openings:
         warnings.append("CubiCasa5K returned no usable door/window polygons for this page.")
+    if not metric.get("verified_for_3d"):
+        warnings.append(
+            "Metric scale is not trusted for automatic 3D yet; explicit horizontal and vertical edge dimensions are required."
+        )
 
     model_used = "modal:raster2seq-raster2graph-512"
     if not opening_error:
         model_used += "+cubicasa5k-openings"
-    model_used += "+easyocr-ar-en"
+    model_used += "+easyocr-ar-en+metric-evidence-v1"
 
     return {
         "page_index": int(payload.get("page_index") or 0),
@@ -446,12 +475,13 @@ def parse_floorplan(payload: dict[str, Any]) -> dict[str, Any]:
         "walls": walls,
         "openings": openings,
         "ocr_lines": ocr_lines,
+        "metric": metric,
         "quality": {
             "geometry": 0,
             "ocr": int(sum(x["confidence"] for x in ocr_lines) / len(ocr_lines)) if ocr_lines else 0,
-            "scale_evidence": 0,
+            "scale_evidence": int(metric.get("confidence") or 0),
             "wall_topology": 0,
-            "dimension_evidence": 0,
+            "dimension_evidence": int(metric.get("evidence_count") or 0),
         },
         "warnings": warnings,
         "reader_path": "modal-raster2seq-cloud-only",
