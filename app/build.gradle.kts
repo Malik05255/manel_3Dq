@@ -69,7 +69,6 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("io.github.sceneview:sceneview:2.2.1")
 
     testImplementation("junit:junit:4.13.2")
