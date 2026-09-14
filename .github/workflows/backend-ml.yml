@@ -11,6 +11,8 @@ on:
       - 'backend/app/parser_quality.py'
       - 'backend/app/roboflow_parser.py'
       - 'backend/app/reader_main.py'
+      - 'backend/app/wall_support.py'
+      - 'backend/tests/test_wall_support.py'
       - 'backend/requirements.txt'
       - 'backend/Dockerfile.reader'
       - 'render.yaml'
@@ -25,6 +27,8 @@ on:
       - 'backend/app/parser_quality.py'
       - 'backend/app/roboflow_parser.py'
       - 'backend/app/reader_main.py'
+      - 'backend/app/wall_support.py'
+      - 'backend/tests/test_wall_support.py'
       - 'backend/requirements.txt'
       - 'backend/Dockerfile.reader'
       - 'render.yaml'
@@ -49,7 +53,7 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - name: Install reader v2 dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pytest==8.4.1
       - name: Import hybrid reader service
         run: |
           python - <<'PY'
@@ -58,6 +62,8 @@ jobs:
           assert any(getattr(route, 'path', '') == '/v2/parse' for route in app.routes)
           print('reader service import ok')
           PY
+      - name: Test wall source-image support gate
+        run: pytest -q tests/test_wall_support.py
       - name: Run deterministic parser fallback smoke test
         run: |
           python - <<'PY'
@@ -75,6 +81,7 @@ jobs:
           result = parse_floorplan(payload)
           assert isinstance(result, dict)
           assert 'walls' in result and 'rooms' in result and 'warnings' in result
-          assert str(result.get('model_used', '')).endswith('+accuracy-v4')
+          assert str(result.get('model_used', '')).endswith('+wall-support-v1')
+          assert 'wall_validation_meta' in result
           print('reader fallback smoke test ok', len(result['walls']), len(result['rooms']))
           PY
