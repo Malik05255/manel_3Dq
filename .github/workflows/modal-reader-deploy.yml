@@ -40,7 +40,7 @@ jobs:
           printf 'MODAL_TOKEN_SECRET=%s\n' "$CLEAN_SECRET" >> "$GITHUB_ENV"
       - name: Patch Raster2Seq dependency conflict
         run: python scripts/patch_modal_reader_dependencies.py
-      - name: Install Modal CLI
-        run: python -m pip install --upgrade modal
+      - name: Install Modal CLI and deploy-time imports
+        run: python -m pip install --upgrade modal fastapi
       - name: Deploy cloud-only floor-plan reader
         run: modal deploy -m modal_reader.app --stream-logs
