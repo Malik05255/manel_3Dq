@@ -25,12 +25,38 @@ def _bearer(value: str | None) -> str:
     return token
 
 
+def _supabase_config() -> tuple[str, str]:
+    return (
+        os.getenv("SUPABASE_URL", "").rstrip("/"),
+        os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip(),
+    )
+
+
+async def _supabase_user(token: str) -> dict[str, Any]:
+    supabase_url, publishable = _supabase_config()
+    if not supabase_url or not publishable:
+        raise HTTPException(401, "invalid backend token")
+    async with httpx.AsyncClient(timeout=20) as client:
+        response = await client.get(
+            f"{supabase_url}/auth/v1/user",
+            headers={"Authorization": f"Bearer {token}", "apikey": publishable},
+        )
+    if response.status_code != 200:
+        raise HTTPException(401, "invalid backend token")
+    body = response.json()
+    if not isinstance(body, dict) or not body.get("id"):
+        raise HTTPException(401, "invalid backend token")
+    return body
+
+
 async def backend_principal(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     token = _bearer(authorization)
     static_token = os.getenv("MANZILI_API_TOKEN", "").strip()
     if static_token and hmac.compare_digest(token, static_token):
         return {"id": "service", "auth": "service"}
-    raise HTTPException(401, "invalid backend token")
+    user = await _supabase_user(token)
+    user["auth"] = "supabase"
+    return user
 
 
 def _modal_config() -> tuple[str, str]:
@@ -43,12 +69,14 @@ def _modal_config() -> tuple[str, str]:
 @app.get("/health")
 async def health() -> dict[str, Any]:
     modal_url, modal_token = _modal_config()
+    supabase_url, publishable = _supabase_config()
     return {
         "ok": True,
         "version": app.version,
         "git_commit": os.getenv("RENDER_GIT_COMMIT", "").strip() or None,
-        "reader": "modal-cloud-only",
+        "reader": "modal-raster2seq-cloud-only",
         "modal_reader_configured": bool(modal_url and modal_token),
+        "supabase_configured": bool(supabase_url and publishable),
         "local_inference": False,
     }
 
@@ -62,7 +90,8 @@ async def readyz() -> dict[str, Any]:
         "ok": True,
         "version": app.version,
         "git_commit": os.getenv("RENDER_GIT_COMMIT", "").strip() or None,
-        "reader": "modal-cloud-only",
+        "reader": "modal-raster2seq-cloud-only",
+        "modal_reader_configured": True,
         "local_inference": False,
     }
 
@@ -94,6 +123,6 @@ async def parse_floorplan(
     if not isinstance(body, dict):
         raise HTTPException(502, "Cloud reader returned an invalid response")
     body["page_index"] = payload.page_index
-    body["reader_path"] = "modal-cloud-only"
+    body["reader_path"] = "modal-raster2seq-cloud-only"
     body["local_inference"] = False
     return body
