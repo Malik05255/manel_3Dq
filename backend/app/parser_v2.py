@@ -6,7 +6,8 @@ from typing import Any
 import cv2
 import numpy as np
 
-from .parser import _easy_reader, _label_rooms_from_ocr, parse_floorplan as legacy_parse_floorplan
+from .ocr_reader import cloud_ocr_engine_name, cloud_ocr_reader
+from .parser import _label_rooms_from_ocr, parse_floorplan as legacy_parse_floorplan
 from .parser_accuracy import (
     dimension_evidence,
     precision_quality,
@@ -72,7 +73,7 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
     local = legacy_parse_floorplan(image_base64)
     roboflow = roboflow_floorplan(image_base64)
     image = _decode(image_base64)
-    reader = _easy_reader()
+    reader = cloud_ocr_reader()
 
     seed_ocr = list(local.get("ocr_lines") or [])
     ocr_lines, ocr_meta = adaptive_ocr(image, reader, seed_lines=seed_ocr)
@@ -94,8 +95,6 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
     precision_confidence = 84 if roboflow_used else (82 if "cubicasa" in local_model else 76)
     precision_walls = precision_wall_evidence(image, confidence=precision_confidence)
 
-    # Roboflow evidence is ordered first and normally has the highest supported confidence.
-    # Local detectors remain in the consensus so a provider outage never destroys the parser.
     walls = merge_wall_evidence(
         list(roboflow.get("walls") or [])
         + list(local.get("walls") or [])
@@ -167,8 +166,6 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
     if quality.get("wall_topology", 0) < 28 and walls:
         warnings.append("Wall topology is weak or fragmented; 3D should remain blocked until junctions are reviewed.")
 
-    # A plan containing many readable room labels cannot honestly be reported as one room.
-    # Instead of presenting a plausible-looking 55-90%, force the result into review territory.
     label_count = _room_label_count(ocr_lines)
     if label_count >= 4 and len(rooms) <= max(1, label_count // 3):
         quality["overall_verified"] = min(int(quality.get("overall_verified", 0)), 35)
@@ -183,13 +180,14 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
         warnings.append("Room fusion lost too much Roboflow primary evidence; result was downgraded for manual review.")
 
     ocr_meta = dict(ocr_meta)
+    ocr_meta["engine"] = cloud_ocr_engine_name()
     ocr_meta["rotated_passes"] = rotated_passes
     ocr_meta["dimension_evidence"] = len(dimensions)
     ocr_meta["room_label_count"] = label_count
 
     result = dict(local)
     result.update({
-        "model_used": f"{model_used}+accuracy-v4+wall-support-v1",
+        "model_used": f"{model_used}+accuracy-v4+wall-support-v1+{ocr_meta['engine']}",
         "confidence": int(quality["overall_verified"]),
         "walls": walls,
         "rooms": rooms,
