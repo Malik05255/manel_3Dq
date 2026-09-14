@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import base64
 import hmac
+import json
 import os
+import secrets
+import time
 from typing import Any
 
 import httpx
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from .geometry import canonicalize_plan
 
-app = FastAPI(title="Manzili HAI Cloud Gateway", version="0.70.0")
+app = FastAPI(title="Manzili HAI Cloud Gateway", version="0.71.0")
 
 
 class ParseRequest(BaseModel):
@@ -45,11 +50,52 @@ def _supabase_config() -> tuple[str, str]:
     )
 
 
-def _modal_config() -> tuple[str, str]:
+def _modal_config() -> tuple[str, str, str]:
     return (
         os.getenv("MODAL_READER_URL", "").rstrip("/"),
         os.getenv("MODAL_READER_TOKEN", "").strip(),
+        os.getenv("MODAL_GATEWAY_SIGNING_KEY", "").strip(),
     )
+
+
+def _modal_ready() -> bool:
+    url, proxy_token, signing_key = _modal_config()
+    return bool(url and (proxy_token or signing_key))
+
+
+def _b64url_decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _modal_request_headers(body: bytes) -> dict[str, str]:
+    _, proxy_token, signing_key = _modal_config()
+    headers = {"Content-Type": "application/json"}
+    if proxy_token:
+        headers["Authorization"] = f"Bearer {proxy_token}"
+        return headers
+    if not signing_key:
+        raise HTTPException(503, "Modal reader authentication is not configured")
+    try:
+        private_key = Ed25519PrivateKey.from_private_bytes(_b64url_decode(signing_key))
+    except Exception as exc:
+        raise HTTPException(503, "Modal gateway signing key is invalid") from exc
+    timestamp = str(int(time.time()))
+    nonce = secrets.token_urlsafe(16)
+    message = timestamp.encode("ascii") + b"." + nonce.encode("ascii") + b"." + body
+    signature = base64.urlsafe_b64encode(private_key.sign(message)).decode("ascii").rstrip("=")
+    headers["X-Manzili-Timestamp"] = timestamp
+    headers["X-Manzili-Nonce"] = nonce
+    headers["X-Manzili-Signature"] = signature
+    return headers
+
+
+def _modal_body(payload: ParseRequest) -> bytes:
+    return json.dumps(
+        payload.model_dump(),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
 
 
 def _render_worker_config() -> tuple[str, str]:
@@ -96,7 +142,6 @@ async def cloud_user(authorization: str | None = Header(default=None)) -> dict[s
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    modal_url, modal_token = _modal_config()
     worker_url, worker_token = _render_worker_config()
     supabase_url, publishable = _supabase_config()
     return {
@@ -104,7 +149,7 @@ async def health() -> dict[str, Any]:
         "version": app.version,
         "git_commit": _deployed_git_commit(),
         "reader": "modal-raster2seq-cloud-only",
-        "modal_reader_configured": bool(modal_url and modal_token),
+        "modal_reader_configured": _modal_ready(),
         "local_inference": False,
         "ai_configured": bool(os.getenv("AI_API_KEY")),
         "service_auth_configured": bool(os.getenv("MANZILI_API_TOKEN")),
@@ -116,8 +161,7 @@ async def health() -> dict[str, Any]:
 
 @app.get("/readyz")
 async def readyz() -> dict[str, Any]:
-    modal_url, modal_token = _modal_config()
-    if not modal_url or not modal_token:
+    if not _modal_ready():
         raise HTTPException(503, "Modal reader is not configured")
     return {
         "ok": True,
@@ -131,8 +175,7 @@ async def readyz() -> dict[str, Any]:
 
 @app.get("/v1/parser/status")
 async def parser_status(_: dict[str, Any] = Depends(backend_principal)) -> dict[str, Any]:
-    modal_url, modal_token = _modal_config()
-    ready = bool(modal_url and modal_token)
+    ready = _modal_ready()
     return {
         "ready": ready,
         "preferred_path": "modal-raster2seq-cloud-only" if ready else "unavailable",
@@ -174,24 +217,25 @@ async def ai_chat(payload: dict[str, Any], _: dict[str, Any] = Depends(backend_p
 
 @app.post("/v1/parse-floorplan")
 async def parse_floorplan(payload: ParseRequest, _: dict[str, Any] = Depends(backend_principal)) -> dict[str, Any]:
-    modal_url, modal_token = _modal_config()
-    if not modal_url or not modal_token:
+    modal_url, _, _ = _modal_config()
+    if not _modal_ready():
         raise HTTPException(503, "Modal reader is not configured")
+    body = _modal_body(payload)
     async with httpx.AsyncClient(timeout=330) as client:
         response = await client.post(
             modal_url,
-            json=payload.model_dump(),
-            headers={"Authorization": f"Bearer {modal_token}", "Content-Type": "application/json"},
+            content=body,
+            headers=_modal_request_headers(body),
         )
     if response.status_code >= 400:
         raise HTTPException(response.status_code, response.text[:1200])
-    body = response.json()
-    if not isinstance(body, dict):
+    result = response.json()
+    if not isinstance(result, dict):
         raise HTTPException(502, "Cloud reader returned an invalid response")
-    body["page_index"] = payload.page_index
-    body["reader_path"] = "modal-raster2seq-cloud-only"
-    body["local_inference"] = False
-    return body
+    result["page_index"] = payload.page_index
+    result["reader_path"] = "modal-raster2seq-cloud-only"
+    result["local_inference"] = False
+    return result
 
 
 @app.post("/v1/render-3d")
