@@ -14,7 +14,7 @@ from .ocr_reader import cloud_ocr_engine_name
 from .parser_v2 import parse_floorplan
 from .roboflow_parser import roboflow_status
 
-app = FastAPI(title="Manzili HAI Reader V2", version="2.1.0")
+app = FastAPI(title="Manzili HAI Reader V2", version="2.2.0")
 
 
 class ParseRequest(BaseModel):
@@ -53,7 +53,7 @@ async def _fetch_legacy_evidence(payload: ParseRequest) -> tuple[dict[str, Any] 
     except Exception as exc:
         return None, f"Legacy cloud evidence was unavailable: {type(exc).__name__}."
     if response.status_code >= 400:
-        return None, f"Legacy cloud evidence returned HTTP {response.status_code}; hybrid parsing continued without it."
+        return None, f"Legacy cloud evidence returned HTTP {response.status_code}; source-first parsing continued without it."
     try:
         body = response.json()
     except Exception:
@@ -71,12 +71,12 @@ async def health() -> dict[str, Any]:
     legacy_url, _ = _legacy_evidence_config()
     return {
         "ok": True,
-        "reader": "hai-hybrid-reader-v2",
+        "reader": "hai-source-first-reader-v2",
         "version": app.version,
         "roboflow_configured": bool(roboflow.get("configured")),
         "local_segmentation_configured": bool(local.get("configured")),
         "legacy_evidence_configured": bool(legacy_url),
-        "strategy": "roboflow+legacy-evidence+opencv+source-image-wall-gates",
+        "strategy": "source-pixel-vectorizer+room/opening-evidence+strict-fallback-gates",
         "ocr": cloud_ocr_engine_name(),
     }
 
@@ -107,6 +107,6 @@ async def parse(
         result["warnings"] = list(dict.fromkeys(warnings))
 
     result["page_index"] = payload.page_index
-    result["reader_path"] = "hai-hybrid-reader-v2"
+    result["reader_path"] = "hai-source-first-reader-v2"
     result["local_inference"] = False
     return result
