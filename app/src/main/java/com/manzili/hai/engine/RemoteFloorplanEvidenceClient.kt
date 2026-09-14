@@ -101,19 +101,22 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         .build()
 
     private val parserClient = "android-cloud-only-v1"
+
+    /** Parser access is intentionally public-through-gateway; no device secret is required. */
     val available: Boolean
-        get() = settings.backendBaseUrl.startsWith("https://") && settings.backendAuthToken.isNotBlank()
+        get() = settings.backendBaseUrl.startsWith("https://")
 
     private fun Request.Builder.withCloudHeaders(): Request.Builder {
         header("X-Manzili-Parser-Client", parserClient)
-        header("Authorization", "Bearer ${settings.backendAuthToken}")
+        val token = settings.backendAuthToken
+        if (token.isNotBlank()) header("Authorization", "Bearer $token")
         return this
     }
 
     suspend fun readiness(): Readiness = withContext(Dispatchers.IO) {
-        if (!available) return@withContext Readiness(false, "none", false, "none", "بيانات دخول خدمة القراءة السحابية غير مهيأة")
+        if (!available) return@withContext Readiness(false, "none", false, "none", "رابط خدمة القراءة السحابية غير مهيأ")
         val request = Request.Builder()
-            .url("${settings.backendBaseUrl}/readyz")
+            .url("${settings.backendBaseUrl}/v1/public/parser/status")
             .withCloudHeaders()
             .get()
             .build()
@@ -123,9 +126,9 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
                 if (!response.isSuccessful) return@use Readiness(false, "status-${response.code}", false, "modal-cloud-only", text.take(220))
                 val root = JSONObject(text)
                 Readiness(
-                    ready = root.optBoolean("ok", false),
-                    preferredPath = root.optString("reader", "modal-cloud-only"),
-                    configured = root.optBoolean("modal_reader_configured", true),
+                    ready = root.optBoolean("ready", false),
+                    preferredPath = root.optString("preferred_path", "modal-cloud-only"),
+                    configured = root.optBoolean("modal_reader_configured", root.optBoolean("ready", false)),
                     modelLabel = root.optString("reader", "modal-cloud-only"),
                     detail = root.optString("detail", "")
                 )
@@ -145,7 +148,7 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
     private fun requestPage(pageIndex: Int, base64: String): PageResult {
         val body = JSONObject().put("image_base64", base64).put("page_index", pageIndex)
         val req = Request.Builder()
-            .url("${settings.backendBaseUrl}/v1/parse-floorplan")
+            .url("${settings.backendBaseUrl}/v1/public/parse-floorplan")
             .withCloudHeaders()
             .header("Content-Type", "application/json")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
