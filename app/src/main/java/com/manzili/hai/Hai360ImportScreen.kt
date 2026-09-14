@@ -2,6 +2,7 @@ package com.manzili.hai
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -19,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -28,6 +30,8 @@ import com.manzili.hai.engine.MultiFloorGeometryEngine
 import com.manzili.hai.engine.RemoteFloorplanEvidenceClient
 import com.manzili.hai.engine.SaudiProjectTypeEngine
 import com.manzili.hai.model.FloorPlan
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -46,18 +50,14 @@ internal fun Hai360ImportScreen(
     var type by remember { mutableStateOf(SaudiProjectTypeEngine.Type.VILLA_TWO) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var phase by remember { mutableIntStateOf(0) }
+    var progress by remember { mutableIntStateOf(0) }
+    var progressLabel by remember { mutableStateOf("بدء العملية") }
+    var analysisJob by remember { mutableStateOf<Job?>(null) }
 
-    LaunchedEffect(busy) {
-        if (!busy) {
-            phase = 0
-            return@LaunchedEffect
-        }
-        while (busy) {
-            delay(900)
-            phase = (phase + 1).coerceAtMost(2)
-        }
+    DisposableEffect(Unit) {
+        onDispose { analysisJob?.cancel() }
     }
+    BackHandler(enabled = busy) { /* لا خروج أثناء التحليل إلا من زر الإلغاء الصريح. */ }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -89,7 +89,7 @@ internal fun Hai360ImportScreen(
                         contentColor = if (selected) Color.White else H360Ink,
                         shape = RoundedCornerShape(16.dp),
                         border = BorderStroke(1.dp, if (selected) H360CyanDeep else H360Line),
-                        modifier = Modifier.clickable { type = item }
+                        modifier = Modifier.clickable(enabled = !busy) { type = item }
                     ) {
                         Text(item.label, fontSize = 10.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp))
                     }
@@ -102,7 +102,7 @@ internal fun Hai360ImportScreen(
                 shape = RoundedCornerShape(30.dp),
                 border = BorderStroke(1.5.dp, if (source == null) H360Line else H360CyanDeep.copy(alpha = .42f)),
                 shadowElevation = 3.dp,
-                modifier = Modifier.fillMaxWidth().weight(1f).clickable { picker.launch(arrayOf("image/*", "application/pdf")) }
+                modifier = Modifier.fillMaxWidth().weight(1f).clickable(enabled = !busy) { picker.launch(arrayOf("image/*", "application/pdf")) }
             ) {
                 Box(Modifier.fillMaxSize().padding(22.dp)) {
                     BlueprintGrid(Modifier.matchParentSize(), step = 30f)
@@ -154,43 +154,96 @@ internal fun Hai360ImportScreen(
                 val uri = source ?: return@H360PrimaryButton
                 busy = true
                 error = null
-                scope.launch {
-                    runCatching {
+                progress = 0
+                progressLabel = "بدء العملية"
+                analysisJob = scope.launch {
+                    try {
                         if (!remote.available) error("خدمة القراءة السحابية غير مهيأة")
-                        val result = remote.analyze(uri, maxPdfPages = 8)
-                            ?: error("لم تعد خدمة القراءة السحابية نتيجة")
+                        val result = remote.analyze(uri, maxPdfPages = 8) { update ->
+                            progress = update.percent.coerceIn(0, 100)
+                            progressLabel = update.label
+                        }
+                        progress = 98
+                        progressLabel = "تثبيت الهندسة المقروءة"
                         val plan = result.toFloorPlan(title = "مخطط مستورد")
                         val typed = SaudiProjectTypeEngine.apply(plan, type)
-                        MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(typed))
-                    }.onSuccess { onAnalyzed(it, type) }
-                        .onFailure { error = it.message ?: "تعذر تحليل المخطط سحابيًا" }
-                    busy = false
+                        val normalized = MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(typed))
+                        progress = 100
+                        progressLabel = "اكتمل التحليل"
+                        delay(140)
+                        onAnalyzed(normalized, type)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        error = failure.message ?: "تعذر تحليل المخطط سحابيًا"
+                    } finally {
+                        busy = false
+                        analysisJob = null
+                    }
                 }
             }
             Spacer(Modifier.height(10.dp))
         }
 
         if (busy) {
-            Box(Modifier.fillMaxSize().background(H360Paper.copy(alpha = .98f)), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 34.dp)) {
-                    Box(contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = H360CyanDeep, trackColor = H360Cyan, strokeWidth = 4.dp, modifier = Modifier.size(92.dp))
-                        Icon(
-                            listOf(Icons.Rounded.CloudUpload, Icons.Rounded.Architecture, Icons.Rounded.AutoAwesome)[phase],
-                            null,
-                            tint = H360CyanDeep,
-                            modifier = Modifier.size(30.dp)
-                        )
+            Box(Modifier.fillMaxSize()) {
+                // حاجز لمس مستقل تحت محتوى التقدم: يمنع أي نقرة من الوصول إلى منتقي الملفات أو الشاشة الأصلية.
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(H360Paper.copy(alpha = .985f))
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    event.changes.forEach { it.consume() }
+                                }
+                            }
+                        }
+                )
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.align(Alignment.Center).padding(horizontal = 34.dp)
+                ) {
+                    Surface(color = H360Cyan, shape = CircleShape, modifier = Modifier.size(76.dp)) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.AutoAwesome, null, tint = H360CyanDeep, modifier = Modifier.size(30.dp))
+                        }
                     }
-                    Spacer(Modifier.height(24.dp))
-                    Text(listOf("رفع المخطط", "قراءة سحابية", "استلام النتيجة")[phase], color = H360Ink, fontSize = 18.sp, fontWeight = FontWeight.Black)
-                    Spacer(Modifier.height(18.dp))
-                    LinearProgressIndicator(
-                        progress = { (phase + 1) / 3f },
-                        color = H360CyanDeep,
-                        trackColor = H360Cyan,
-                        modifier = Modifier.fillMaxWidth().height(5.dp)
-                    )
+                    Spacer(Modifier.height(22.dp))
+                    Text("تحليل المخطط", color = H360Ink, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                    Spacer(Modifier.height(7.dp))
+                    Text(progressLabel, color = H360Muted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(20.dp))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        LinearProgressIndicator(
+                            progress = { progress / 100f },
+                            color = H360CyanDeep,
+                            trackColor = H360Cyan,
+                            modifier = Modifier.weight(1f).height(8.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text("$progress%", color = H360Ink, fontSize = 13.sp, fontWeight = FontWeight.Black)
+                    }
+                    Spacer(Modifier.height(22.dp))
+                    OutlinedButton(
+                        onClick = {
+                            analysisJob?.cancel()
+                            analysisJob = null
+                            busy = false
+                            progress = 0
+                            onBack()
+                        },
+                        shape = RoundedCornerShape(18.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = H360Danger),
+                        border = BorderStroke(1.dp, H360Danger.copy(alpha = .38f)),
+                        modifier = Modifier.fillMaxWidth().height(50.dp)
+                    ) {
+                        Icon(Icons.Rounded.Close, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text("إلغاء العملية", fontWeight = FontWeight.Black)
+                    }
                 }
             }
         }
