@@ -5,6 +5,7 @@ on:
     branches: [ main, 'codex/**', 'feat/**' ]
     paths:
       - 'backend/app/cubicasa_model.py'
+      - 'backend/app/ocr_reader.py'
       - 'backend/app/parser.py'
       - 'backend/app/parser_v2.py'
       - 'backend/app/parser_accuracy.py'
@@ -21,6 +22,7 @@ on:
     branches: [ main ]
     paths:
       - 'backend/app/cubicasa_model.py'
+      - 'backend/app/ocr_reader.py'
       - 'backend/app/parser.py'
       - 'backend/app/parser_v2.py'
       - 'backend/app/parser_accuracy.py'
@@ -52,15 +54,20 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: backend/requirements.txt
+      - name: Install Arabic English OCR
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+        working-directory: .
       - name: Install reader v2 dependencies
         run: pip install -r requirements.txt pytest==8.4.1
       - name: Import hybrid reader service
         run: |
           python - <<'PY'
+          from app.ocr_reader import cloud_ocr_engine_name
           from app.reader_main import app
           assert app.title == 'Manzili HAI Reader V2'
           assert any(getattr(route, 'path', '') == '/v2/parse' for route in app.routes)
-          print('reader service import ok')
+          assert cloud_ocr_engine_name() == 'tesseract-ara-eng'
+          print('reader service import ok, OCR=tesseract-ara-eng')
           PY
       - name: Test wall source-image support gate
         run: pytest -q tests/test_wall_support.py
@@ -75,13 +82,15 @@ jobs:
           image = np.full((420, 620, 3), 255, dtype=np.uint8)
           cv2.rectangle(image, (70, 60), (550, 350), (0, 0, 0), 8)
           cv2.line(image, (310, 60), (310, 350), (0, 0, 0), 8)
+          cv2.putText(image, '4.00 m', (110, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
           ok, encoded = cv2.imencode('.png', image)
           assert ok
           payload = base64.b64encode(encoded.tobytes()).decode('ascii')
           result = parse_floorplan(payload)
           assert isinstance(result, dict)
           assert 'walls' in result and 'rooms' in result and 'warnings' in result
-          assert str(result.get('model_used', '')).endswith('+wall-support-v1')
+          assert '+wall-support-v1+' in str(result.get('model_used', ''))
+          assert result.get('ocr_meta', {}).get('engine') == 'tesseract-ara-eng'
           assert 'wall_validation_meta' in result
           print('reader fallback smoke test ok', len(result['walls']), len(result['rooms']))
           PY
