@@ -6,7 +6,7 @@ services:
       pip install -r backend/requirements-ml-cpu.txt &&
       FLOORPLAN_SAFETENSORS_MODEL=/opt/render/project/src/backend/models/floorplan/best.safetensors
       python backend/scripts/fetch_floorplan_model.py
-    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    startCommand: cd backend && uvicorn app.public_main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /readyz
     autoDeployTrigger: commit
     envVars:
