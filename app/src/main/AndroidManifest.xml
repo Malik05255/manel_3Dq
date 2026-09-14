@@ -11,6 +11,10 @@
         android:supportsRtl="true">
         <activity
             android:name=".FocusedMainActivityV2"
+            android:exported="false"
+            android:screenOrientation="unspecified" />
+        <activity
+            android:name=".ConceptCActivity"
             android:exported="true"
             android:screenOrientation="unspecified">
             <intent-filter>
