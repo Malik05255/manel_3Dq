@@ -11,12 +11,17 @@ import com.manzili.hai.model.PlanPoint
 import com.manzili.hai.model.Room
 import com.manzili.hai.model.Wall
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /** Transport-only floor-plan client. All inference is performed in the cloud. */
@@ -28,6 +33,8 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         val modelLabel: String,
         val detail: String
     )
+
+    data class AnalysisProgress(val percent: Int, val label: String)
 
     data class PageResult(
         val pageIndex: Int,
@@ -92,6 +99,8 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         }
     }
 
+    private data class HttpResult(val code: Int, val successful: Boolean, val body: String)
+
     private val settings = HaiSettings(context)
     private val renderer = PdfPageRendererEngine(context)
     private val http = OkHttpClient.Builder()
@@ -113,18 +122,43 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         return this
     }
 
-    suspend fun readiness(): Readiness = withContext(Dispatchers.IO) {
-        if (!available) return@withContext Readiness(false, "none", false, "none", "رابط خدمة القراءة السحابية غير مهيأ")
+    private suspend fun executeCancellable(request: Request): HttpResult =
+        suspendCancellableCoroutine { continuation ->
+            val call = http.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (continuation.isActive) continuation.resumeWith(Result.failure(e))
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    val result = runCatching {
+                        response.use {
+                            HttpResult(
+                                code = it.code,
+                                successful = it.isSuccessful,
+                                body = it.body?.string().orEmpty()
+                            )
+                        }
+                    }
+                    if (continuation.isActive) continuation.resumeWith(result)
+                }
+            })
+        }
+
+    suspend fun readiness(): Readiness {
+        if (!available) return Readiness(false, "none", false, "none", "رابط خدمة القراءة السحابية غير مهيأ")
         val request = Request.Builder()
             .url("${settings.backendBaseUrl}/v1/public/parser/status")
             .withCloudHeaders()
             .get()
             .build()
-        runCatching {
-            http.newCall(request).execute().use { response ->
-                val text = response.body?.string().orEmpty()
-                if (!response.isSuccessful) return@use Readiness(false, "status-${response.code}", false, "modal-cloud-only", text.take(220))
-                val root = JSONObject(text)
+        return runCatching {
+            val response = executeCancellable(request)
+            if (!response.successful) {
+                Readiness(false, "status-${response.code}", false, "modal-cloud-only", response.body.take(220))
+            } else {
+                val root = JSONObject(response.body)
                 Readiness(
                     ready = root.optBoolean("ready", false),
                     preferredPath = root.optString("preferred_path", "modal-cloud-only"),
@@ -136,16 +170,40 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
         }.getOrElse { Readiness(false, "network", false, "modal-cloud-only", it.message.orEmpty()) }
     }
 
-    suspend fun analyze(uri: Uri, maxPdfPages: Int = 8): Result = withContext(Dispatchers.IO) {
+    suspend fun analyze(
+        uri: Uri,
+        maxPdfPages: Int = 8,
+        onProgress: suspend (AnalysisProgress) -> Unit = {}
+    ): Result {
         require(available) { "خدمة القراءة السحابية غير مهيأة" }
+        onProgress(AnalysisProgress(0, "بدء العملية"))
+
         val state = readiness()
         require(state.ready) { "خدمة القراءة السحابية غير جاهزة: ${state.detail.ifBlank { state.preferredPath }}" }
-        val images = renderer.render(uri, maxPdfPages.coerceIn(1, 12), targetMaxPx = 3200, jpegQuality = 96)
+        onProgress(AnalysisProgress(8, "تم الاتصال بالخدمة السحابية"))
+
+        val images = withContext(Dispatchers.IO) {
+            renderer.render(uri, maxPdfPages.coerceIn(1, 12), targetMaxPx = 3200, jpegQuality = 96)
+        }
         require(images.isNotEmpty()) { "تعذر تجهيز المخطط للرفع" }
-        Result(images.map { requestPage(it.pageIndex, it.base64Jpeg) })
+        onProgress(AnalysisProgress(18, "تم تجهيز ${images.size} صفحة للرفع"))
+
+        val pages = ArrayList<PageResult>(images.size)
+        images.forEachIndexed { index, image ->
+            val start = 18 + (index * 76 / images.size.coerceAtLeast(1))
+            onProgress(AnalysisProgress(start.coerceAtMost(90), "تحليل الصفحة ${index + 1} من ${images.size} سحابيًا"))
+            pages += requestPage(image.pageIndex, image.base64Jpeg)
+            val done = 18 + ((index + 1) * 76 / images.size.coerceAtLeast(1))
+            onProgress(AnalysisProgress(done.coerceAtMost(94), "تم استلام الصفحة ${index + 1} من ${images.size}"))
+        }
+
+        onProgress(AnalysisProgress(98, "دمج نتيجة القراءة"))
+        val result = Result(pages)
+        onProgress(AnalysisProgress(100, "اكتمل التحليل"))
+        return result
     }
 
-    private fun requestPage(pageIndex: Int, base64: String): PageResult {
+    private suspend fun requestPage(pageIndex: Int, base64: String): PageResult {
         val body = JSONObject().put("image_base64", base64).put("page_index", pageIndex)
         val req = Request.Builder()
             .url("${settings.backendBaseUrl}/v1/public/parse-floorplan")
@@ -153,11 +211,9 @@ class RemoteFloorplanEvidenceClient(private val context: Context) {
             .header("Content-Type", "application/json")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
-        http.newCall(req).execute().use { res ->
-            val text = res.body?.string().orEmpty()
-            if (!res.isSuccessful) error("Cloud reader (${res.code}): ${text.take(320)}")
-            return parse(pageIndex, JSONObject(text))
-        }
+        val response = executeCancellable(req)
+        if (!response.successful) error("Cloud reader (${response.code}): ${response.body.take(320)}")
+        return parse(pageIndex, JSONObject(response.body))
     }
 
     private fun parse(pageIndex: Int, root: JSONObject): PageResult {
