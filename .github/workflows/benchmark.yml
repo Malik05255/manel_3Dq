@@ -1,65 +1,105 @@
-name: Saudi Benchmark Validation
+name: Saudi Reader V3 Benchmark
 
 on:
   push:
-    branches: [main, 'codex/**']
+    branches: [main, 'codex/**', 'fix/**']
     paths:
       - 'benchmarks/saudi-floorplans/**'
       - 'backend/scripts/validate_saudi_benchmark.py'
       - 'backend/scripts/run_saudi_benchmark.py'
+      - 'backend/app/benchmark_metrics.py'
       - 'backend/app/parser.py'
+      - 'backend/app/parser_v3.py'
+      - 'backend/app/parser_accuracy.py'
+      - 'backend/app/parser_quality.py'
       - 'backend/app/cubicasa_model.py'
+      - 'backend/app/ocr_reader.py'
+      - 'backend/app/reader_main.py'
+      - 'backend/tests/test_benchmark_metrics.py'
       - '.github/workflows/benchmark.yml'
   pull_request:
+    branches: [main]
     paths:
       - 'benchmarks/saudi-floorplans/**'
       - 'backend/scripts/**'
+      - 'backend/app/benchmark_metrics.py'
       - 'backend/app/parser.py'
+      - 'backend/app/parser_v3.py'
+      - 'backend/app/parser_accuracy.py'
+      - 'backend/app/parser_quality.py'
       - 'backend/app/cubicasa_model.py'
+      - 'backend/app/ocr_reader.py'
+      - 'backend/app/reader_main.py'
+      - 'backend/tests/test_benchmark_metrics.py'
       - '.github/workflows/benchmark.yml'
   workflow_dispatch:
+
+concurrency:
+  group: manzili-hai-saudi-reader-v3-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate-and-measure:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Validate rights, de-identification and splits
+          cache: pip
+          cache-dependency-path: backend/requirements-ml-cpu.txt
+
+      - name: Validate rights, de-identification and dataset splits
         run: python backend/scripts/validate_saudi_benchmark.py
-      - name: Install real CPU parser stack
+
+      - name: Test benchmark scoring contract
+        run: |
+          pip install pytest==8.4.1
+          PYTHONPATH=backend pytest -q backend/tests/test_benchmark_metrics.py
+
+      - name: Install production Reader V3 CPU stack
         run: pip install -r backend/requirements-ml-cpu.txt
-      - name: Fetch and verify Deep Parser weights
+
+      - name: Fetch and verify locked CubiCasa weights
         env:
           FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
         run: python backend/scripts/fetch_floorplan_model.py
-      - name: Execute licensed Saudi benchmark cases
+
+      - name: Execute licensed Saudi cases against production Reader V3
         env:
           FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
         run: python backend/scripts/run_saudi_benchmark.py
-      - name: Enforce measured-claim policy
+
+      - name: Publish measured-claim status
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
           from pathlib import Path
+
           report = json.loads(Path('benchmark-execution-report.json').read_text(encoding='utf-8'))
-          licensed = int(report.get('licensed_cases_in_manifest', 0))
-          executed = int(report.get('executed_cases', 0))
-          if licensed == 0:
-              print('::warning::No licensed Saudi benchmark cases are present. Saudi accuracy claims remain DISABLED.')
-              print('claims_enabled=false')
-          else:
-              assert executed == licensed, report
-              print(f'claims_enabled=true; cases={executed}; mean_overall={report.get("mean_overall")}')
+          status = report.get('gate_status')
+          print(f"reader={report.get('reader_engine_locked_to')}")
+          print(f"gate_status={status}")
+          print(f"claims_enabled={report.get('claims_enabled')}")
+          print(f"test_cases={report.get('executed_test_cases')}/{report.get('minimum_test_cases_for_claims')}")
+          print(f"test_means={report.get('test_means')}")
+          if status == 'NO_DATA':
+              print('::warning::No licensed Saudi benchmark data. Real-world accuracy claims are disabled.')
+          elif status == 'INSUFFICIENT_TEST_CASES':
+              print('::warning::Benchmark data exists, but there are not enough held-out test cases for an accuracy claim.')
+          elif status == 'FAIL':
+              raise SystemExit(f"Reader V3 accuracy gate failed: {report.get('gate_failures')}")
+          elif status == 'EXECUTION_ERROR':
+              raise SystemExit(f"Reader V3 benchmark execution failed: {report.get('errors')}")
           PY
+
       - name: Upload benchmark reports
         uses: actions/upload-artifact@v4
         with:
-          name: saudi-benchmark-reports
+          name: saudi-reader-v3-benchmark-reports
           path: |
             benchmark-contract-report.json
             benchmark-execution-report.json
