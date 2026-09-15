@@ -61,6 +61,7 @@ jobs:
     env:
       FLOORPLAN_LOW_MEMORY: "true"
       FLOORPLAN_IMAGE_SIZE: "384"
+      FLOORPLAN_DTYPE: "float16"
       FLOORPLAN_TORCH_THREADS: "1"
       FLOORPLAN_TILED_INFERENCE: "true"
       FLOORPLAN_TILE_OVERLAP: "0.30"
@@ -102,6 +103,7 @@ jobs:
           assert runtime is not None, model_status()
           status = model_status()
           assert status.get('image_size') == 384, status
+          assert status.get('dtype') == 'float16', status
           assert status.get('low_memory') is True, status
           assert status.get('torch_threads') == 1, status
           image = np.full((320, 480, 3), 255, dtype=np.uint8)
@@ -129,8 +131,10 @@ jobs:
           assert any(getattr(route, 'path', '') == '/readyz' for route in app.routes)
           assert cloud_ocr_engine_name() == 'tesseract-ara-eng'
           assert load_cubicasa_runtime() is not None
-          assert model_status()['image_size'] == 384
-          print('Reader V3 service contract ok; CubiCasa low-memory profile loaded; OCR=tesseract-ara-eng')
+          status = model_status()
+          assert status['image_size'] == 384
+          assert status['dtype'] == 'float16'
+          print('Reader V3 service contract ok; CubiCasa FP16 low-memory profile loaded; OCR=tesseract-ara-eng')
           PY
 
       - name: Test low-memory config, geometry and benchmark scoring gates
