@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+import pathlib
+
+import cv2
 import numpy as np
 
+from app.reader_training_dataset import materialize
 from app.reader_training_masks import CLASS_INDEX, render_mask
 from scripts.compare_reader_candidate import decide
 
@@ -35,6 +40,34 @@ def test_corrected_geometry_rasterizes_reader_classes():
     assert np.count_nonzero(mask == CLASS_INDEX["door"]) > 0
     assert np.count_nonzero(mask == CLASS_INDEX["window"]) > 0
     assert mask[100, 200] == CLASS_INDEX["door"]
+
+
+def test_single_floor_correction_materializes_image_and_mask(tmp_path: pathlib.Path):
+    inbox = tmp_path / "inbox"
+    case = inbox / "hai-train-case1"
+    (case / "assets").mkdir(parents=True)
+    (case / "training_labels").mkdir()
+    image = np.full((120, 180, 3), 255, dtype=np.uint8)
+    cv2.line(image, (20, 60), (160, 60), (0, 0, 0), 5)
+    cv2.imwrite(str(case / "assets" / "hai-train-case1.png"), image)
+    (case / "training_labels" / "hai-train-case1.json").write_text(json.dumps(_reference()), encoding="utf-8")
+    manifest = {
+        "id": "hai-train-case1",
+        "asset": "assets/hai-train-case1.png",
+        "training_reference": "training_labels/hai-train-case1.json",
+        "split": "train",
+        "floors": 1,
+    }
+    (case / "manifest.jsonl").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+    (case / "ingest-report.json").write_text(json.dumps({"fine_tune_ready": True}), encoding="utf-8")
+
+    output = tmp_path / "dataset"
+    report = materialize(inbox, output)
+    assert report["trainable_cases"] == 1
+    assert (output / "images" / "hai-train-case1.png").is_file()
+    mask = cv2.imread(str(output / "masks" / "hai-train-case1.png"), cv2.IMREAD_GRAYSCALE)
+    assert mask is not None
+    assert np.count_nonzero(mask == CLASS_INDEX["door"]) > 0
 
 
 def _report(overall: float, opening: float = 0.93, count: int = 30, gate: str = "PASS"):
