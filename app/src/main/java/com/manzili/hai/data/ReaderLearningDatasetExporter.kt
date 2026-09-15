@@ -35,7 +35,8 @@ data class ReaderLearningExportResult(
     val caseId: String,
     val candidateId: String,
     val assetName: String,
-    val referenceName: String
+    val referenceName: String,
+    val trainingReferenceName: String = ""
 )
 
 /**
@@ -71,6 +72,7 @@ class ReaderLearningDatasetExporter(context: Context) {
         val extension = sourceExtension(sourceUri)
         val assetName = "assets/$caseId.$extension"
         val referenceName = "labels/$caseId.json"
+        val trainingReferenceName = "training_labels/$caseId.json"
         val baselineName = "baselines/$caseId.json"
         val createdAt = Instant.now().toString()
 
@@ -81,6 +83,7 @@ class ReaderLearningDatasetExporter(context: Context) {
             put("source", "user-consented-private")
             put("asset", assetName)
             put("reference", referenceName)
+            put("training_reference", trainingReferenceName)
             put("floors", consent.floors)
             put("license", "explicit-owner-or-license-consent")
             put("deidentified", true)
@@ -90,7 +93,7 @@ class ReaderLearningDatasetExporter(context: Context) {
         }
 
         val consentRecord = JSONObject().apply {
-            put("schema_version", 1)
+            put("schema_version", 2)
             put("case_id", caseId)
             put("exported_at_utc", createdAt)
             put("reader_model", ReaderCorrectionStore.READER_MODEL)
@@ -106,6 +109,7 @@ class ReaderLearningDatasetExporter(context: Context) {
         ZipOutputStream(BufferedOutputStream(output)).use { zip ->
             putText(zip, "manifest.jsonl", manifest.toString() + "\n")
             putText(zip, referenceName, benchmarkReference(approved).toString(2))
+            putText(zip, trainingReferenceName, trainingReference(approved).toString(2))
             putText(zip, baselineName, benchmarkReference(baseline).toString(2))
             putText(zip, "consent/$caseId.json", consentRecord.toString(2))
             putText(
@@ -113,6 +117,7 @@ class ReaderLearningDatasetExporter(context: Context) {
                 "README.txt",
                 "Manzili HAI Reader V3 learning export\n" +
                     "This bundle was exported explicitly by the user. It is TRAIN-only by default.\n" +
+                    "training_labels preserves wall thickness, opening rotation and room polygons for fine-tuning.\n" +
                     "No automatic upload occurred. Verify de-identification again before server ingestion.\n"
             )
             zip.putNextEntry(ZipEntry(assetName))
@@ -123,7 +128,7 @@ class ReaderLearningDatasetExporter(context: Context) {
         }
 
         corrections.markExported(candidateId)
-        return ReaderLearningExportResult(caseId, candidateId, assetName, referenceName)
+        return ReaderLearningExportResult(caseId, candidateId, assetName, referenceName, trainingReferenceName)
     }
 
     private fun sourceExtension(uri: Uri): String {
@@ -194,6 +199,58 @@ class ReaderLearningDatasetExporter(context: Context) {
                         plan.heightM?.let { put(JSONObject().put("value_m", it)) }
                     }
                 })
+            })
+        }
+
+        /**
+         * Fine-tuning reference. Coordinates stay in the Reader's 0..100 plan space, but unlike the
+         * benchmark reference this preserves the geometry needed to rasterize semantic masks.
+         */
+        fun trainingReference(plan: FloorPlan): JSONObject = JSONObject().apply {
+            put("schema_version", 1)
+            put("coordinate_space", "percent-0-100")
+            plan.widthM?.let { put("width_m", it) }
+            plan.heightM?.let { put("height_m", it) }
+            put("rooms", JSONArray().apply {
+                plan.rooms.forEach { room ->
+                    put(JSONObject().apply {
+                        put("id", room.id)
+                        put("type", room.type)
+                        put("x", room.x)
+                        put("y", room.y)
+                        put("width", room.width)
+                        put("height", room.height)
+                        put("polygon", JSONArray().apply {
+                            room.polygon.forEach { point ->
+                                put(JSONObject().put("x", point.x).put("y", point.y))
+                            }
+                        })
+                    })
+                }
+            })
+            put("walls", JSONArray().apply {
+                plan.walls.forEach { wall ->
+                    put(JSONObject().apply {
+                        put("id", wall.id)
+                        put("start", JSONObject().put("x", wall.start.x).put("y", wall.start.y))
+                        put("end", JSONObject().put("x", wall.end.x).put("y", wall.end.y))
+                        wall.thicknessCm?.let { put("thickness_cm", it) }
+                        put("kind", wall.kind)
+                    })
+                }
+            })
+            put("openings", JSONArray().apply {
+                plan.openings.forEach { opening ->
+                    put(JSONObject().apply {
+                        put("id", opening.id)
+                        put("type", opening.type)
+                        put("x", opening.x)
+                        put("y", opening.y)
+                        put("width", opening.width)
+                        put("rotation_deg", opening.rotationDeg)
+                        opening.wallId?.let { put("wall_id", it) }
+                    })
+                }
             })
         }
     }

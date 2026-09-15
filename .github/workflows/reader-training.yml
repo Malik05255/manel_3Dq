@@ -1,0 +1,56 @@
+name: Reader Correction Training Validation
+
+on:
+  push:
+    branches: [ main, 'feat/**', 'fix/**' ]
+    paths:
+      - 'backend/app/reader_training_*.py'
+      - 'backend/scripts/build_reader_training_dataset.py'
+      - 'backend/scripts/train_reader_from_corrections.py'
+      - 'backend/scripts/compare_reader_candidate.py'
+      - 'backend/scripts/ingest_reader_learning_bundle.py'
+      - 'backend/tests/test_reader_training.py'
+      - 'backend/tests/test_reader_learning_bundle.py'
+      - 'app/src/main/java/com/manzili/hai/data/ReaderLearningDatasetExporter.kt'
+      - 'app/src/test/java/com/manzili/hai/data/ReaderLearningDatasetExporterTest.kt'
+      - '.github/workflows/reader-training.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'backend/app/reader_training_*.py'
+      - 'backend/scripts/build_reader_training_dataset.py'
+      - 'backend/scripts/train_reader_from_corrections.py'
+      - 'backend/scripts/compare_reader_candidate.py'
+      - 'backend/scripts/ingest_reader_learning_bundle.py'
+      - 'backend/tests/test_reader_training.py'
+      - 'backend/tests/test_reader_learning_bundle.py'
+      - 'app/src/main/java/com/manzili/hai/data/ReaderLearningDatasetExporter.kt'
+      - 'app/src/test/java/com/manzili/hai/data/ReaderLearningDatasetExporterTest.kt'
+      - '.github/workflows/reader-training.yml'
+
+jobs:
+  validate-training-contract:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements-reader-v3.txt
+      - name: Install Reader training dependencies
+        run: pip install -r requirements-reader-v3.txt pytest==8.4.1
+      - name: Compile training surfaces
+        run: |
+          python -m py_compile \
+            app/reader_training_masks.py \
+            app/reader_training_dataset.py \
+            scripts/build_reader_training_dataset.py \
+            scripts/train_reader_from_corrections.py \
+            scripts/compare_reader_candidate.py \
+            scripts/ingest_reader_learning_bundle.py
+      - name: Test correction intake masks and promotion gate
+        run: PYTHONPATH=. pytest -q tests/test_reader_learning_bundle.py tests/test_reader_training.py

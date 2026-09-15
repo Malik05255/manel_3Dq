@@ -24,6 +24,7 @@ class ValidatedBundle:
     reference_name: str
     consent_name: str
     baseline_name: str | None
+    training_reference_name: str | None
 
 
 def _safe_member(name: str) -> bool:
@@ -57,6 +58,16 @@ def _load_manifest(raw: bytes) -> dict[str, Any]:
     if len(rows) != 1:
         raise ValueError("learning bundle must contain exactly one manifest row")
     return rows[0]
+
+
+def _validate_training_reference(reference: dict[str, Any], label: str) -> None:
+    if int(reference.get("schema_version", 0)) != 1:
+        raise ValueError(f"{label}: unsupported training reference schema")
+    if str(reference.get("coordinate_space", "")) != "percent-0-100":
+        raise ValueError(f"{label}: coordinate_space must be percent-0-100")
+    for key in ("walls", "rooms", "openings"):
+        if not isinstance(reference.get(key), list):
+            raise ValueError(f"{label}: {key} must be a list")
 
 
 def validate_bundle(bundle_path: pathlib.Path) -> ValidatedBundle:
@@ -95,6 +106,13 @@ def validate_bundle(bundle_path: pathlib.Path) -> ValidatedBundle:
         if pathlib.PurePosixPath(asset_name).suffix.lower() not in ALLOWED_ASSET_SUFFIXES:
             raise ValueError("unsupported floor-plan asset format")
 
+        training_reference_name = str(manifest.get("training_reference", "")).strip() or None
+        if training_reference_name is not None:
+            if training_reference_name not in names:
+                raise ValueError("manifest training_reference is missing from bundle")
+            training_reference = _load_json(archive.read(training_reference_name), training_reference_name)
+            _validate_training_reference(training_reference, training_reference_name)
+
         consent_name = f"consent/{case_id}.json"
         if consent_name not in names:
             raise ValueError("consent record is missing")
@@ -121,7 +139,15 @@ def validate_bundle(bundle_path: pathlib.Path) -> ValidatedBundle:
         else:
             baseline_name = None
 
-        return ValidatedBundle(case_id, manifest, asset_name, reference_name, consent_name, baseline_name)
+        return ValidatedBundle(
+            case_id,
+            manifest,
+            asset_name,
+            reference_name,
+            consent_name,
+            baseline_name,
+            training_reference_name,
+        )
 
 
 def ingest(bundle_path: pathlib.Path, inbox_root: pathlib.Path) -> dict[str, Any]:
@@ -138,11 +164,15 @@ def ingest(bundle_path: pathlib.Path, inbox_root: pathlib.Path) -> dict[str, Any
             wanted = ["manifest.jsonl", validated.asset_name, validated.reference_name, validated.consent_name]
             if validated.baseline_name:
                 wanted.append(validated.baseline_name)
+            if validated.training_reference_name:
+                wanted.append(validated.training_reference_name)
             for name in wanted:
                 destination = temp / pathlib.PurePosixPath(name)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(archive.read(name))
 
+        floors = int(validated.manifest.get("floors", 0))
+        fine_tune_ready = validated.training_reference_name is not None and floors == 1
         report = {
             "case_id": validated.case_id,
             "status": "accepted-private-training-inbox",
@@ -152,6 +182,11 @@ def ingest(bundle_path: pathlib.Path, inbox_root: pathlib.Path) -> dict[str, Any
             "rights_attested": True,
             "automatic_training_started": False,
             "benchmark_ready": pathlib.PurePosixPath(validated.asset_name).suffix.lower() != ".pdf",
+            "fine_tune_ready": fine_tune_ready,
+            "fine_tune_blocker": None if fine_tune_ready else (
+                "multi-floor corrections need page/floor alignment before training" if floors != 1
+                else "rich training_reference missing; re-export this correction from the current app"
+            ),
             "warning": "De-identification is user-attested and must be reviewed again before any broader use.",
         }
         (temp / "ingest-report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
