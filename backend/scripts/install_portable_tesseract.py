@@ -27,8 +27,6 @@ ROOT_PACKAGES = (
     "liblept5",
 )
 
-# Keep the host's loader/C runtime. Replacing these through LD_LIBRARY_PATH can make a
-# rootless bundle less portable rather than more portable.
 HOST_RUNTIME_PACKAGES = {
     "libc6",
     "libgcc-s1",
@@ -48,7 +46,6 @@ def _normalize_package(value: str) -> str | None:
     value = value.strip()
     if value.startswith("<") or not value:
         return None
-    # apt can report architecture qualifiers such as libc6:any.
     if ":" in value:
         value = value.split(":", 1)[0]
     return value or None
@@ -109,7 +106,6 @@ def _dependency_closure(apt_cache: str) -> list[str]:
         if package in HOST_RUNTIME_PACKAGES:
             continue
         if not _has_candidate(package, apt_cache):
-            # Alternative/virtual dependencies can legitimately have no direct candidate.
             if package in ROOT_PACKAGES:
                 raise RuntimeError(f"required Tesseract package has no apt candidate: {package}")
             continue
@@ -217,24 +213,20 @@ def install(root: Path) -> None:
     print(f"Portable Tesseract apt closure: {len(packages)} packages")
     with tempfile.TemporaryDirectory(prefix="manzili-tesseract-") as temp_dir:
         temp = Path(temp_dir)
-        # Download individually so one optional/alternative package can never abort all roots.
-        downloaded = 0
-        for package in packages:
-            result = subprocess.run(
-                [apt, "download", package],
-                cwd=temp,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if result.returncode != 0:
-                if package in ROOT_PACKAGES:
-                    raise RuntimeError(f"failed to download required package {package}: {result.stderr}")
-                continue
-            downloaded += 1
+        # Every package in the closure already has a candidate, so one batched apt download
+        # is both safe and far faster than spawning apt once per dependency on Render builds.
+        result = subprocess.run(
+            [apt, "download", *packages],
+            cwd=temp,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"portable Tesseract apt download failed: {result.stderr}")
         archives = sorted(temp.glob("*.deb"))
-        if not archives or downloaded == 0:
+        if not archives:
             raise RuntimeError("apt download returned no Tesseract packages")
         for archive in archives:
             subprocess.run([dpkg_deb, "-x", str(archive), str(root)], check=True, timeout=60)
