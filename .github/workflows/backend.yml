@@ -98,6 +98,16 @@ jobs:
           grep -q 'FLOORPLAN_TILED_INFERENCE' render.yaml
           grep -q 'FLOORPLAN_MAX_TILES' render.yaml
 
+      - name: Verify CPU-only compatibility dependency set
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q '^cryptography==45.0.7$' backend/requirements-ml-cpu.txt
+          grep -q '^torch==2.14.0+cpu$' backend/requirements-ml-cpu.txt
+          grep -q '^torchvision==0.29.0+cpu$' backend/requirements-ml-cpu.txt
+          grep -q 'download.pytorch.org/whl/cpu' backend/requirements-ml-cpu.txt
+          ! grep -q '^-r requirements.txt$' backend/requirements-ml-cpu.txt
+
       - name: Verify portable Docker Reader V3 image
         shell: bash
         run: |
