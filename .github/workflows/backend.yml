@@ -33,16 +33,19 @@ jobs:
       - name: Install cloud gateway dependencies
         run: pip install -r backend/requirements-gateway.txt pytest==8.4.1
 
-      - name: Compile cloud and Reader V3 surfaces
+      - name: Compile cloud, Reader V3 and OCR surfaces
         run: |
           python -m compileall \
             backend/app/cloud_gateway.py \
             backend/app/cloud_public_gateway.py \
             backend/app/reader_provider.py \
             backend/app/reader_main.py \
+            backend/app/ocr_main.py \
+            backend/app/ocr_reader.py \
             backend/app/parser_v3.py \
             backend/app/benchmark_metrics.py \
             backend/scripts/fetch_floorplan_model.py \
+            backend/scripts/install_portable_tesseract.py \
             backend/scripts/ingest_reader_learning_bundle.py \
             modal_reader
 
@@ -80,7 +83,7 @@ jobs:
           print('gateway prefers Reader V3', state)
           PY
 
-      - name: Validate Reader V3 deployment blueprint
+      - name: Validate Reader V3 and Arabic OCR deployment blueprint
         shell: bash
         run: |
           set -euo pipefail
@@ -97,6 +100,15 @@ jobs:
           grep -q '/opt/render/project/src/backend/models/floorplan/best.safetensors' render.yaml
           grep -q 'FLOORPLAN_TILED_INFERENCE' render.yaml
           grep -q 'FLOORPLAN_MAX_TILES' render.yaml
+          grep -q 'manzili-hai-ocr-ar-en' render.yaml
+          grep -q 'requirements-ocr-service.txt' render.yaml
+          grep -q 'install_portable_tesseract.py' render.yaml
+          grep -q 'uvicorn app.ocr_main:app' render.yaml
+          grep -q 'OCR_PROVIDER_URL' render.yaml
+          grep -q 'https://manzili-hai-ocr-ar-en.onrender.com' render.yaml
+          grep -q 'OCR_PROVIDER_TOKEN' render.yaml
+          grep -q 'OCR_SERVICE_TOKEN' render.yaml
+          grep -q '^pytesseract==0.3.13$' backend/requirements-ocr-service.txt
 
       - name: Verify CPU-only compatibility dependency set
         shell: bash
@@ -122,7 +134,7 @@ jobs:
           grep -q 'safetensors==0.8.0' backend/requirements.txt
           grep -q '/opt/manzili/models/floorplan/best.safetensors' backend/scripts/fetch_floorplan_model.py
 
-      - name: Verify Reader V3 contract
+      - name: Verify Reader V3 and OCR contracts
         shell: bash
         run: |
           set -euo pipefail
@@ -135,6 +147,10 @@ jobs:
           grep -q 'Manzili HAI Reader V3' backend/app/reader_main.py
           grep -q 'cubicasa-unet-resnet34-v3' backend/app/reader_main.py
           grep -q 'CubiCasa segmentation model is not loaded' backend/app/reader_main.py
+          grep -q 'Manzili HAI Arabic OCR' backend/app/ocr_main.py
+          grep -q '/v1/ocr' backend/app/ocr_main.py
+          grep -q 'RemoteOCRReaderAdapter' backend/app/ocr_reader.py
+          grep -q 'remote-tesseract-ara-eng' backend/app/ocr_reader.py
           grep -q 'app.parser_v3 import parse_floorplan' backend/scripts/run_saudi_benchmark.py
           grep -q 'cubicasa-unet-resnet34-v3' benchmarks/saudi-floorplans/quality-gate.json
           grep -q 'user-correction bundles are accepted as train only' backend/scripts/ingest_reader_learning_bundle.py
