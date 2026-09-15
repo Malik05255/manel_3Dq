@@ -83,8 +83,6 @@ def _merge_axis_segments(
                     continue
                 klo = min(ksx, kex) if axis == "h" else min(ksy, key)
                 khi = max(ksx, kex) if axis == "h" else max(ksy, key)
-                # Merge only overlap or a tiny raster break. A normal doorway is much
-                # wider than tiny_gap and must remain a real discontinuity in the wall.
                 if lo <= khi + tiny_gap and hi >= klo - tiny_gap:
                     candidate = kept
                     break
@@ -99,7 +97,6 @@ def _merge_axis_segments(
             clo = min(csx, cex) if axis == "h" else min(csy, cey)
             chi = max(csx, cex) if axis == "h" else max(csy, cey)
             nlo, nhi = min(lo, clo), max(hi, chi)
-            # Keep the coordinate of the stronger source-supported segment.
             if float(item.get("structural_core_support", 0.0)) > float(candidate.get("structural_core_support", 0.0)):
                 ccoord = coord
             if axis == "h":
@@ -123,13 +120,6 @@ def clean_axis_wall_segments(
     *,
     footprint_min_side: int,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Remove door graphics/spikes and collapse duplicate axis wall fragments.
-
-    Blue CAD exports often draw wall strokes, door leaves and jamb graphics with the same
-    colour. Axis morphology alone can therefore promote thin door marks into fake walls.
-    A distance-transform core keeps only strokes with real wall thickness. Afterwards,
-    collinear overlaps are merged, but doorway-sized gaps are deliberately preserved.
-    """
     if not segments:
         return [], {"input_count": 0, "output_count": 0, "rejected_thin": 0, "merged": 0}
 
@@ -163,3 +153,55 @@ def clean_axis_wall_segments(
         "core_radius_px": round(float(core_radius), 3),
         "min_keep_len_px": round(float(min_keep_len), 3),
     }
+
+
+def clean_normalized_blue_walls(
+    mask: np.ndarray,
+    walls: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Apply structural-thickness filtering and axis de-duplication to final wall vectors."""
+    if not walls:
+        return [], {"input_count": 0, "output_count": 0, "rejected_thin": 0, "merged": 0}
+
+    ys, xs = np.where(mask > 0)
+    if xs.size < 16 or ys.size < 16:
+        return walls, {"input_count": len(walls), "output_count": len(walls), "rejected_thin": 0, "merged": 0}
+
+    h, w = mask.shape[:2]
+    footprint_min = max(1, min(int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)))
+    axis_raw: list[dict[str, Any]] = []
+    diagonals: list[dict[str, Any]] = []
+
+    for wall in walls:
+        axis = str(wall.get("axis") or "")
+        if axis not in {"h", "v"}:
+            diagonals.append(dict(wall))
+            continue
+        start = wall.get("start") or {}
+        end = wall.get("end") or {}
+        item = dict(wall)
+        item["start_px"] = (float(start.get("x", 0.0)) / 100.0 * w, float(start.get("y", 0.0)) / 100.0 * h)
+        item["end_px"] = (float(end.get("x", 0.0)) / 100.0 * w, float(end.get("y", 0.0)) / 100.0 * h)
+        item["support"] = float(wall.get("image_support", 1.0))
+        axis_raw.append(item)
+
+    cleaned_axis, meta = clean_axis_wall_segments(mask, axis_raw, footprint_min_side=footprint_min)
+    cleaned: list[dict[str, Any]] = []
+    for item in cleaned_axis:
+        sx, sy = map(float, item["start_px"])
+        ex, ey = map(float, item["end_px"])
+        wall = {k: v for k, v in item.items() if k not in {"start_px", "end_px", "support"}}
+        wall["start"] = {"x": sx / max(w, 1) * 100.0, "y": sy / max(h, 1) * 100.0}
+        wall["end"] = {"x": ex / max(w, 1) * 100.0, "y": ey / max(h, 1) * 100.0}
+        wall["image_support"] = round(float(item.get("support", 1.0)), 4)
+        wall["structural_core_support"] = round(float(item.get("structural_core_support", 0.0)), 4)
+        cleaned.append(wall)
+
+    cleaned.extend(diagonals)
+    for index, wall in enumerate(cleaned):
+        wall["id"] = f"blue-detail-{index}"
+
+    meta["input_count"] = len(walls)
+    meta["output_count"] = len(cleaned)
+    meta["diagonal_kept"] = len(diagonals)
+    return cleaned, meta
