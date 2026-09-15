@@ -24,6 +24,28 @@ jobs:
       READER_URL: https://manzili-hai-reader-v3-final.onrender.com
       OCR_URL: https://manzili-hai-ocr-ar-en-v2.onrender.com
     steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: Detect whether production code changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          BEFORE='${{ github.event.before }}'
+          if [[ -n "$BEFORE" && "$BEFORE" != '0000000000000000000000000000000000000000' ]]; then
+            git cat-file -e "$BEFORE^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BEFORE"
+            git diff --name-only "$BEFORE" "$GITHUB_SHA" > /tmp/changed-files.txt
+          else
+            git show --pretty='' --name-only "$GITHUB_SHA" > /tmp/changed-files.txt
+          fi
+          cat /tmp/changed-files.txt
+          if grep -Eq '^(backend/|render\.yaml$)' /tmp/changed-files.txt; then
+            echo 'DEPLOY_CODE_CHANGED=true' >> "$GITHUB_ENV"
+          else
+            echo 'DEPLOY_CODE_CHANGED=false' >> "$GITHUB_ENV"
+          fi
+
       - name: Wait for Source-First Reader V4 and Arabic OCR production deployment
         shell: bash
         run: |
@@ -36,7 +58,7 @@ jobs:
             echo "attempt=$attempt health=$HEALTH"
             echo "attempt=$attempt reader=$READER"
             echo "attempt=$attempt ocr=$OCR"
-            if python - "$HEALTH" "$READER" "$OCR" "$GITHUB_SHA" <<'PY'
+            if python - "$HEALTH" "$READER" "$OCR" "$GITHUB_SHA" "$DEPLOY_CODE_CHANGED" <<'PY'
           import json
           import sys
 
@@ -47,12 +69,15 @@ jobs:
           except Exception:
               raise SystemExit(1)
           expected_sha = sys.argv[4]
+          deploy_code_changed = sys.argv[5].lower() == "true"
           assert health.get("version") == "0.73.0", health
           assert health.get("reader") == "hai-source-first-v4", health
           assert health.get("reader_provider_configured") is True, health
+          assert health.get("modal_fallback_configured") is False, health
+          assert health.get("source_first_required") is True, health
           assert health.get("local_inference") is False, health
           deployed = health.get("git_commit")
-          if deployed:
+          if deploy_code_changed:
               assert deployed == expected_sha, (deployed, expected_sha)
           assert reader.get("ready") is True, reader
           assert reader.get("reader") == "hai-source-first-v4", reader
