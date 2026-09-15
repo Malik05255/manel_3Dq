@@ -12,7 +12,11 @@ from fastapi import HTTPException
 
 
 _RETRYABLE_STATUS = {502, 503, 504}
-_RETRY_DELAYS_SECONDS = (0.0, 1.0, 2.5)
+# Render free/starter instances can need tens of seconds to wake and load the
+# CubiCasa runtime. Keep the parser fail-closed on V4, but wait long enough for
+# that same authoritative reader to become ready instead of surfacing a 503 to
+# Android after only a few seconds.
+_RETRY_DELAYS_SECONDS = (0.0, 2.0, 5.0, 10.0, 20.0, 30.0, 45.0)
 
 
 @dataclass(frozen=True)
@@ -123,7 +127,7 @@ async def request_reader(image_base64: str, page_index: int) -> dict[str, Any]:
                 last_transport_error = exc
                 if attempt + 1 < len(_RETRY_DELAYS_SECONDS):
                     continue
-                raise HTTPException(503, "HAI reader is temporarily unreachable") from exc
+                raise HTTPException(503, "HAI Source-First Reader V4 is still starting; please retry") from exc
 
             last_response = response
             if response.status_code in _RETRYABLE_STATUS and attempt + 1 < len(_RETRY_DELAYS_SECONDS):
@@ -131,7 +135,7 @@ async def request_reader(image_base64: str, page_index: int) -> dict[str, Any]:
             break
 
     if last_response is None:
-        raise HTTPException(503, "HAI reader is temporarily unreachable") from last_transport_error
+        raise HTTPException(503, "HAI Source-First Reader V4 is still starting; please retry") from last_transport_error
 
     if last_response.status_code >= 400:
         detail = _safe_provider_error(last_response)
