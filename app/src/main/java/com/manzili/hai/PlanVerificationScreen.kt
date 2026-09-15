@@ -27,7 +27,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -46,10 +45,12 @@ private val VSViolet = Color(0xFF6353D9)
 private val VSOrange = Color(0xFFE28B5A)
 private val VSGreen = Color(0xFF4C8A78)
 
-/**
- * Review is intentionally manual/contextual now. HAI is summoned by the floating button
- * owned by the workspace, so this screen never hides an AI action inside a fixed wide button.
- */
+private enum class VerificationPreviewMode(val title: String) {
+    ORIGINAL("الأصلي"),
+    VECTOR("المتجه"),
+    OVERLAY("تراكب")
+}
+
 @Composable
 fun PlanVerificationScreen(
     nav: NavHostController,
@@ -89,15 +90,15 @@ fun PlanVerificationScreen(
                     Icon(Icons.Rounded.ArrowForward, "رجوع")
                 }
                 Column(Modifier.weight(1f)) {
-                    Text("راجع", fontSize = 28.sp, fontWeight = FontWeight.Black, color = VSDeep)
-                    Text("شاهد ما فهمه النظام، وصحّح فقط ما يحتاج تدخلك", color = Color.Gray, fontSize = 10.sp)
+                    Text("مراجعة المخطط", fontSize = 26.sp, fontWeight = FontWeight.Black, color = VSDeep)
+                    Text("قارن الأصل بالمتجه قبل الاعتماد", color = Color.Gray, fontSize = 10.sp)
                 }
                 Surface(
                     color = if (report.blocking) VSOrange.copy(alpha = .12f) else VSGreen.copy(alpha = .12f),
                     shape = RoundedCornerShape(50.dp)
                 ) {
                     Text(
-                        if (report.blocking) "يحتاج حل" else "جاهز",
+                        if (report.blocking) "مراجعة ${report.readingConfidence}%" else "جاهز ${report.readingConfidence}%",
                         color = if (report.blocking) VSOrange else VSGreen,
                         fontWeight = FontWeight.Black,
                         fontSize = 10.5.sp,
@@ -157,7 +158,7 @@ fun PlanVerificationScreen(
                         ) {
                             Icon(Icons.Rounded.Straighten, null, Modifier.size(17.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("تأكيد يدوي")
+                            Text("تأكيد المقياس يدويًا")
                         }
                     }
                 }
@@ -200,7 +201,7 @@ fun PlanVerificationScreen(
                         Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Rounded.Verified, null, tint = VSGreen)
                             Spacer(Modifier.width(8.dp))
-                            Text("لا توجد مشكلة حاجزة في المراجعة الحالية.", color = VSGreen, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            Text("الهندسة تجاوزت حد الاعتماد ويمكن متابعتها.", color = VSGreen, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                         }
                     }
                 }
@@ -215,7 +216,11 @@ fun PlanVerificationScreen(
                 shape = RoundedCornerShape(22.dp),
                 modifier = Modifier.fillMaxWidth().height(56.dp)
             ) {
-                Text("متابعة إلى التعديل", fontWeight = FontWeight.Black, fontSize = 15.sp)
+                Text(
+                    if (report.blocking) "أكمل المراجعة قبل الاعتماد" else "اعتماد ومتابعة",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 15.sp
+                )
             }
 
             Spacer(Modifier.height(8.dp))
@@ -229,6 +234,7 @@ private fun VerificationSourcePreview(source: Uri, plan: FloorPlan) {
     val bitmap by produceState<Bitmap?>(initialValue = null, source) {
         value = withContext(Dispatchers.IO) { loadReviewBitmap(context, source) }
     }
+    var mode by remember { mutableStateOf(VerificationPreviewMode.OVERLAY) }
     val image = bitmap
 
     Card(
@@ -236,38 +242,82 @@ private fun VerificationSourcePreview(source: Uri, plan: FloorPlan) {
         shape = RoundedCornerShape(26.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        if (image == null) {
-            Box(Modifier.fillMaxWidth().height(250.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = VSViolet, strokeWidth = 2.5.dp)
+        Column(Modifier.fillMaxWidth().padding(10.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                VerificationPreviewMode.entries.forEach { item ->
+                    FilterChip(
+                        selected = mode == item,
+                        onClick = { mode = item },
+                        label = { Text(item.title, fontWeight = FontWeight.Bold, fontSize = 11.sp) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
-        } else {
-            val ratio = image.width.toFloat() / image.height.coerceAtLeast(1).toFloat()
-            Box(Modifier.fillMaxWidth().aspectRatio(ratio.coerceIn(.55f, 1.7f))) {
-                Image(
-                    bitmap = image.asImageBitmap(),
-                    contentDescription = "المخطط الأصلي",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize()
-                )
-                Canvas(Modifier.fillMaxSize()) {
-                    fun p(x: Float, y: Float) = Offset(size.width * x / 100f, size.height * y / 100f)
-                    plan.rooms.forEach { room ->
-                        drawRect(
-                            VSViolet.copy(alpha = .08f),
-                            topLeft = p(room.x, room.y),
-                            size = Size(size.width * room.width / 100f, size.height * room.height / 100f)
+
+            Spacer(Modifier.height(8.dp))
+
+            if (image == null) {
+                Box(Modifier.fillMaxWidth().height(250.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = VSViolet, strokeWidth = 2.5.dp)
+                }
+            } else {
+                val ratio = image.width.toFloat() / image.height.coerceAtLeast(1).toFloat()
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(ratio.coerceAtLeast(.20f))
+                        .background(Color.White, RoundedCornerShape(18.dp))
+                ) {
+                    if (mode != VerificationPreviewMode.VECTOR) {
+                        Image(
+                            bitmap = image.asImageBitmap(),
+                            contentDescription = "المخطط الأصلي",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize()
                         )
                     }
-                    plan.walls.forEach { wall ->
-                        drawLine(
-                            VSViolet.copy(alpha = .78f),
-                            p(wall.start.x, wall.start.y),
-                            p(wall.end.x, wall.end.y),
-                            strokeWidth = 2.dp.toPx()
-                        )
+
+                    if (mode != VerificationPreviewMode.ORIGINAL) {
+                        Canvas(Modifier.fillMaxSize()) {
+                            fun p(x: Float, y: Float) = Offset(size.width * x / 100f, size.height * y / 100f)
+                            val roomAlpha = if (mode == VerificationPreviewMode.OVERLAY) .10f else .18f
+                            val wallAlpha = if (mode == VerificationPreviewMode.OVERLAY) .82f else 1f
+                            val wallWidth = if (mode == VerificationPreviewMode.OVERLAY) 2.dp.toPx() else 3.dp.toPx()
+
+                            plan.rooms.forEach { room ->
+                                drawRect(
+                                    VSViolet.copy(alpha = roomAlpha),
+                                    topLeft = p(room.x, room.y),
+                                    size = Size(size.width * room.width / 100f, size.height * room.height / 100f)
+                                )
+                            }
+                            plan.walls.forEach { wall ->
+                                drawLine(
+                                    VSViolet.copy(alpha = wallAlpha),
+                                    p(wall.start.x, wall.start.y),
+                                    p(wall.end.x, wall.end.y),
+                                    strokeWidth = wallWidth
+                                )
+                            }
+                        }
                     }
                 }
             }
+
+            Spacer(Modifier.height(8.dp))
+            Text(
+                when (mode) {
+                    VerificationPreviewMode.ORIGINAL -> "الأصل كما تم رفعه، بدون أي رسم من HAI."
+                    VerificationPreviewMode.VECTOR -> "الجدران والغرف التي استخرجها HAI فقط."
+                    VerificationPreviewMode.OVERLAY -> "تراكب مباشر: يجب أن تقع الخطوط البنفسجية فوق الجدران الأصلية."
+                },
+                color = Color(0xFF77736D),
+                fontSize = 10.sp,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+            )
         }
     }
 }
