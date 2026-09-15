@@ -30,13 +30,20 @@ def test_v3_recovers_clear_blue_plan_when_semantic_walls_are_empty():
     cv2.line(image, (590, 110), (590, 790), blue, 12)
     cv2.line(image, (110, 450), (590, 450), blue, 12)
 
+    # Thin green dimension lines must not become the selected structural wall network.
+    green = (95, 150, 95)
+    cv2.line(image, (70, 75), (1130, 75), green, 2)
+    cv2.line(image, (70, 825), (1130, 825), green, 2)
+
     semantic_mask = np.zeros(image.shape[:2], dtype=np.uint8)
     walls, room_mask, recovery = _recover_wall_geometry(image, [], semantic_mask)
 
     assert recovery["used"] is True
-    assert recovery["selected"] in {"precision-raster", "cubicasa+precision-raster"}
-    assert recovery["precision_walls"] >= 4
-    assert len(walls) >= 4
+    assert recovery["selected"] in {"blue-raster", "cubicasa+blue-raster"}
+    assert recovery["blue_walls"] >= 4
+    assert recovery["blue_topology"] >= 25
+    assert recovery["precision_walls"] == 0
+    assert 4 <= len(walls) <= 40
     assert wall_topology_score(walls) >= 25
     assert np.count_nonzero(room_mask) > 0
 
