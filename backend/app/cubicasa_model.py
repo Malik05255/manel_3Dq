@@ -176,15 +176,33 @@ class CubiCasaRuntime:
 
         Blue/purple CAD plans are first recoloured to black line-art for CubiCasa only.
         The caller's source image remains unchanged for OCR, dimensions and UI preview.
-        Low-memory production keeps the same model and classes. The model canvas is
-        reduced while source tile windows scale proportionally so local wall/opening
-        detail is not discarded by one aggressive whole-page resize.
+        If the normalized global pass produces virtually no wall class, inference safely
+        falls back to the original colour image before tiled fusion.
         """
         model_image, normalization = normalize_blue_plan_for_cubicasa(image_bgr)
-        self.last_input_normalization = dict(normalization)
 
         h, w = model_image.shape[:2]
         global_prediction = self._predict_single(model_image)
+        wall_fraction = float(np.count_nonzero(global_prediction == 1)) / max(float(global_prediction.size), 1.0)
+        normalization = dict(normalization)
+        normalization["global_wall_fraction"] = round(wall_fraction, 6)
+
+        if bool(normalization.get("applied")) and wall_fraction < 0.001:
+            del global_prediction
+            if model_image is not image_bgr:
+                del model_image
+            _trim_process_memory()
+            model_image = image_bgr
+            global_prediction = self._predict_single(model_image)
+            fallback_fraction = float(np.count_nonzero(global_prediction == 1)) / max(float(global_prediction.size), 1.0)
+            normalization["fallback_original"] = True
+            normalization["mode"] = "blue-to-black-fallback-original"
+            normalization["fallback_global_wall_fraction"] = round(fallback_fraction, 6)
+        else:
+            normalization["fallback_original"] = False
+
+        self.last_input_normalization = normalization
+
         if not _truthy("FLOORPLAN_TILED_INFERENCE", True) or max(h, w) < 1200:
             if model_image is not image_bgr:
                 del model_image
