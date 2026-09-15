@@ -42,6 +42,7 @@ jobs:
             backend/app/reader_main.py \
             backend/app/parser_v3.py \
             backend/app/benchmark_metrics.py \
+            backend/scripts/ingest_reader_learning_bundle.py \
             modal_reader
 
       - name: Run provider migration tests
@@ -49,6 +50,9 @@ jobs:
 
       - name: Run benchmark metric regressions
         run: PYTHONPATH=backend pytest -q backend/tests/test_benchmark_metrics.py
+
+      - name: Run consented learning bundle intake regressions
+        run: PYTHONPATH=backend pytest -q backend/tests/test_reader_learning_bundle.py
 
       - name: Run cloud metric evidence regressions
         run: python -m unittest modal_reader.tests.test_metric_evidence
@@ -86,3 +90,4 @@ jobs:
           grep -q 'CubiCasa segmentation model is not loaded' backend/app/reader_main.py
           grep -q 'app.parser_v3 import parse_floorplan' backend/scripts/run_saudi_benchmark.py
           grep -q 'cubicasa-unet-resnet34-v3' benchmarks/saudi-floorplans/quality-gate.json
+          grep -q 'user-correction bundles are accepted as train only' backend/scripts/ingest_reader_learning_bundle.py
