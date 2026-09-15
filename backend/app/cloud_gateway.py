@@ -16,8 +16,9 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from .geometry import canonicalize_plan
+from .reader_provider import reader_provider, request_reader
 
-app = FastAPI(title="Manzili HAI Cloud Gateway", version="0.72.0")
+app = FastAPI(title="Manzili HAI Cloud Gateway", version="0.73.0")
 
 
 class ParseRequest(BaseModel):
@@ -132,6 +133,45 @@ def _deployed_git_commit() -> str | None:
     return os.getenv("RENDER_GIT_COMMIT", "").strip() or None
 
 
+def _reader_state() -> dict[str, Any]:
+    provider = reader_provider()
+    provider_ready = provider.ready
+    modal_ready = _modal_ready()
+    preferred = provider.name if provider_ready else ("modal-raster2seq-legacy" if modal_ready else "unavailable")
+    return {
+        "ready": provider_ready or modal_ready,
+        "preferred": preferred,
+        "provider_ready": provider_ready,
+        "provider_name": provider.name,
+        "modal_ready": modal_ready,
+    }
+
+
+async def _request_modal_reader(payload: ParseRequest, path: str = "modal-raster2seq-fallback") -> dict[str, Any]:
+    modal_url, _ = _modal_config()
+    if not _modal_ready():
+        raise HTTPException(503, "Modal fallback reader is not configured")
+    body = _modal_body(payload)
+    async with httpx.AsyncClient(timeout=330) as client:
+        response = await client.post(
+            modal_url,
+            content=body,
+            headers=_modal_request_headers(body),
+        )
+    if response.status_code >= 400:
+        raise HTTPException(response.status_code, response.text[:1200])
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, "Modal fallback reader returned a non-JSON response") from exc
+    if not isinstance(result, dict):
+        raise HTTPException(502, "Modal fallback reader returned an invalid response")
+    result["page_index"] = payload.page_index
+    result["reader_path"] = path
+    result["local_inference"] = False
+    return result
+
+
 async def _supabase_user(token: str) -> dict[str, Any]:
     supabase_url, publishable = _supabase_config()
     if not supabase_url or not publishable:
@@ -167,12 +207,16 @@ async def cloud_user(authorization: str | None = Header(default=None)) -> dict[s
 async def health() -> dict[str, Any]:
     worker_url, worker_token = _render_worker_config()
     supabase_url, publishable = _supabase_config()
+    reader = _reader_state()
     return {
         "ok": True,
         "version": app.version,
         "git_commit": _deployed_git_commit(),
-        "reader": "modal-raster2seq-cloud-only",
-        "modal_reader_configured": _modal_ready(),
+        "reader": reader["preferred"],
+        "reader_ready": reader["ready"],
+        "reader_provider_configured": reader["provider_ready"],
+        "reader_provider_name": reader["provider_name"],
+        "modal_fallback_configured": reader["modal_ready"],
         "local_inference": False,
         "ai_configured": bool(os.getenv("AI_API_KEY")),
         "service_auth_configured": bool(os.getenv("MANZILI_API_TOKEN")),
@@ -184,24 +228,28 @@ async def health() -> dict[str, Any]:
 
 @app.get("/readyz")
 async def readyz() -> dict[str, Any]:
-    if not _modal_ready():
-        raise HTTPException(503, "Modal reader is not configured")
+    reader = _reader_state()
+    if not reader["ready"]:
+        raise HTTPException(503, "Floor-plan reader provider is not configured")
     return {
         "ok": True,
         "version": app.version,
         "git_commit": _deployed_git_commit(),
-        "reader": "modal-raster2seq-cloud-only",
-        "modal_reader_configured": True,
+        "reader": reader["preferred"],
+        "reader_provider_configured": reader["provider_ready"],
+        "modal_fallback_configured": reader["modal_ready"],
         "local_inference": False,
     }
 
 
 @app.get("/v1/parser/status")
 async def parser_status(_: dict[str, Any] = Depends(backend_principal)) -> dict[str, Any]:
-    ready = _modal_ready()
+    reader = _reader_state()
     return {
-        "ready": ready,
-        "preferred_path": "modal-raster2seq-cloud-only" if ready else "unavailable",
+        "ready": reader["ready"],
+        "preferred_path": reader["preferred"],
+        "reader_provider_configured": reader["provider_ready"],
+        "modal_fallback_configured": reader["modal_ready"],
         "local_inference": False,
     }
 
@@ -240,25 +288,25 @@ async def ai_chat(payload: dict[str, Any], _: dict[str, Any] = Depends(backend_p
 
 @app.post("/v1/parse-floorplan")
 async def parse_floorplan(payload: ParseRequest, _: dict[str, Any] = Depends(backend_principal)) -> dict[str, Any]:
-    modal_url, _ = _modal_config()
-    if not _modal_ready():
-        raise HTTPException(503, "Modal reader is not configured")
-    body = _modal_body(payload)
-    async with httpx.AsyncClient(timeout=330) as client:
-        response = await client.post(
-            modal_url,
-            content=body,
-            headers=_modal_request_headers(body),
-        )
-    if response.status_code >= 400:
-        raise HTTPException(response.status_code, response.text[:1200])
-    result = response.json()
-    if not isinstance(result, dict):
-        raise HTTPException(502, "Cloud reader returned an invalid response")
-    result["page_index"] = payload.page_index
-    result["reader_path"] = "modal-raster2seq-cloud-only"
-    result["local_inference"] = False
-    return result
+    provider = reader_provider()
+    if provider.ready and provider.name != "modal-raster2seq-legacy":
+        try:
+            return await request_reader(payload.image_base64, payload.page_index)
+        except HTTPException as exc:
+            if exc.status_code in {502, 503, 504} and _modal_ready():
+                result = await _request_modal_reader(payload, "modal-raster2seq-emergency-fallback")
+                warnings = list(result.get("warnings") or [])
+                warnings.append("Reader V3 was temporarily unavailable; Modal fallback was used.")
+                result["warnings"] = list(dict.fromkeys(warnings))
+                result["fallback_reason"] = str(exc.detail)[:240]
+                return result
+            raise
+
+    if provider.ready and provider.name == "modal-raster2seq-legacy":
+        return await _request_modal_reader(payload, "modal-raster2seq-legacy")
+    if _modal_ready():
+        return await _request_modal_reader(payload, "modal-raster2seq-emergency-fallback")
+    raise HTTPException(503, "Floor-plan reader provider is not configured")
 
 
 @app.post("/v1/render-3d")
