@@ -54,13 +54,13 @@ def test_cleanup_removes_thin_axis_door_graphics_and_merges_duplicates():
 
 def test_cleanup_keeps_very_short_thick_partition_but_rejects_longer_thin_door_mark():
     mask = np.zeros((900, 1200), dtype=np.uint8)
-    # A genuinely structural short stub, typical around bathrooms/corridors.
-    cv2.line(mask, (300, 500), (312, 500), 255, 12)
+    # A genuinely structural tiny stub, typical at compact bathroom/corridor returns.
+    cv2.line(mask, (300, 500), (306, 500), 255, 12)
     # A longer door/jamb graphic drawn in the same colour but only 2 px thick.
     cv2.line(mask, (600, 300), (600, 340), 255, 2)
 
     walls = [
-        _wall("short-thick", "h", 300, 500, 312, 500),
+        _wall("short-thick", "h", 300, 500, 306, 500),
         _wall("long-thin", "v", 600, 300, 600, 340),
     ]
 
@@ -68,7 +68,7 @@ def test_cleanup_keeps_very_short_thick_partition_but_rejects_longer_thin_door_m
 
     assert len(cleaned) == 1
     assert cleaned[0]["start"]["x"] <= 300 / 12.0 + 0.2
-    assert cleaned[0]["end"]["x"] >= 312 / 12.0 - 0.2
+    assert cleaned[0]["end"]["x"] >= 306 / 12.0 - 0.2
     assert cleaned[0]["axis"] == "h"
     assert meta["rejected_thin"] == 1
     assert meta["short_structural_kept"] == 1
