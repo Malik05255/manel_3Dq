@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+PORTABLE_TESSERACT_ROOT = BACKEND_ROOT / ".portable-tesseract"
 
 
 class TesseractReaderAdapter:
@@ -17,7 +21,7 @@ class TesseractReaderAdapter:
         output = self.pytesseract.image_to_data(
             image,
             lang=os.getenv("TESSERACT_LANG", "ara+eng"),
-            config=os.getenv("TESSERACT_CONFIG", "--psm 11"),
+            config=os.getenv("TESSERACT_CONFIG", "--oem 1 --psm 11"),
             output_type=self.pytesseract.Output.DICT,
         )
         result: list[Any] = []
@@ -47,23 +51,57 @@ class TesseractReaderAdapter:
         return result
 
 
+def _find_tessdata(root: Path) -> Path | None:
+    for candidate in (
+        root / "usr/share/tesseract-ocr/5/tessdata",
+        root / "usr/share/tesseract-ocr/4.00/tessdata",
+        root / "usr/share/tessdata",
+    ):
+        if (candidate / "ara.traineddata").is_file() and (candidate / "eng.traineddata").is_file():
+            return candidate
+    return None
+
+
+def _configure_portable_tesseract(pytesseract_module: Any) -> bool:
+    root = Path(os.getenv("TESSERACT_PORTABLE_ROOT", str(PORTABLE_TESSERACT_ROOT))).resolve()
+    binary = root / "usr/bin/tesseract"
+    tessdata = _find_tessdata(root)
+    if not binary.is_file() or tessdata is None:
+        return False
+
+    lib_dirs = [
+        root / "usr/lib/x86_64-linux-gnu",
+        root / "lib/x86_64-linux-gnu",
+        root / "usr/lib",
+        root / "lib",
+    ]
+    current = os.environ.get("LD_LIBRARY_PATH", "")
+    local = ":".join(str(path) for path in lib_dirs if path.is_dir())
+    os.environ["LD_LIBRARY_PATH"] = ":".join(part for part in (local, current) if part)
+    os.environ["TESSDATA_PREFIX"] = str(tessdata)
+    pytesseract_module.pytesseract.tesseract_cmd = str(binary)
+    return True
+
+
 @lru_cache(maxsize=1)
 def cloud_ocr_reader() -> Any | None:
-    """Prefer EasyOCR when installed; otherwise use system Tesseract Arabic+English."""
+    """Use lightweight Tesseract Arabic+English; avoid a second Torch OCR model in Reader V3."""
+    try:
+        import pytesseract
+
+        _configure_portable_tesseract(pytesseract)
+        languages = set(pytesseract.get_languages(config=""))
+        if {"ara", "eng"}.issubset(languages):
+            return TesseractReaderAdapter(pytesseract)
+    except Exception:
+        pass
+
+    # Developer/full environments may already provide EasyOCR. Production does not
+    # depend on it because it would compete with CubiCasa for the 512 MB memory budget.
     try:
         import easyocr
 
         return easyocr.Reader(["ar", "en"], gpu=False, verbose=False)
-    except Exception:
-        pass
-
-    try:
-        import pytesseract
-
-        languages = set(pytesseract.get_languages(config=""))
-        if "ara" not in languages and "eng" not in languages:
-            return None
-        return TesseractReaderAdapter(pytesseract)
     except Exception:
         return None
 
