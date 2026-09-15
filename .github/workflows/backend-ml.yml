@@ -17,6 +17,7 @@ on:
       - 'backend/app/source_vectorizer.py'
       - 'backend/app/wall_support.py'
       - 'backend/scripts/fetch_floorplan_model.py'
+      - 'backend/tests/test_cubicasa_runtime_config.py'
       - 'backend/tests/test_wall_support.py'
       - 'backend/tests/test_benchmark_metrics.py'
       - 'backend/requirements-reader-v3.txt'
@@ -40,6 +41,7 @@ on:
       - 'backend/app/source_vectorizer.py'
       - 'backend/app/wall_support.py'
       - 'backend/scripts/fetch_floorplan_model.py'
+      - 'backend/tests/test_cubicasa_runtime_config.py'
       - 'backend/tests/test_wall_support.py'
       - 'backend/tests/test_benchmark_metrics.py'
       - 'backend/requirements-reader-v3.txt'
@@ -131,8 +133,8 @@ jobs:
           print('Reader V3 service contract ok; CubiCasa low-memory profile loaded; OCR=tesseract-ara-eng')
           PY
 
-      - name: Test geometry and benchmark scoring gates
-        run: PYTHONPATH=. pytest -q tests/test_wall_support.py tests/test_benchmark_metrics.py
+      - name: Test low-memory config, geometry and benchmark scoring gates
+        run: PYTHONPATH=. pytest -q tests/test_cubicasa_runtime_config.py tests/test_wall_support.py tests/test_benchmark_metrics.py
 
       - name: Run deterministic Reader V3 geometry smoke test
         run: |
