@@ -25,8 +25,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.manzili.hai.data.CloudSyncClient
+import com.manzili.hai.data.HaiSettings
 import com.manzili.hai.data.ReaderCorrectionCandidate
 import com.manzili.hai.data.ReaderCorrectionStore
+import com.manzili.hai.data.ReaderLearningCloudUploader
 import com.manzili.hai.data.ReaderLearningConsent
 import com.manzili.hai.data.ReaderLearningDatasetExporter
 import com.manzili.hai.engine.SaudiProjectTypeEngine
@@ -51,6 +54,9 @@ private fun ReaderLearningScreen(onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     val store = remember { ReaderCorrectionStore(context) }
     val exporter = remember { ReaderLearningDatasetExporter(context) }
+    val settings = remember { HaiSettings(context) }
+    val cloud = remember { CloudSyncClient(settings) }
+    val cloudUploader = remember { ReaderLearningCloudUploader(context, settings, cloud) }
 
     var candidates by remember { mutableStateOf(store.listCandidates()) }
     var selectedId by remember(candidates) { mutableStateOf(candidates.firstOrNull()?.id) }
@@ -113,7 +119,7 @@ private fun ReaderLearningScreen(onClose: () -> Unit) {
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text("تحسين قارئ HAI", color = H360Ink, fontSize = 23.sp, fontWeight = FontWeight.Black)
-                    Text("تصحيحاتك تبقى خاصة حتى تختار أنت التصدير", color = H360Muted, fontSize = 10.sp)
+                    Text("تصحيحاتك تبقى خاصة حتى تختار أنت الحفظ أو الإرسال", color = H360Muted, fontSize = 10.sp)
                 }
             }
 
@@ -128,7 +134,7 @@ private fun ReaderLearningScreen(onClose: () -> Unit) {
                     Icon(Icons.Rounded.Lock, null, tint = H360CyanDeep)
                     Spacer(Modifier.width(9.dp))
                     Text(
-                        "لا يوجد رفع تلقائي. الملف لا يخرج من جهازك إلا بعد موافقتك واختيار مكان الحفظ.",
+                        "لا يوجد رفع تلقائي. الإرسال للسحابة يحدث فقط بعد موافقتك وضغط زر إرسال لتحسين HAI، ويُحفظ في مساحة خاصة بحسابك.",
                         color = H360Ink,
                         fontSize = 10.5.sp,
                         lineHeight = 15.sp,
@@ -189,7 +195,7 @@ private fun ReaderLearningScreen(onClose: () -> Unit) {
                 ConsentRow(
                     checked = deidentified,
                     onChecked = { deidentified = it },
-                    text = "أؤكد أن الملف الذي سأصدره لا يحتوي أسماء أو هواتف أو أرقام قطع أو بيانات تعريفية غير لازمة."
+                    text = "أؤكد أن الملف الذي سأرسله أو أصدره لا يحتوي أسماء أو هواتف أو أرقام قطع أو بيانات تعريفية غير لازمة."
                 )
 
                 consent.validationErrors().firstOrNull()?.let {
@@ -200,10 +206,20 @@ private fun ReaderLearningScreen(onClose: () -> Unit) {
                 Spacer(Modifier.height(14.dp))
                 Button(
                     onClick = {
-                        pendingConsent = consent
-                        pendingCandidate = selected.id
-                        busy = true
-                        createZip.launch("manzili-hai-${selected.id}.zip")
+                        if (!settings.cloudSessionConfigured) {
+                            message = "سجّل الدخول للسحابة أولًا، ثم أعد محاولة الإرسال."
+                        } else {
+                            busy = true
+                            scope.launch {
+                                val result = runCatching { cloudUploader.upload(selected.id, consent) }
+                                message = result.fold(
+                                    onSuccess = { "تم إرسال الحالة إلى Dataset الخاص بـHAI. لن تدخل نموذجًا جديدًا إلا بعد اجتياز اختبارات الدقة." },
+                                    onFailure = { "تعذر الإرسال: ${it.message.orEmpty().take(180)}" }
+                                )
+                                candidates = store.listCandidates()
+                                busy = false
+                            }
+                        }
                     },
                     enabled = consent.valid && !busy,
                     colors = ButtonDefaults.buttonColors(containerColor = H360CyanDeep),
@@ -211,9 +227,26 @@ private fun ReaderLearningScreen(onClose: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().height(52.dp)
                 ) {
                     if (busy) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp), color = MaterialTheme.colorScheme.onPrimary)
-                    else Icon(Icons.Rounded.SaveAlt, null, modifier = Modifier.size(18.dp))
+                    else Icon(Icons.Rounded.Dataset, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(7.dp))
-                    Text("تجهيز Dataset للتدريب", fontWeight = FontWeight.Black)
+                    Text("إرسال لتحسين HAI", fontWeight = FontWeight.Black)
+                }
+
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        pendingConsent = consent
+                        pendingCandidate = selected.id
+                        busy = true
+                        createZip.launch("manzili-hai-${selected.id}.zip")
+                    },
+                    enabled = consent.valid && !busy,
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier.fillMaxWidth().height(50.dp)
+                ) {
+                    Icon(Icons.Rounded.SaveAlt, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text("حفظ Dataset على الجهاز", fontWeight = FontWeight.Bold)
                 }
 
                 Spacer(Modifier.height(8.dp))
