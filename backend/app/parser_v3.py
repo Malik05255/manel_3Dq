@@ -9,7 +9,7 @@ import numpy as np
 
 from .cubicasa_model import CLASS_NAMES, MODEL_LICENSE, MODEL_NAME, _trim_process_memory, load_cubicasa_runtime, model_status
 from .ocr_reader import cloud_ocr_engine_name, cloud_ocr_reader
-from .parser import _decode_image, _extract_enclosed_rooms, _extract_openings, _label_rooms_from_ocr
+from .parser import _blue_wall_mask, _decode_image, _extract_enclosed_rooms, _extract_openings, _label_rooms_from_ocr
 from .parser_accuracy import dimension_evidence, precision_rotated_ocr, precision_wall_evidence, wall_topology_score
 from .parser_quality import adaptive_ocr, assign_openings_to_walls, merge_ocr_lines, verification_scores
 
@@ -127,19 +127,50 @@ def _merge_collinear(walls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return kept
 
 
+def _blue_recovery_walls(image: np.ndarray) -> tuple[list[dict[str, Any]], float]:
+    """Collapse saturated blue/purple architectural strokes into wall centerlines.
+
+    Many Saudi CAD/PDF exports use thick blue structural walls while dimensions are green/gray.
+    This pass deliberately runs before generic Hough recovery so one thick wall does not become
+    dozens of parallel wall vectors.
+    """
+    mask = _blue_wall_mask(image)
+    coverage = float(np.count_nonzero(mask)) / max(float(mask.size), 1.0)
+    if coverage < 0.0012:
+        return [], round(coverage, 6)
+
+    walls = _axis_centerlines(mask)
+    result: list[dict[str, Any]] = []
+    for wall in walls:
+        candidate = dict(wall)
+        candidate["kind"] = "blue-raster-centerline"
+        candidate["confidence"] = min(int(candidate.get("confidence", 88)), 90)
+        result.append(candidate)
+    return _merge_collinear(result), round(coverage, 6)
+
+
 def _precision_recovery_walls(image: np.ndarray) -> list[dict[str, Any]]:
-    """Keep strong raster wall evidence while rejecting most thin dimension/leader lines."""
+    """Fallback for black/legacy plans after blue centerline recovery is unavailable."""
     recovered: list[dict[str, Any]] = []
     for wall in precision_wall_evidence(image, confidence=76):
         support = float(wall.get("mask_support", 0.0))
         band = float(wall.get("band_support", 0.0))
-        if not ((band >= 0.34 and support >= 0.58) or (band >= 0.24 and support >= 0.94)):
+        if not ((band >= 0.36 and support >= 0.62) or (band >= 0.26 and support >= 0.96)):
             continue
         candidate = dict(wall)
         candidate["kind"] = "precision-raster-wall-recovery"
-        candidate["confidence"] = min(int(candidate.get("confidence", 76)), 88)
+        candidate["confidence"] = min(int(candidate.get("confidence", 76)), 86)
         recovered.append(candidate)
-    return _merge_collinear(recovered)
+
+    recovered.sort(
+        key=lambda item: (
+            float(item.get("band_support", 0.0)),
+            float(item.get("mask_support", 0.0)),
+            int(item.get("confidence", 0)),
+        ),
+        reverse=True,
+    )
+    return _merge_collinear(recovered[:90])
 
 
 def _wall_mask_from_vectors(walls: list[dict[str, Any]], shape: tuple[int, ...]) -> np.ndarray:
@@ -161,7 +192,9 @@ def _wall_candidate_score(walls: list[dict[str, Any]]) -> float:
         return 0.0
     topology = wall_topology_score(walls)
     confidence = mean(int(item.get("confidence", 0)) for item in walls)
-    return topology * 3.0 + min(len(walls), 40) * 1.6 + confidence * 0.08
+    count_bonus = min(len(walls), 32) * 1.5
+    overfragment_penalty = max(0, len(walls) - 70) * 0.8
+    return topology * 3.0 + count_bonus + confidence * 0.08 - overfragment_penalty
 
 
 def _recover_wall_geometry(
@@ -177,22 +210,36 @@ def _recover_wall_geometry(
             "selected": "cubicasa-semantic",
             "semantic_walls": len(semantic_walls),
             "semantic_topology": semantic_topology,
+            "blue_walls": 0,
+            "blue_topology": 0,
+            "blue_coverage": 0.0,
             "precision_walls": 0,
             "precision_topology": 0,
         }
 
-    precision = _precision_recovery_walls(image)
-    combined = _merge_collinear(list(semantic_walls) + precision)
+    blue_walls, blue_coverage = _blue_recovery_walls(image)
+    blue_topology = wall_topology_score(blue_walls)
+
+    # A coherent blue structural network is much safer than generic Hough evidence because
+    # it excludes green dimension lines and gray/red room text found in many exported plans.
+    use_generic_precision = len(blue_walls) < 4 or blue_topology < 30
+    precision = _precision_recovery_walls(image) if use_generic_precision else []
     precision_topology = wall_topology_score(precision)
-    combined_topology = wall_topology_score(combined)
+
+    semantic_blue = _merge_collinear(list(semantic_walls) + blue_walls)
+    semantic_precision = _merge_collinear(list(semantic_walls) + precision)
 
     candidates: list[tuple[str, list[dict[str, Any]], float]] = [
         ("cubicasa-semantic", semantic_walls, _wall_candidate_score(semantic_walls)),
     ]
+    if len(blue_walls) >= 3:
+        candidates.append(("blue-raster", blue_walls, _wall_candidate_score(blue_walls)))
+    if len(semantic_blue) >= 3:
+        candidates.append(("cubicasa+blue-raster", semantic_blue, _wall_candidate_score(semantic_blue)))
     if len(precision) >= 3:
         candidates.append(("precision-raster", precision, _wall_candidate_score(precision)))
-    if len(combined) >= 3:
-        candidates.append(("cubicasa+precision-raster", combined, _wall_candidate_score(combined)))
+    if len(semantic_precision) >= 3:
+        candidates.append(("cubicasa+precision-raster", semantic_precision, _wall_candidate_score(semantic_precision)))
 
     selected_name, selected_walls, selected_score = max(candidates, key=lambda item: item[2])
     semantic_score = _wall_candidate_score(semantic_walls)
@@ -206,9 +253,11 @@ def _recover_wall_geometry(
         "selected": selected_name,
         "semantic_walls": len(semantic_walls),
         "semantic_topology": semantic_topology,
+        "blue_walls": len(blue_walls),
+        "blue_topology": blue_topology,
+        "blue_coverage": blue_coverage,
         "precision_walls": len(precision),
         "precision_topology": precision_topology,
-        "combined_topology": combined_topology,
     }
 
 
@@ -276,6 +325,7 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
     quality["dimension_evidence"] = len(dimensions)
     quality["geometry_source"] = geometry_recovery["selected"]
     quality["semantic_wall_count"] = geometry_recovery["semantic_walls"]
+    quality["blue_wall_count"] = geometry_recovery["blue_walls"]
     quality["precision_wall_count"] = geometry_recovery["precision_walls"]
     if len(walls) < 4:
         quality["overall_verified"] = min(int(quality.get("overall_verified", 0)), 45)
@@ -284,7 +334,7 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
 
     warnings: list[str] = []
     if geometry_recovery["used"]:
-        warnings.append("CubiCasa semantic walls were sparse or fragmented; precision raster wall recovery was used and should be reviewed before 3D.")
+        warnings.append("CubiCasa semantic walls were sparse or fragmented; conservative raster wall recovery was used and should be reviewed before 3D.")
     if not rooms:
         warnings.append("No reliable enclosed room regions were recovered; manual review is required.")
     if topology < 25 and walls:
