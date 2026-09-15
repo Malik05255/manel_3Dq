@@ -34,7 +34,10 @@ class ProjectPlanStore(context: Context) {
 
     fun createProject(plan: FloorPlan): String {
         val id = UUID.randomUUID().toString()
-        upsertProject(id, plan, makeActive = true)
+        val ready = upsertProject(id, plan, makeActive = true)
+        ReaderLearningSessionStore(appContext).claimFor(ready)?.let { baseline ->
+            runCatching { ReaderCorrectionStore(appContext).capture(id, baseline, ready) }
+        }
         return id
     }
 

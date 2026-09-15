@@ -28,6 +28,7 @@ class PendingAnalysisStore(context: Context) {
     )
 
     fun begin(workId: UUID, source: Uri, type: SaudiProjectTypeEngine.Type) {
+        ReaderLearningSessionStore(appContext).clear()
         prefs.edit()
             .putString(KEY_ACTIVE_WORK_ID, workId.toString())
             .putString(KEY_SOURCE_URI, source.toString())
@@ -43,11 +44,13 @@ class PendingAnalysisStore(context: Context) {
 
     fun saveResult(workId: UUID, plan: FloorPlan): Boolean {
         if (activeWorkId() != workId) return false
-        return prefs.edit()
+        val saved = prefs.edit()
             .putString(KEY_RESULT_WORK_ID, workId.toString())
             .putString(KEY_RESULT_PLAN, PlanStorageCodec.encode(plan).toString())
             .remove(KEY_FAILURE)
             .commit()
+        if (saved) ReaderLearningSessionStore(appContext).arm(workId, plan)
+        return saved
     }
 
     fun markFailure(workId: UUID, message: String) {
