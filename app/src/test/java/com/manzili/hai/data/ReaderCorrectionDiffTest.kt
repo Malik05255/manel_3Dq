@@ -12,6 +12,7 @@ import org.junit.Test
 
 class ReaderCorrectionDiffTest {
     private val base = FloorPlan(
+        title = "مخطط مستورد",
         widthM = 12.0,
         heightM = 20.0,
         rooms = listOf(Room("r1", "مجلس", "majlis", 10f, 10f, 30f, 30f, 20.0, confidence = 70)),
@@ -47,5 +48,22 @@ class ReaderCorrectionDiffTest {
         assertEquals(1, delta.openingsChanged)
         assertTrue(delta.scaleChanged)
         assertEquals(4, delta.totalChanges)
+    }
+
+    @Test
+    fun importedProjectWithSharedGeometryIsEligible() {
+        val corrected = base.copy(
+            walls = base.walls + Wall("manual-wall", PlanPoint(50f, 0f), PlanPoint(50f, 100f), 15.0)
+        )
+        assertTrue(ReaderLearningEligibility.isLikelySameImportedProject(base, corrected))
+    }
+
+    @Test
+    fun unrelatedManualProjectIsRejected() {
+        val manual = FloorPlan(
+            title = "مشروعي",
+            rooms = listOf(Room("manual-r", "غرفة", "generic", 0f, 0f, 20f, 20f, 10.0))
+        )
+        assertFalse(ReaderLearningEligibility.isLikelySameImportedProject(base, manual))
     }
 }
