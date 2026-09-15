@@ -84,6 +84,9 @@ def loss_fn(logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
 def epoch(model, loader, device, optimizer=None) -> float:
     training = optimizer is not None
     model.train(training)
+    if training:
+        # Encoder weights and BatchNorm running statistics stay unchanged on small correction sets.
+        model.encoder.eval()
     total = 0.0
     for image, target in loader:
         image, target = image.to(device), target.to(device)
@@ -154,6 +157,7 @@ def main() -> int:
         "train_cases": len(train_rows),
         "validation_cases": len(val_rows),
         "encoder_frozen": True,
+        "encoder_batchnorm_frozen": True,
         "history": history,
         "automatic_deploy": False,
     }
