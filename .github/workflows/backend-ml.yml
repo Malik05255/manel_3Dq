@@ -17,6 +17,7 @@ on:
       - 'backend/app/source_vectorizer.py'
       - 'backend/app/wall_support.py'
       - 'backend/scripts/fetch_floorplan_model.py'
+      - 'backend/scripts/install_portable_tesseract.py'
       - 'backend/tests/test_cubicasa_runtime_config.py'
       - 'backend/tests/test_wall_support.py'
       - 'backend/tests/test_benchmark_metrics.py'
@@ -41,6 +42,7 @@ on:
       - 'backend/app/source_vectorizer.py'
       - 'backend/app/wall_support.py'
       - 'backend/scripts/fetch_floorplan_model.py'
+      - 'backend/scripts/install_portable_tesseract.py'
       - 'backend/tests/test_cubicasa_runtime_config.py'
       - 'backend/tests/test_wall_support.py'
       - 'backend/tests/test_benchmark_metrics.py'
@@ -77,12 +79,25 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements-reader-v3.txt
 
-      - name: Install Arabic English OCR for CI contract coverage
-        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
-        working-directory: .
-
       - name: Install production Reader V3 dependencies
-        run: pip install -r requirements-reader-v3.txt pytest==8.4.1 pytesseract==0.3.13
+        run: pip install -r requirements-reader-v3.txt pytest==8.4.1
+
+      - name: Install portable Arabic English OCR without root
+        env:
+          FORCE_PORTABLE_TESSERACT: "true"
+        run: python scripts/install_portable_tesseract.py
+
+      - name: Verify portable OCR contract
+        run: |
+          python - <<'PY'
+          from app.ocr_reader import cloud_ocr_engine_name, cloud_ocr_reader
+          reader = cloud_ocr_reader()
+          assert reader is not None
+          assert cloud_ocr_engine_name() == 'tesseract-ara-eng'
+          languages = set(reader.pytesseract.get_languages(config=''))
+          assert {'ara', 'eng'}.issubset(languages), languages
+          print('Portable OCR ready; languages=', sorted({'ara', 'eng'} & languages))
+          PY
 
       - name: Fetch and verify locked CubiCasa weights
         env:
@@ -110,7 +125,6 @@ jobs:
           assert isinstance(loaded.get('rss_kib'), int), loaded
           assert loaded['rss_kib'] < render_limit_kib, loaded
 
-          # Large enough to force the real tiled path used by phone/PDF floor plans.
           image = np.full((1400, 1800, 3), 255, dtype=np.uint8)
           cv2.rectangle(image, (100, 100), (1700, 1300), (0, 0, 0), 16)
           cv2.line(image, (900, 100), (900, 1300), (0, 0, 0), 12)
