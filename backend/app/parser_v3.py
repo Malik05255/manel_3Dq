@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from statistics import mean
 from typing import Any
 
 import cv2
@@ -9,7 +10,7 @@ import numpy as np
 from .cubicasa_model import CLASS_NAMES, MODEL_LICENSE, MODEL_NAME, _trim_process_memory, load_cubicasa_runtime, model_status
 from .ocr_reader import cloud_ocr_engine_name, cloud_ocr_reader
 from .parser import _decode_image, _extract_enclosed_rooms, _extract_openings, _label_rooms_from_ocr
-from .parser_accuracy import dimension_evidence, precision_rotated_ocr, wall_topology_score
+from .parser_accuracy import dimension_evidence, precision_rotated_ocr, precision_wall_evidence, wall_topology_score
 from .parser_quality import adaptive_ocr, assign_openings_to_walls, merge_ocr_lines, verification_scores
 
 
@@ -126,6 +127,91 @@ def _merge_collinear(walls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return kept
 
 
+def _precision_recovery_walls(image: np.ndarray) -> list[dict[str, Any]]:
+    """Keep strong raster wall evidence while rejecting most thin dimension/leader lines."""
+    recovered: list[dict[str, Any]] = []
+    for wall in precision_wall_evidence(image, confidence=76):
+        support = float(wall.get("mask_support", 0.0))
+        band = float(wall.get("band_support", 0.0))
+        if not ((band >= 0.34 and support >= 0.58) or (band >= 0.24 and support >= 0.94)):
+            continue
+        candidate = dict(wall)
+        candidate["kind"] = "precision-raster-wall-recovery"
+        candidate["confidence"] = min(int(candidate.get("confidence", 76)), 88)
+        recovered.append(candidate)
+    return _merge_collinear(recovered)
+
+
+def _wall_mask_from_vectors(walls: list[dict[str, Any]], shape: tuple[int, ...]) -> np.ndarray:
+    h, w = shape[:2]
+    mask = np.zeros((h, w), dtype=np.uint8)
+    thickness = max(3, int(round(min(h, w) * 0.006)))
+    for wall in walls:
+        a, b = wall.get("start") or {}, wall.get("end") or {}
+        x1 = int(round(float(a.get("x", 0.0)) / 100.0 * w))
+        y1 = int(round(float(a.get("y", 0.0)) / 100.0 * h))
+        x2 = int(round(float(b.get("x", 0.0)) / 100.0 * w))
+        y2 = int(round(float(b.get("y", 0.0)) / 100.0 * h))
+        cv2.line(mask, (x1, y1), (x2, y2), 255, thickness=thickness, lineType=cv2.LINE_AA)
+    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8), iterations=1)
+
+
+def _wall_candidate_score(walls: list[dict[str, Any]]) -> float:
+    if not walls:
+        return 0.0
+    topology = wall_topology_score(walls)
+    confidence = mean(int(item.get("confidence", 0)) for item in walls)
+    return topology * 3.0 + min(len(walls), 40) * 1.6 + confidence * 0.08
+
+
+def _recover_wall_geometry(
+    image: np.ndarray,
+    semantic_walls: list[dict[str, Any]],
+    semantic_wall_mask: np.ndarray,
+) -> tuple[list[dict[str, Any]], np.ndarray, dict[str, Any]]:
+    """Recover obvious plan linework only when semantic wall geometry is sparse/fragmented."""
+    semantic_topology = wall_topology_score(semantic_walls)
+    if len(semantic_walls) >= 4 and semantic_topology >= 45:
+        return semantic_walls, semantic_wall_mask, {
+            "used": False,
+            "selected": "cubicasa-semantic",
+            "semantic_walls": len(semantic_walls),
+            "semantic_topology": semantic_topology,
+            "precision_walls": 0,
+            "precision_topology": 0,
+        }
+
+    precision = _precision_recovery_walls(image)
+    combined = _merge_collinear(list(semantic_walls) + precision)
+    precision_topology = wall_topology_score(precision)
+    combined_topology = wall_topology_score(combined)
+
+    candidates: list[tuple[str, list[dict[str, Any]], float]] = [
+        ("cubicasa-semantic", semantic_walls, _wall_candidate_score(semantic_walls)),
+    ]
+    if len(precision) >= 3:
+        candidates.append(("precision-raster", precision, _wall_candidate_score(precision)))
+    if len(combined) >= 3:
+        candidates.append(("cubicasa+precision-raster", combined, _wall_candidate_score(combined)))
+
+    selected_name, selected_walls, selected_score = max(candidates, key=lambda item: item[2])
+    semantic_score = _wall_candidate_score(semantic_walls)
+    if selected_name != "cubicasa-semantic" and len(semantic_walls) >= 4 and selected_score < semantic_score + 8.0:
+        selected_name, selected_walls = "cubicasa-semantic", semantic_walls
+
+    used = selected_name != "cubicasa-semantic"
+    room_mask = _wall_mask_from_vectors(selected_walls, image.shape) if used else semantic_wall_mask
+    return selected_walls, room_mask, {
+        "used": used,
+        "selected": selected_name,
+        "semantic_walls": len(semantic_walls),
+        "semantic_topology": semantic_topology,
+        "precision_walls": len(precision),
+        "precision_topology": precision_topology,
+        "combined_topology": combined_topology,
+    }
+
+
 def _metric_dimensions(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for item in dimension_evidence(lines)[:80]:
@@ -151,20 +237,19 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
     door_mask = ((prediction == 2) * 255).astype(np.uint8)
     window_mask = ((prediction == 3) * 255).astype(np.uint8)
 
-    walls = _axis_centerlines(wall_mask)
-    rooms = _extract_enclosed_rooms(wall_mask, confidence=88) if len(walls) >= 3 else []
+    semantic_walls = _axis_centerlines(wall_mask)
+    walls, room_mask, geometry_recovery = _recover_wall_geometry(image, semantic_walls, wall_mask)
+    room_confidence = 80 if geometry_recovery["used"] else 88
+    rooms = _extract_enclosed_rooms(room_mask, confidence=room_confidence) if len(walls) >= 3 else []
     openings = _extract_openings(door_mask, "door", 90) + _extract_openings(window_mask, "window", 90)
     openings = assign_openings_to_walls(openings, walls)
 
-    # Coverage is the final consumer of the semantic prediction. Drop prediction + masks
-    # before OCR preprocessing so the 512 MB Reader service regains headroom for CLAHE,
-    # resize and request encoding while Tesseract itself runs in the isolated OCR service.
     total = max(float(prediction.size), 1.0)
     coverage = {
         name: round(float(np.count_nonzero(prediction == index)) / total, 5)
         for index, name in enumerate(CLASS_NAMES)
     }
-    del prediction, wall_mask, door_mask, window_mask
+    del prediction, wall_mask, room_mask, door_mask, window_mask
     _trim_process_memory()
 
     reader = cloud_ocr_reader()
@@ -174,7 +259,10 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
     rooms = _label_rooms_from_ocr(rooms, ocr_lines)
     dimensions = _metric_dimensions(ocr_lines)
 
-    base_confidence = 92 if walls and rooms else (86 if walls else 0)
+    if geometry_recovery["used"]:
+        base_confidence = 82 if walls and rooms else (76 if walls else 0)
+    else:
+        base_confidence = 92 if walls and rooms else (86 if walls else 0)
     quality = verification_scores(
         model_used="cubicasa-unet-resnet34-v3",
         walls=walls,
@@ -186,16 +274,21 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
     topology = wall_topology_score(walls)
     quality["wall_topology"] = topology
     quality["dimension_evidence"] = len(dimensions)
+    quality["geometry_source"] = geometry_recovery["selected"]
+    quality["semantic_wall_count"] = geometry_recovery["semantic_walls"]
+    quality["precision_wall_count"] = geometry_recovery["precision_walls"]
     if len(walls) < 4:
         quality["overall_verified"] = min(int(quality.get("overall_verified", 0)), 45)
     if topology < 25 and walls:
         quality["overall_verified"] = min(int(quality.get("overall_verified", 0)), 70)
 
     warnings: list[str] = []
+    if geometry_recovery["used"]:
+        warnings.append("CubiCasa semantic walls were sparse or fragmented; precision raster wall recovery was used and should be reviewed before 3D.")
     if not rooms:
-        warnings.append("CubiCasa detected wall structure but no reliable enclosed room regions; manual review is required.")
+        warnings.append("No reliable enclosed room regions were recovered; manual review is required.")
     if topology < 25 and walls:
-        warnings.append("Segmentation wall topology is fragmented; 3D should remain blocked until reviewed.")
+        warnings.append("Wall topology is fragmented; 3D should remain blocked until reviewed.")
     if len(dimensions) < 2:
         warnings.append("Metric scale evidence is weak; verify one known dimension before relying on room sizes.")
 
@@ -219,6 +312,7 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
         "metric": {"dimensions": dimensions},
         "quality": quality,
         "class_coverage": coverage,
+        "geometry_recovery": geometry_recovery,
         "ocr_meta": ocr_meta,
         "warnings": warnings,
     }
