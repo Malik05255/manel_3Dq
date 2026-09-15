@@ -1,2 +1,18 @@
-# Keep benchmark/evaluation on the exact production Reader V3 dependency set.
--r requirements.txt
+# CPU-only dependency set shared by the live compatibility Gateway build and Reader V3 benchmark.
+# Keep this explicit: including requirements.txt pulls the default Linux CUDA PyTorch stack and makes
+# the lightweight Gateway download gigabytes of GPU packages it never uses.
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+httpx==0.28.1
+pydantic==2.11.7
+cryptography==45.0.7
+numpy==2.2.6
+opencv-python-headless==4.12.0.88
+python-multipart==0.0.20
+pytesseract==0.3.13
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.0+cpu
+torchvision==0.29.0+cpu
+segmentation-models-pytorch==0.5.0
+safetensors==0.8.0
