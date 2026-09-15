@@ -49,10 +49,7 @@ data class ReaderCorrectionCandidate(
     val delta: ReaderCorrectionDelta
 )
 
-/**
- * Compares the reader result with the plan explicitly approved by the user.
- * Revision/confidence metadata alone is ignored; only geometry/labels/scale changes count.
- */
+/** Compares the reader result with the plan explicitly approved by the user. */
 object ReaderCorrectionDiff {
     fun summarize(before: FloorPlan, after: FloorPlan): ReaderCorrectionDelta = ReaderCorrectionDelta(
         roomsChanged = changedById(before.rooms, after.rooms, { it.id }) { a, b ->
@@ -91,17 +88,11 @@ object ReaderCorrectionDiff {
 
 /**
  * App-private queue of corrected reader cases.
- *
- * Privacy contract:
- * - no floor-plan source bytes are copied here;
- * - no source URI is written here;
- * - only the internal project id links the case to ProjectSourceStore, whose URI mapping is encrypted;
- * - nothing is uploaded automatically.
- *
- * Export requires an explicit consent flow. The source is resolved only at export time.
+ * Source bytes and source URIs are not copied into this store and nothing is uploaded automatically.
  */
 class ReaderCorrectionStore(context: Context) {
-    private val root = File(context.applicationContext.filesDir, DIRECTORY).apply { mkdirs() }
+    private val appContext = context.applicationContext
+    private val root = File(appContext.filesDir, DIRECTORY).apply { mkdirs() }
 
     fun capture(projectId: String, readerResult: FloorPlan, approvedReference: FloorPlan): String? {
         if (projectId.isBlank()) return null
@@ -129,6 +120,7 @@ class ReaderCorrectionStore(context: Context) {
 
         atomicWrite(File(root, "$id.json"), payload.toString(2))
         trimOldCandidates()
+        ReaderLearningNotifier.notify(appContext, candidateCount())
         return id
     }
 
