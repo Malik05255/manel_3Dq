@@ -30,8 +30,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install cloud gateway dependencies
-        run: pip install -r backend/requirements-gateway.txt pytest==8.4.1
+      - name: Install cloud gateway and CV test dependencies
+        run: pip install -r backend/requirements-gateway.txt pytest==8.4.1 numpy==2.2.6 opencv-python-headless==4.12.0.88
 
       - name: Compile cloud, Source-First Reader V4 and OCR surfaces
         run: |
