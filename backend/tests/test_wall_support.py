@@ -1,8 +1,10 @@
+import base64
 import math
 
 import cv2
 import numpy as np
 
+from app.room_recovery import enhance_blue_room_topology
 from app.source_vectorizer import vectorize_source_walls
 from app.wall_support import validate_wall_image_support
 
@@ -89,3 +91,47 @@ def test_source_vectorizer_collapses_thick_wall_edges_to_centerlines():
     assert len(walls) <= 8
     assert meta["horizontal_count"] <= 3
     assert meta["vertical_count"] <= 4
+
+
+def test_blue_room_topology_closes_door_gaps_without_changing_wall_vectors():
+    image = np.full((900, 1200, 3), 250, dtype=np.uint8)
+    blue = (185, 105, 55)
+    cv2.rectangle(image, (100, 100), (1100, 800), blue, 12)
+
+    # 3 x 3 rooms with door-sized gaps through every internal partition.
+    for x in (433, 766):
+        cv2.line(image, (x, 100), (x, 285), blue, 12)
+        cv2.line(image, (x, 335), (x, 585), blue, 12)
+        cv2.line(image, (x, 635), (x, 800), blue, 12)
+    for y in (333, 566):
+        cv2.line(image, (100, y), (280, y), blue, 12)
+        cv2.line(image, (330, y), (620, y), blue, 12)
+        cv2.line(image, (670, y), (950, y), blue, 12)
+        cv2.line(image, (1000, y), (1100, y), blue, 12)
+
+    ok, encoded = cv2.imencode(".png", image)
+    assert ok
+    image_base64 = base64.b64encode(encoded.tobytes()).decode("ascii")
+    original_walls = [
+        _wall(f"wall-{index}", 5, float(index % 90), 95, float(index % 90))
+        for index in range(30)
+    ]
+    result = {
+        "walls": original_walls,
+        "rooms": [
+            {"id": "r1", "name": "مساحة مكتشفة 1", "type": "unknown", "x": 10.0, "y": 10.0, "width": 20.0, "height": 20.0, "area_m2": 0.0, "confidence": 70, "polygon": []},
+            {"id": "r2", "name": "مساحة مكتشفة 2", "type": "unknown", "x": 40.0, "y": 10.0, "width": 20.0, "height": 20.0, "area_m2": 0.0, "confidence": 70, "polygon": []},
+        ],
+        "ocr_lines": [],
+        "geometry_recovery": {"selected": "blue-raster"},
+        "quality": {},
+        "warnings": [],
+    }
+
+    updated = enhance_blue_room_topology(image_base64, result)
+
+    assert updated["walls"] == original_walls
+    assert len(updated["rooms"]) >= 8
+    assert updated["geometry_recovery"]["room_recovery_used"] is True
+    assert updated["geometry_recovery"]["room_count_before"] == 2
+    assert updated["geometry_recovery"]["room_count_after"] >= 8
