@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+import numpy as np
+
+from app.reader_training_masks import CLASS_INDEX, render_mask
+from scripts.compare_reader_candidate import decide
+
+
+def _reference():
+    return {
+        "schema_version": 1,
+        "coordinate_space": "percent-0-100",
+        "width_m": 12.0,
+        "height_m": 20.0,
+        "rooms": [],
+        "walls": [
+            {
+                "id": "w1",
+                "start": {"x": 10, "y": 50},
+                "end": {"x": 90, "y": 50},
+                "thickness_cm": 20,
+            }
+        ],
+        "openings": [
+            {"id": "d1", "type": "door", "x": 50, "y": 50, "width": 12, "rotation_deg": 0, "wall_id": "w1"},
+            {"id": "o2", "type": "window", "x": 25, "y": 50, "width": 8, "rotation_deg": 0, "wall_id": "w1"},
+        ],
+    }
+
+
+def test_corrected_geometry_rasterizes_reader_classes():
+    mask = render_mask(_reference(), (200, 400, 3))
+    assert mask.shape == (200, 400)
+    assert np.count_nonzero(mask == CLASS_INDEX["wall"]) > 0
+    assert np.count_nonzero(mask == CLASS_INDEX["door"]) > 0
+    assert np.count_nonzero(mask == CLASS_INDEX["window"]) > 0
+    assert mask[100, 200] == CLASS_INDEX["door"]
+
+
+def _report(overall: float, opening: float = 0.93, count: int = 30, gate: str = "PASS"):
+    return {
+        "minimum_test_cases_for_claims": 30,
+        "executed_test_cases": count,
+        "gate_status": gate,
+        "test_means": {
+            "wall_f1": 0.96,
+            "room_f1": 0.96,
+            "opening_f1": opening,
+            "dimension_accuracy": 0.96,
+            "overall": overall,
+        },
+    }
+
+
+def test_candidate_promotes_only_after_real_held_out_gain():
+    result = decide(_report(0.95), _report(0.955))
+    assert result["promote"] is True
+    assert result["overall_gain"] == 0.005
+
+
+def test_candidate_is_blocked_on_metric_regression_or_small_test_set():
+    regressed = decide(_report(0.95), _report(0.956, opening=0.90))
+    assert regressed["promote"] is False
+    assert any("opening_f1 regressed" in reason for reason in regressed["reasons"])
+
+    insufficient = decide(_report(0.95, count=12), _report(0.96, count=12))
+    assert insufficient["promote"] is False
+    assert any("held-out test cases" in reason for reason in insufficient["reasons"])
