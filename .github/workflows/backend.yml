@@ -29,18 +29,35 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
       - name: Install cloud gateway dependencies
         run: pip install -r backend/requirements-gateway.txt pytest==8.4.1
-      - name: Compile cloud surfaces
-        run: python -m compileall backend/app/cloud_gateway.py backend/app/cloud_public_gateway.py backend/app/reader_provider.py backend/app/reader_main.py backend/app/source_vectorizer.py modal_reader
+
+      - name: Compile cloud and Reader V3 surfaces
+        run: |
+          python -m compileall \
+            backend/app/cloud_gateway.py \
+            backend/app/cloud_public_gateway.py \
+            backend/app/reader_provider.py \
+            backend/app/reader_main.py \
+            backend/app/parser_v3.py \
+            backend/app/benchmark_metrics.py \
+            modal_reader
+
       - name: Run provider migration tests
         run: PYTHONPATH=backend pytest -q backend/tests/test_reader_provider.py
+
+      - name: Run benchmark metric regressions
+        run: PYTHONPATH=backend pytest -q backend/tests/test_benchmark_metrics.py
+
       - name: Run cloud metric evidence regressions
         run: python -m unittest modal_reader.tests.test_metric_evidence
+
       - name: Import cloud gateway
         run: |
           PYTHONPATH=backend python -c "from app.cloud_public_gateway import app; assert app.title == 'Manzili HAI Cloud Gateway'; assert any(getattr(r, 'path', '') == '/v1/public/parse-floorplan' for r in app.routes); assert any(getattr(r, 'path', '') == '/v1/internal/legacy-floorplan-evidence' for r in app.routes)"
-      - name: Validate reader v2 deployment blueprint
+
+      - name: Validate Reader V3 deployment blueprint
         shell: bash
         run: |
           set -euo pipefail
@@ -48,27 +65,24 @@ jobs:
           grep -q 'uvicorn app.cloud_public_gateway:app' render.yaml
           grep -q 'READER_PROVIDER_URL' render.yaml
           grep -q 'READER_PROVIDER_TOKEN' render.yaml
+          grep -q 'READER_PROVIDER_NAME' render.yaml
+          grep -q 'hai-reader-v3' render.yaml
           grep -q 'manzili-hai-reader-v2' render.yaml
           grep -q 'Dockerfile.reader' render.yaml
-          grep -q 'LEGACY_EVIDENCE_URL' render.yaml
-          grep -q 'LEGACY_EVIDENCE_TOKEN' render.yaml
-          grep -q 'ROBOFLOW_API_KEY' render.yaml
           grep -q 'FLOORPLAN_TILED_INFERENCE' render.yaml
+          grep -q 'FLOORPLAN_MAX_TILES' render.yaml
           grep -q 'pip install --no-cache-dir -r requirements.txt' backend/Dockerfile.reader
-      - name: Verify reader migration contract
+
+      - name: Verify Reader V3 contract
         shell: bash
         run: |
           set -euo pipefail
           grep -q 'local_inference.*False' backend/app/cloud_public_gateway.py
-          grep -q 'android-cloud-only-v1' backend/app/cloud_public_gateway.py
-          grep -q 'android-reader-v2' backend/app/cloud_public_gateway.py
           grep -q 'request_reader' backend/app/cloud_public_gateway.py
-          grep -q '/v1/internal/legacy-floorplan-evidence' backend/app/cloud_public_gateway.py
           grep -q 'READER_PROVIDER_URL' backend/app/reader_provider.py
-          grep -q 'LEGACY_EVIDENCE_URL' backend/app/reader_main.py
-          grep -q 'source-pixel-vectorizer+room/opening-evidence+strict-fallback-gates' backend/app/reader_main.py
-          grep -q 'external_evidence' backend/app/parser_v2.py
-          grep -q 'vectorize_source_walls' backend/app/parser_v2.py
-          grep -q 'source-first-authority' backend/app/parser_v2.py
-          grep -q 'raster2graph-512' modal_reader/app.py
-          grep -q 'requires_proxy_auth=True' modal_reader/app.py
+          grep -q 'from .parser_v3 import parse_floorplan' backend/app/reader_main.py
+          grep -q 'Manzili HAI Reader V3' backend/app/reader_main.py
+          grep -q 'cubicasa-unet-resnet34-v3' backend/app/reader_main.py
+          grep -q 'CubiCasa segmentation model is not loaded' backend/app/reader_main.py
+          grep -q 'app.parser_v3 import parse_floorplan' backend/scripts/run_saudi_benchmark.py
+          grep -q 'cubicasa-unet-resnet34-v3' benchmarks/saudi-floorplans/quality-gate.json
