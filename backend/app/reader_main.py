@@ -10,11 +10,9 @@ from pydantic import BaseModel, Field
 
 from .cubicasa_model import load_cubicasa_runtime, model_status
 from .ocr_reader import cloud_ocr_engine_name
-from .parser_v3 import parse_floorplan
-from .room_recovery import enhance_blue_room_topology
-from .wall_detail_recovery import enhance_blue_wall_details
+from .source_first_reader import parse_floorplan
 
-app = FastAPI(title="Manzili HAI Reader V3", version="3.0.0")
+app = FastAPI(title="Manzili HAI Source-First Reader", version="4.0.0")
 
 
 class ParseRequest(BaseModel):
@@ -33,15 +31,15 @@ def _authorize(authorization: str | None) -> None:
         raise HTTPException(401, "invalid reader bearer token")
 
 
-def _parse_with_topology_recovery(image_base64: str) -> dict[str, Any]:
-    result = parse_floorplan(image_base64)
-    result = enhance_blue_room_topology(image_base64, result)
-    return enhance_blue_wall_details(image_base64, result)
+def _parse_source_first(image_base64: str) -> dict[str, Any]:
+    # V4 owns the complete geometry decision. Older room/wall recovery passes are not
+    # chained after it because they could replace source-authoritative wall coordinates.
+    return parse_floorplan(image_base64)
 
 
 @app.on_event("startup")
 def warm_reader() -> None:
-    """Fail deployment instead of silently serving a reader without its real model."""
+    """Fail deployment instead of silently serving a reader without its semantic model."""
     runtime = load_cubicasa_runtime()
     if runtime is None:
         raise RuntimeError(f"CubiCasa model failed to load: {model_status()}")
@@ -55,10 +53,10 @@ async def health() -> dict[str, Any]:
     return {
         "ok": ready,
         "ready": ready,
-        "reader": "cubicasa-unet-resnet34-v3",
+        "reader": "hai-source-first-v4",
         "version": app.version,
         "local_segmentation_configured": ready,
-        "strategy": "semantic-segmentation-wall-centrelines+blue-room-topology+blue-wall-detail+door-window-masks+ocr",
+        "strategy": "source-pixel-wall-authority+adaptive-room-topology+cubicasa-openings+ocr+semantic-fallback",
         "model": runtime,
         "ocr": cloud_ocr_engine_name(),
     }
@@ -77,13 +75,13 @@ async def parse(
         raise HTTPException(503, "CubiCasa segmentation model is not loaded")
 
     try:
-        result = await asyncio.to_thread(_parse_with_topology_recovery, payload.image_base64)
+        result = await asyncio.to_thread(_parse_source_first, payload.image_base64)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(500, f"CubiCasa reader failed: {type(exc).__name__}") from exc
+        raise HTTPException(500, f"Source-first reader failed: {type(exc).__name__}") from exc
 
     result["page_index"] = payload.page_index
-    result["reader_path"] = "cubicasa-unet-resnet34-v3"
+    result["reader_path"] = "hai-source-first-v4"
     result["local_inference"] = False
     return result
