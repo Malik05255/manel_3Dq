@@ -19,7 +19,8 @@ on:
       - 'backend/scripts/fetch_floorplan_model.py'
       - 'backend/tests/test_wall_support.py'
       - 'backend/tests/test_benchmark_metrics.py'
-      - 'backend/requirements.txt'
+      - 'backend/requirements-reader-v3.txt'
+      - 'backend/requirements-ml-cpu.txt'
       - 'backend/Dockerfile.reader'
       - 'render.yaml'
       - '.github/workflows/backend-ml.yml'
@@ -41,7 +42,8 @@ on:
       - 'backend/scripts/fetch_floorplan_model.py'
       - 'backend/tests/test_wall_support.py'
       - 'backend/tests/test_benchmark_metrics.py'
-      - 'backend/requirements.txt'
+      - 'backend/requirements-reader-v3.txt'
+      - 'backend/requirements-ml-cpu.txt'
       - 'backend/Dockerfile.reader'
       - 'render.yaml'
       - '.github/workflows/backend-ml.yml'
@@ -54,6 +56,13 @@ concurrency:
 jobs:
   validate-reader:
     runs-on: ubuntu-latest
+    env:
+      FLOORPLAN_LOW_MEMORY: "true"
+      FLOORPLAN_IMAGE_SIZE: "384"
+      FLOORPLAN_TORCH_THREADS: "1"
+      FLOORPLAN_TILED_INFERENCE: "true"
+      FLOORPLAN_TILE_OVERLAP: "0.30"
+      FLOORPLAN_MAX_TILES: "12"
     defaults:
       run:
         working-directory: backend
@@ -63,40 +72,44 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements-reader-v3.txt
 
-      - name: Install Arabic English OCR
+      - name: Install Arabic English OCR for CI contract coverage
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
         working-directory: .
 
-      - name: Install Reader V3 dependencies
-        run: pip install -r requirements.txt pytest==8.4.1
+      - name: Install production Reader V3 dependencies
+        run: pip install -r requirements-reader-v3.txt pytest==8.4.1 pytesseract==0.3.13
 
       - name: Fetch and verify locked CubiCasa weights
         env:
           FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
         run: python scripts/fetch_floorplan_model.py
 
-      - name: Load CubiCasa model and run real inference smoke
+      - name: Load CubiCasa model and run real low-memory inference smoke
         env:
           FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
-          FLOORPLAN_TILED_INFERENCE: "false"
         run: |
           python - <<'PY'
           import cv2
           import numpy as np
+          import resource
           from app.cubicasa_model import CLASS_NAMES, load_cubicasa_runtime, model_status
 
           runtime = load_cubicasa_runtime()
           assert runtime is not None, model_status()
+          status = model_status()
+          assert status.get('image_size') == 384, status
+          assert status.get('low_memory') is True, status
+          assert status.get('torch_threads') == 1, status
           image = np.full((320, 480, 3), 255, dtype=np.uint8)
           cv2.rectangle(image, (40, 40), (440, 280), (0, 0, 0), 10)
           prediction = runtime.predict(image)
           assert prediction.shape == image.shape[:2]
           assert int(prediction.min()) >= 0
           assert int(prediction.max()) < len(CLASS_NAMES)
-          assert model_status().get('configured') is True
-          print('CubiCasa runtime load + inference ok', prediction.shape, sorted(set(prediction.ravel().tolist())))
+          peak_kib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+          print('CubiCasa low-memory inference ok', prediction.shape, 'peak_kib=', peak_kib, status)
           PY
 
       - name: Verify Reader V3 service contract
@@ -106,7 +119,7 @@ jobs:
           python - <<'PY'
           from app.ocr_reader import cloud_ocr_engine_name
           from app.reader_main import app
-          from app.cubicasa_model import load_cubicasa_runtime
+          from app.cubicasa_model import load_cubicasa_runtime, model_status
 
           assert app.title == 'Manzili HAI Reader V3'
           assert app.version == '3.0.0'
@@ -114,7 +127,8 @@ jobs:
           assert any(getattr(route, 'path', '') == '/readyz' for route in app.routes)
           assert cloud_ocr_engine_name() == 'tesseract-ara-eng'
           assert load_cubicasa_runtime() is not None
-          print('Reader V3 service contract ok; CubiCasa loaded; OCR=tesseract-ara-eng')
+          assert model_status()['image_size'] == 384
+          print('Reader V3 service contract ok; CubiCasa low-memory profile loaded; OCR=tesseract-ara-eng')
           PY
 
       - name: Test geometry and benchmark scoring gates
