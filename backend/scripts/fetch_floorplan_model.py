@@ -1,4 +1,4 @@
-"""Download and verify the production CubiCasa segmentation weights."""
+"""Prepare production Reader V3 assets: portable OCR plus verified CubiCasa weights."""
 
 from __future__ import annotations
 
@@ -15,6 +15,22 @@ MODEL_SHA256 = "d7f6a0fd06e2931aecfc8c4849192c5e153701578026efc78d9a6246731a8d6c
 DEFAULT_PATH = "/opt/manzili/models/floorplan/best.safetensors"
 
 
+def _truthy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _prepare_portable_ocr() -> None:
+    # Render exposes RENDER=true at build time. The existing service build command already
+    # runs this script, so OCR can be provisioned without requiring a dashboard build-command change.
+    if os.getenv("RENDER", "").strip().lower() != "true" and not _truthy("INSTALL_PORTABLE_TESSERACT"):
+        return
+    from install_portable_tesseract import main as install_tesseract
+
+    result = install_tesseract()
+    if result != 0:
+        raise RuntimeError(f"portable Tesseract installation failed with exit code {result}")
+
+
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as fh:
@@ -23,12 +39,12 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def main() -> int:
+def _ensure_model() -> None:
     target = Path(os.getenv("FLOORPLAN_SAFETENSORS_MODEL", DEFAULT_PATH))
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.is_file() and sha256(target) == MODEL_SHA256:
         print(f"CubiCasa model already verified at {target}")
-        return 0
+        return
 
     with tempfile.NamedTemporaryFile(prefix="floorplan-model-", suffix=".safetensors", delete=False) as tmp:
         temp_path = Path(tmp.name)
@@ -46,9 +62,14 @@ def main() -> int:
             target.unlink(missing_ok=True)
             raise RuntimeError(f"installed model checksum mismatch: {installed_digest}")
         print(f"Downloaded and verified CubiCasa model at {target}")
-        return 0
     finally:
         temp_path.unlink(missing_ok=True)
+
+
+def main() -> int:
+    _prepare_portable_ocr()
+    _ensure_model()
+    return 0
 
 
 if __name__ == "__main__":
