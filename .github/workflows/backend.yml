@@ -42,6 +42,7 @@ jobs:
             backend/app/reader_main.py \
             backend/app/parser_v3.py \
             backend/app/benchmark_metrics.py \
+            backend/scripts/fetch_floorplan_model.py \
             backend/scripts/ingest_reader_learning_bundle.py \
             modal_reader
 
@@ -76,6 +77,14 @@ jobs:
           grep -q 'FLOORPLAN_TILED_INFERENCE' render.yaml
           grep -q 'FLOORPLAN_MAX_TILES' render.yaml
           grep -q 'pip install --no-cache-dir -r requirements.txt' backend/Dockerfile.reader
+          grep -q 'FLOORPLAN_SAFETENSORS_MODEL=/opt/manzili/models/floorplan/best.safetensors' backend/Dockerfile.reader
+          grep -q 'fetch_floorplan_model.py' backend/Dockerfile.reader
+          grep -q 'RUN python ./scripts/fetch_floorplan_model.py' backend/Dockerfile.reader
+          grep -q 'torch==2.14.0' backend/requirements.txt
+          grep -q 'torchvision==0.29.0' backend/requirements.txt
+          grep -q 'segmentation-models-pytorch==0.5.0' backend/requirements.txt
+          grep -q 'safetensors==0.8.0' backend/requirements.txt
+          grep -q '/opt/manzili/models/floorplan/best.safetensors' backend/scripts/fetch_floorplan_model.py
 
       - name: Verify Reader V3 contract
         shell: bash
