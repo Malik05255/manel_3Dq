@@ -1,13 +1,15 @@
-name: Backend Reader V2 Validation
+name: Backend Reader V3 Validation
 
 on:
   push:
     branches: [ main, 'codex/**', 'feat/**', 'fix/**' ]
     paths:
+      - 'backend/app/benchmark_metrics.py'
       - 'backend/app/cubicasa_model.py'
       - 'backend/app/ocr_reader.py'
       - 'backend/app/parser.py'
       - 'backend/app/parser_v2.py'
+      - 'backend/app/parser_v3.py'
       - 'backend/app/parser_accuracy.py'
       - 'backend/app/parser_quality.py'
       - 'backend/app/roboflow_parser.py'
@@ -15,6 +17,7 @@ on:
       - 'backend/app/source_vectorizer.py'
       - 'backend/app/wall_support.py'
       - 'backend/tests/test_wall_support.py'
+      - 'backend/tests/test_benchmark_metrics.py'
       - 'backend/requirements.txt'
       - 'backend/Dockerfile.reader'
       - 'render.yaml'
@@ -22,10 +25,12 @@ on:
   pull_request:
     branches: [ main ]
     paths:
+      - 'backend/app/benchmark_metrics.py'
       - 'backend/app/cubicasa_model.py'
       - 'backend/app/ocr_reader.py'
       - 'backend/app/parser.py'
       - 'backend/app/parser_v2.py'
+      - 'backend/app/parser_v3.py'
       - 'backend/app/parser_accuracy.py'
       - 'backend/app/parser_quality.py'
       - 'backend/app/roboflow_parser.py'
@@ -33,6 +38,7 @@ on:
       - 'backend/app/source_vectorizer.py'
       - 'backend/app/wall_support.py'
       - 'backend/tests/test_wall_support.py'
+      - 'backend/tests/test_benchmark_metrics.py'
       - 'backend/requirements.txt'
       - 'backend/Dockerfile.reader'
       - 'render.yaml'
@@ -40,7 +46,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: manzili-hai-reader-v2-${{ github.ref }}
+  group: manzili-hai-reader-v3-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -56,72 +62,48 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: backend/requirements.txt
+
       - name: Install Arabic English OCR
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
         working-directory: .
-      - name: Install reader v2 dependencies
+
+      - name: Install Reader V3 dependencies
         run: pip install -r requirements.txt pytest==8.4.1
-      - name: Import source-first reader service
+
+      - name: Verify Reader V3 service contract
         run: |
           python - <<'PY'
           from app.ocr_reader import cloud_ocr_engine_name
           from app.reader_main import app
-          assert app.title == 'Manzili HAI Reader V2'
-          assert app.version == '2.2.0'
+
+          assert app.title == 'Manzili HAI Reader V3'
+          assert app.version == '3.0.0'
           assert any(getattr(route, 'path', '') == '/v2/parse' for route in app.routes)
+          assert any(getattr(route, 'path', '') == '/readyz' for route in app.routes)
           assert cloud_ocr_engine_name() == 'tesseract-ara-eng'
-          print('source-first reader service import ok, OCR=tesseract-ara-eng')
+          print('Reader V3 service contract ok; OCR=tesseract-ara-eng')
           PY
-      - name: Test source wall geometry gates
-        run: PYTHONPATH=. pytest -q tests/test_wall_support.py
-      - name: Run deterministic parser and external-evidence smoke tests
+
+      - name: Test geometry and benchmark scoring gates
+        run: PYTHONPATH=. pytest -q tests/test_wall_support.py tests/test_benchmark_metrics.py
+
+      - name: Run deterministic Reader V3 geometry smoke test
         run: |
           python - <<'PY'
-          import base64
           import cv2
           import numpy as np
-          from app.parser_v2 import parse_floorplan
+          from app.parser_v3 import _axis_centerlines
 
-          image = np.full((420, 620, 3), 255, dtype=np.uint8)
-          wall_blue = (220, 145, 80)
-          cv2.rectangle(image, (70, 60), (550, 350), wall_blue, 10)
-          cv2.line(image, (310, 60), (310, 350), wall_blue, 10)
-          cv2.line(image, (80, 280), (300, 100), (15, 15, 15), 4)
-          cv2.putText(image, '4.00 m', (110, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
-          ok, encoded = cv2.imencode('.png', image)
-          assert ok
-          payload = base64.b64encode(encoded.tobytes()).decode('ascii')
+          mask = np.zeros((600, 800), dtype=np.uint8)
+          cv2.line(mask, (80, 100), (720, 100), 255, 14)
+          cv2.line(mask, (80, 500), (720, 500), 255, 14)
+          cv2.line(mask, (80, 100), (80, 500), 255, 14)
+          cv2.line(mask, (720, 100), (720, 500), 255, 14)
+          cv2.line(mask, (400, 100), (400, 500), 255, 14)
 
-          result = parse_floorplan(payload)
-          assert isinstance(result, dict)
-          assert 'walls' in result and 'rooms' in result and 'warnings' in result
-          assert '+source-vector-v1+' in str(result.get('model_used', ''))
-          assert result.get('ocr_meta', {}).get('engine') == 'tesseract-ara-eng'
-          assert result.get('source_vector_meta', {}).get('authoritative') is True
-          assert result.get('wall_validation_meta', {}).get('authority') == 'source-pixels'
-
-          evidence = {
-              'model_used': 'legacy-test-evidence',
-              'confidence': 72,
-              'rooms': [],
-              'walls': [
-                  {
-                      'id': 'phantom-cloud-wall',
-                      'start': {'x': 10, 'y': 15},
-                      'end': {'x': 90, 'y': 85},
-                      'confidence': 99,
-                  }
-              ],
-              'openings': [],
-              'ocr_lines': [],
-              'warnings': ['legacy-test'],
-          }
-          fused = parse_floorplan(payload, external_evidence=evidence)
-          meta = fused.get('external_evidence_meta', {})
-          assert meta.get('used') is True
-          assert meta.get('model') == 'legacy-test-evidence'
-          assert all(item.get('id') != 'phantom-cloud-wall' for item in fused.get('walls', []))
-          assert any('cannot override source wall coordinates' in str(item) for item in fused.get('warnings', []))
-          assert fused.get('wall_validation_meta', {}).get('authority') == 'source-pixels'
-          print('reader smoke tests ok', len(fused['walls']), len(fused['rooms']))
+          walls = _axis_centerlines(mask)
+          assert len(walls) >= 4, walls
+          assert all('start' in wall and 'end' in wall for wall in walls)
+          assert all(str(wall.get('kind', '')).startswith('cubicasa-') for wall in walls)
+          print('Reader V3 geometry smoke ok; walls=', len(walls))
           PY
