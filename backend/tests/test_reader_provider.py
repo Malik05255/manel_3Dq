@@ -1,4 +1,4 @@
-from app.reader_provider import _normalize_reader_url, reader_provider
+from app.reader_provider import _RETRY_DELAYS_SECONDS, _normalize_reader_url, reader_provider
 
 
 def test_reader_provider_prefers_new_platform_env(monkeypatch):
@@ -43,3 +43,10 @@ def test_reader_provider_rejects_non_https_endpoint(monkeypatch):
     monkeypatch.delenv("MODAL_READER_URL", raising=False)
 
     assert reader_provider().ready is False
+
+
+def test_source_first_retry_budget_covers_render_cold_start():
+    assert _RETRY_DELAYS_SECONDS[0] == 0.0
+    assert len(_RETRY_DELAYS_SECONDS) >= 6
+    assert sum(_RETRY_DELAYS_SECONDS) >= 90.0
+    assert _RETRY_DELAYS_SECONDS[-1] >= 30.0
