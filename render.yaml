@@ -44,6 +44,8 @@ services:
     healthCheckPath: /readyz
     autoDeployTrigger: commit
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.14
       - key: OCR_SERVICE_TOKEN
         sync: false
       - key: TESSERACT_LANG
