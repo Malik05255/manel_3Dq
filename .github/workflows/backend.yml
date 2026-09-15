@@ -56,7 +56,8 @@ jobs:
         run: |
           PYTHONPATH=backend pytest -q \
             backend/tests/test_reader_provider.py \
-            backend/tests/test_gateway_reader_priority.py
+            backend/tests/test_gateway_reader_priority.py \
+            backend/tests/test_public_source_first_lock.py
 
       - name: Run Source-First geometry regressions
         run: PYTHONPATH=backend pytest -q backend/tests/test_source_first_reader.py
@@ -73,7 +74,7 @@ jobs:
       - name: Import cloud gateway
         env:
           READER_PROVIDER_URL: https://manzili-hai-reader-v3-final.onrender.com
-          READER_PROVIDER_NAME: hai-reader-v3
+          READER_PROVIDER_NAME: hai-source-first-v4
         run: |
           PYTHONPATH=backend python - <<'PY'
           from app.cloud_public_gateway import app
@@ -85,8 +86,8 @@ jobs:
           assert any(getattr(r, 'path', '') == '/v1/internal/legacy-floorplan-evidence' for r in app.routes)
           state = _reader_state()
           assert state['provider_ready'] is True, state
-          assert state['preferred'] == 'hai-reader-v3', state
-          print('gateway prefers Reader service', state)
+          assert state['preferred'] == 'hai-source-first-v4', state
+          print('gateway prefers Source-First Reader V4', state)
           PY
 
       - name: Validate Source-First Reader V4 and Arabic OCR deployment blueprint
@@ -99,7 +100,7 @@ jobs:
           grep -q 'https://manzili-hai-reader-v3-final.onrender.com' render.yaml
           grep -q 'READER_PROVIDER_TOKEN' render.yaml
           grep -q 'READER_PROVIDER_NAME' render.yaml
-          grep -q 'hai-reader-v3' render.yaml
+          grep -q 'hai-source-first-v4' render.yaml
           grep -q 'manzili-hai-reader-v3-final' render.yaml
           grep -q 'pip install -r backend/requirements-reader-v3.txt' render.yaml
           grep -q 'uvicorn app.reader_main:app' render.yaml
@@ -146,9 +147,11 @@ jobs:
           set -euo pipefail
           grep -q 'local_inference.*False' backend/app/cloud_public_gateway.py
           grep -q 'request_reader' backend/app/cloud_public_gateway.py
+          grep -q 'Source-First Reader V4 is required for final floor-plan geometry' backend/app/cloud_public_gateway.py
+          ! grep -q 'modal-raster2seq-emergency-fallback' backend/app/cloud_public_gateway.py
           grep -q 'request_reader' backend/app/cloud_gateway.py
-          grep -q 'Reader V3 was temporarily unavailable; Modal fallback was used' backend/app/cloud_gateway.py
           grep -q 'READER_PROVIDER_URL' backend/app/reader_provider.py
+          grep -q 'hai-source-first-v4' backend/app/reader_provider.py
           grep -q 'from .source_first_reader import parse_floorplan' backend/app/reader_main.py
           grep -q 'Manzili HAI Source-First Reader' backend/app/reader_main.py
           grep -q 'hai-source-first-v4' backend/app/reader_main.py
