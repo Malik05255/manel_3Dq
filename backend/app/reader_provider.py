@@ -27,12 +27,12 @@ class ReaderProvider:
 
 
 def _normalize_reader_url(raw_url: str) -> str:
-    """Accept either a full v2 endpoint or a service root URL.
+    """Accept either a full v2 contract endpoint or a service root URL.
 
     Render service URLs are commonly configured as only
-    ``https://service.onrender.com``. HAI Reader V2 exposes POST /v2/parse,
-    so root URLs are normalized automatically instead of producing a 404/HTML
-    proxy response at runtime.
+    ``https://service.onrender.com``. Source-First Reader V4 still exposes the
+    stable POST /v2/parse wire contract, so root URLs are normalized
+    automatically instead of producing a 404/HTML proxy response at runtime.
     """
     value = raw_url.strip()
     if not value:
@@ -48,12 +48,14 @@ def _normalize_reader_url(raw_url: str) -> str:
 def reader_provider() -> ReaderProvider:
     """Resolve the active HAI floor-plan reader without coupling Android to a vendor.
 
-    READER_PROVIDER_* is the new contract. MODAL_READER_* remains a migration
-    fallback only so production can move platforms without an app release.
+    READER_PROVIDER_* is the production contract for Source-First Reader V4.
+    MODAL_READER_* remains discoverable as migration/evidence infrastructure for
+    non-public internal routes, but Android's public parser is not allowed to use
+    it as final geometry.
     """
     url = _normalize_reader_url(os.getenv("READER_PROVIDER_URL", ""))
     token = os.getenv("READER_PROVIDER_TOKEN", "").strip()
-    name = os.getenv("READER_PROVIDER_NAME", "").strip() or "hai-reader-v2"
+    name = os.getenv("READER_PROVIDER_NAME", "").strip() or "hai-source-first-v4"
     if url:
         return ReaderProvider(url=url, name=name, token=token)
 
