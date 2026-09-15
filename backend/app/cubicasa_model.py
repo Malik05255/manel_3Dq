@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -12,7 +13,8 @@ MODEL_NAME = "Yytsi/floorplan-to-3d-walls"
 MODEL_LICENSE = "MIT"
 MODEL_SHA256 = "d7f6a0fd06e2931aecfc8c4849192c5e153701578026efc78d9a6246731a8d6c"
 DEFAULT_MODEL_PATH = "/opt/manzili/models/floorplan/best.safetensors"
-IMAGE_SIZE = 512
+DEFAULT_IMAGE_SIZE = 512
+LOW_MEMORY_IMAGE_SIZE = 384
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 CLASS_NAMES = ("floor", "wall", "door", "window")
@@ -23,6 +25,23 @@ def _truthy(name: str, default: bool = True) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _configured_image_size() -> int:
+    """Return an architecture-safe inference size.
+
+    U-Net/ResNet34 is happiest on sizes divisible by 32. Production can lower the
+    working canvas on memory-constrained CPU instances without changing weights.
+    Tiled inference then reduces the loss of local detail on large source plans.
+    """
+    default = LOW_MEMORY_IMAGE_SIZE if _truthy("FLOORPLAN_LOW_MEMORY", False) else DEFAULT_IMAGE_SIZE
+    raw = os.getenv("FLOORPLAN_IMAGE_SIZE", str(default)).strip()
+    try:
+        requested = int(raw)
+    except ValueError:
+        requested = default
+    requested = max(256, min(DEFAULT_IMAGE_SIZE, requested))
+    return max(256, (requested // 32) * 32)
 
 
 def _axis_starts(length: int, tile: int, overlap: float) -> list[int]:
@@ -37,16 +56,18 @@ def _axis_starts(length: int, tile: int, overlap: float) -> list[int]:
 
 
 class CubiCasaRuntime:
-    def __init__(self, model: Any, torch_module: Any, device: Any, path: str) -> None:
+    def __init__(self, model: Any, torch_module: Any, device: Any, path: str, image_size: int) -> None:
         self.model = model
         self.torch = torch_module
         self.device = device
         self.path = path
+        self.image_size = image_size
 
     def _predict_single(self, image_bgr: np.ndarray) -> np.ndarray:
         h, w = image_bgr.shape[:2]
+        image_size = self.image_size
         rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-        scale = min(IMAGE_SIZE / max(w, 1), IMAGE_SIZE / max(h, 1))
+        scale = min(image_size / max(w, 1), image_size / max(h, 1))
         inner_w = max(1, int(round(w * scale)))
         inner_h = max(1, int(round(h * scale)))
         interpolation = cv2.INTER_AREA if scale <= 1.0 else cv2.INTER_CUBIC
@@ -54,15 +75,17 @@ class CubiCasaRuntime:
 
         normalized = resized.astype(np.float32) / 255.0
         normalized = (normalized - IMAGENET_MEAN) / IMAGENET_STD
-        canvas = np.zeros((IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
-        top = (IMAGE_SIZE - inner_h) // 2
-        left = (IMAGE_SIZE - inner_w) // 2
+        canvas = np.zeros((image_size, image_size, 3), dtype=np.float32)
+        top = (image_size - inner_h) // 2
+        left = (image_size - inner_w) // 2
         canvas[top:top + inner_h, left:left + inner_w] = normalized
 
         tensor = self.torch.from_numpy(np.transpose(canvas, (2, 0, 1))[None, ...]).to(self.device)
-        with self.torch.no_grad():
+        # inference_mode has lower runtime bookkeeping than no_grad and is safe for this immutable model.
+        with self.torch.inference_mode():
             logits = self.model(tensor)
             prediction = logits.argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
+        del logits, tensor
 
         crop = prediction[top:top + inner_h, left:left + inner_w]
         return cv2.resize(crop, (w, h), interpolation=cv2.INTER_NEAREST)
@@ -70,10 +93,9 @@ class CubiCasaRuntime:
     def predict(self, image_bgr: np.ndarray) -> np.ndarray:
         """Fuse global context with overlapping high-resolution tiles.
 
-        A single 512px resize loses thin walls, dimension-sized openings and old-scan
-        details on phone screenshots/PDF pages. The global pass keeps room context,
-        while overlapping tile passes preserve local geometry. Tile votes are weighted
-        higher than the global pass because they contain substantially more source pixels.
+        The production low-memory mode uses a smaller model canvas, but tile source
+        windows scale down proportionally. That preserves roughly the same source-pixel
+        density per model pixel instead of simply shrinking the whole floor plan once.
         """
         h, w = image_bgr.shape[:2]
         global_prediction = self._predict_single(image_bgr)
@@ -81,7 +103,10 @@ class CubiCasaRuntime:
             return global_prediction
 
         min_side = min(h, w)
-        tile = min(1500, max(820, int(round(min_side * 0.62))))
+        size_ratio = self.image_size / DEFAULT_IMAGE_SIZE
+        min_tile = max(560, int(round(820 * size_ratio)))
+        max_tile = max(min_tile, int(round(1500 * size_ratio)))
+        tile = min(max_tile, max(min_tile, int(round(min_side * 0.62))))
         overlap = max(0.18, min(0.42, float(os.getenv("FLOORPLAN_TILE_OVERLAP", "0.30"))))
         xs = _axis_starts(w, min(tile, w), overlap)
         ys = _axis_starts(h, min(tile, h), overlap)
@@ -96,6 +121,7 @@ class CubiCasaRuntime:
         votes = np.zeros((len(CLASS_NAMES), h, w), dtype=np.uint8)
         for class_index in range(len(CLASS_NAMES)):
             votes[class_index] += (global_prediction == class_index).astype(np.uint8)
+        del global_prediction
 
         for x0, y0, x1, y1 in windows:
             crop = image_bgr[y0:y1, x0:x1]
@@ -105,6 +131,7 @@ class CubiCasaRuntime:
             for class_index in range(len(CLASS_NAMES)):
                 region = votes[class_index, y0:y1, x0:x1]
                 region += ((tile_prediction == class_index).astype(np.uint8) * 2)
+            del tile_prediction
 
         return votes.argmax(axis=0).astype(np.uint8)
 
@@ -119,7 +146,15 @@ def load_cubicasa_runtime() -> CubiCasaRuntime | None:
         import segmentation_models_pytorch as smp
         from safetensors.torch import load_file
 
-        torch.set_num_threads(max(1, int(os.getenv("FLOORPLAN_TORCH_THREADS", "2"))))
+        low_memory = _truthy("FLOORPLAN_LOW_MEMORY", False)
+        default_threads = "1" if low_memory else "2"
+        torch.set_num_threads(max(1, int(os.getenv("FLOORPLAN_TORCH_THREADS", default_threads))))
+        # Inter-op pools add memory on tiny instances and do not help a single U-Net request.
+        try:
+            torch.set_num_interop_threads(1)
+        except RuntimeError:
+            pass
+
         device = torch.device(os.getenv("FLOORPLAN_DEVICE", "cpu"))
         model = smp.Unet(
             encoder_name="resnet34",
@@ -128,9 +163,16 @@ def load_cubicasa_runtime() -> CubiCasaRuntime | None:
             classes=len(CLASS_NAMES),
         ).to(device)
         state = load_file(path, device="cpu")
-        model.load_state_dict(state, strict=True)
+        # assign=True swaps the safetensors storage into the module instead of retaining
+        # a second full copy of the weights during/after load. This matters on 512 MB Render.
+        try:
+            model.load_state_dict(state, strict=True, assign=True)
+        except TypeError:
+            model.load_state_dict(state, strict=True)
+        del state
+        gc.collect()
         model.eval()
-        return CubiCasaRuntime(model, torch, device, path)
+        return CubiCasaRuntime(model, torch, device, path, _configured_image_size())
     except Exception:
         return None
 
@@ -144,5 +186,8 @@ def model_status() -> dict[str, Any]:
         "sha256": MODEL_SHA256,
         "path": runtime.path if runtime is not None else None,
         "classes": list(CLASS_NAMES),
+        "image_size": runtime.image_size if runtime is not None else _configured_image_size(),
+        "low_memory": _truthy("FLOORPLAN_LOW_MEMORY", False),
+        "torch_threads": max(1, int(os.getenv("FLOORPLAN_TORCH_THREADS", "1" if _truthy("FLOORPLAN_LOW_MEMORY", False) else "2"))),
         "tiled_inference": _truthy("FLOORPLAN_TILED_INFERENCE", True),
     }
