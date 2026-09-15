@@ -21,11 +21,10 @@ from .cloud_gateway import (
 )
 from .reader_provider import reader_provider, request_reader
 
-_ALLOWED_CLIENTS = {"android-cloud-only-v1", "android-reader-v2"}
+_ALLOWED_CLIENTS = {"android-cloud-only-v1", "android-reader-v2", "android-source-first-v4"}
 _WINDOW_SECONDS = 60.0
 _PER_CLIENT_LIMIT = 12
 _GLOBAL_LIMIT = 90
-_TRANSIENT_READER_FAILURES = {502, 503, 504}
 _rate_lock = threading.Lock()
 _per_client: dict[str, deque[float]] = defaultdict(deque)
 _global_requests: deque[float] = deque()
@@ -74,6 +73,12 @@ def _enforce_rate_limit(request: Request, client: str) -> None:
         bucket.append(now)
 
 
+def _source_first_provider_ready() -> tuple[bool, str]:
+    provider = reader_provider()
+    ready = provider.ready and provider.name != "modal-raster2seq-legacy"
+    return ready, provider.name
+
+
 @app.get("/v1/public/gateway-key")
 async def public_gateway_key() -> dict[str, Any]:
     public_key = _gateway_public_key_b64()
@@ -87,17 +92,18 @@ async def public_parser_status(
     x_manzili_parser_client: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _require_android_client(x_manzili_parser_client)
-    provider = reader_provider()
-    ready = _modal_ready() if provider.name == "modal-raster2seq-legacy" else provider.ready
+    ready, configured_name = _source_first_provider_ready()
+    active_name = configured_name if ready else "unavailable"
     return {
         "ready": ready,
-        "reader": provider.name,
-        "preferred_path": provider.name if ready else "unavailable",
+        "reader": active_name,
+        "preferred_path": active_name,
         "reader_configured": ready,
-        "modal_reader_configured": provider.name == "modal-raster2seq-legacy" and ready,
+        "modal_reader_configured": False,
         "legacy_evidence_configured": _modal_ready(),
+        "source_first_required": True,
         "local_inference": False,
-        "detail": "" if ready else "Floor-plan reader provider is not configured on the gateway",
+        "detail": "" if ready else "Source-First Reader V4 is required for final floor-plan geometry",
     }
 
 
@@ -140,25 +146,14 @@ async def internal_legacy_floorplan_evidence(
     payload: ParseRequest,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    """Private migration evidence endpoint used only by HAI Reader V2.
+    """Private migration evidence endpoint; never a final Android geometry path.
 
-    Modal/Raster2Seq is deliberately demoted to evidence. HAI Reader V2 owns
-    wall validation, fusion, confidence gates and the final response.
+    Modal/Raster2Seq remains isolated for diagnostics or migration evidence only.
+    Source-First Reader V4 owns final wall geometry and the public parser never
+    substitutes this legacy result when V4 is missing or temporarily unavailable.
     """
     _require_reader_service(authorization)
     return await _request_legacy_modal(payload)
-
-
-async def _emergency_legacy_fallback(payload: ParseRequest, reason: str) -> dict[str, Any]:
-    result = await _request_legacy_modal(payload)
-    warnings = list(result.get("warnings") or [])
-    warnings.append(
-        "HAI Reader V2 was temporarily unavailable; emergency legacy fallback was used for this analysis."
-    )
-    result["warnings"] = list(dict.fromkeys(warnings))
-    result["reader_path"] = "modal-raster2seq-emergency-fallback"
-    result["fallback_reason"] = reason[:240]
-    return result
 
 
 @app.post("/v1/public/parse-floorplan")
@@ -169,13 +164,11 @@ async def public_parse_floorplan(
 ) -> dict[str, Any]:
     client = _require_android_client(x_manzili_parser_client)
     _enforce_rate_limit(request, client)
-    provider = reader_provider()
-    if provider.name == "modal-raster2seq-legacy":
-        return await _request_legacy_modal(payload)
+    ready, _ = _source_first_provider_ready()
+    if not ready:
+        raise HTTPException(503, "Source-First Reader V4 is required for final floor-plan geometry")
 
-    try:
-        return await request_reader(payload.image_base64, payload.page_index)
-    except HTTPException as exc:
-        if exc.status_code in _TRANSIENT_READER_FAILURES and _modal_ready():
-            return await _emergency_legacy_fallback(payload, str(exc.detail))
-        raise
+    # Accuracy over availability: never replace V4 with legacy geometry on transient
+    # errors. request_reader already retries the production reader before surfacing a
+    # controlled error to Android.
+    return await request_reader(payload.image_base64, payload.page_index)
