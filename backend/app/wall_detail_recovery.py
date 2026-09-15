@@ -68,10 +68,11 @@ def enhance_blue_wall_details(image_base64: str, result: dict[str, Any]) -> dict
             "wall_count_after_detail": len(detailed),
             "wall_topology_before_detail": current_topology,
             "wall_topology_after_detail": detail_topology,
-            "wall_detail_mode": "blue-source-structural-core-cleanup",
+            "wall_detail_mode": "blue-source-door-gap-aware",
             "wall_detail_diagonal_count": diagonal_count,
             "wall_detail_min_segment_px": int(meta.get("min_segment_px") or 0),
             "wall_detail_gap_heal_px": int(meta.get("door_gap_heal_px") or 0),
+            "wall_cleanup_mode": "structural-core-dedup-v1",
             "wall_cleanup_input_count": int(cleanup_meta.get("input_count") or len(detailed)),
             "wall_cleanup_output_count": int(cleanup_meta.get("output_count") or len(detailed)),
             "wall_cleanup_rejected_thin": int(cleanup_meta.get("rejected_thin") or 0),
@@ -81,7 +82,8 @@ def enhance_blue_wall_details(image_base64: str, result: dict[str, Any]) -> dict
 
         quality = dict(updated.get("quality") or {})
         quality["wall_topology"] = detail_topology
-        quality["wall_detail_recovery"] = "blue-source-structural-core-cleanup"
+        quality["wall_detail_recovery"] = "blue-source-door-gap-aware"
+        quality["wall_cleanup"] = "structural-core-dedup-v1"
         quality["wall_count_before_detail"] = len(current_walls)
         quality["wall_count_after_detail"] = len(detailed)
         quality["wall_cleanup_rejected_thin"] = int(cleanup_meta.get("rejected_thin") or 0)
