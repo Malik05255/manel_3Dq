@@ -24,7 +24,7 @@ jobs:
       READER_URL: https://manzili-hai-reader-v3-final.onrender.com
       OCR_URL: https://manzili-hai-ocr-ar-en-v2.onrender.com
     steps:
-      - name: Wait for Reader V3 and Arabic OCR production deployment
+      - name: Wait for Source-First Reader V4 and Arabic OCR production deployment
         shell: bash
         run: |
           set -euo pipefail
@@ -48,16 +48,16 @@ jobs:
               raise SystemExit(1)
           expected_sha = sys.argv[4]
           assert health.get("version") == "0.73.0", health
-          assert health.get("reader") == "hai-reader-v3", health
+          assert health.get("reader") == "hai-source-first-v4", health
           assert health.get("reader_provider_configured") is True, health
           assert health.get("local_inference") is False, health
           deployed = health.get("git_commit")
           if deployed:
               assert deployed == expected_sha, (deployed, expected_sha)
           assert reader.get("ready") is True, reader
-          assert reader.get("reader") == "cubicasa-unet-resnet34-v3", reader
+          assert reader.get("reader") == "hai-source-first-v4", reader
           assert reader.get("local_segmentation_configured") is True, reader
-          assert reader.get("version") == "3.0.0", reader
+          assert reader.get("version") == "4.0.0", reader
           assert reader.get("ocr") == "remote-tesseract-ara-eng", reader
           assert ocr.get("ready") is True, ocr
           assert ocr.get("engine") == "tesseract-ara-eng", ocr
@@ -69,19 +69,19 @@ jobs:
             fi
             sleep 20
           done
-          test "$success" -eq 1 || { echo 'Reader V3 / Arabic OCR production deployment did not become ready' >&2; exit 1; }
+          test "$success" -eq 1 || { echo 'Source-First Reader V4 / Arabic OCR production deployment did not become ready' >&2; exit 1; }
 
-      - name: Verify public gateway prefers Reader V3
+      - name: Verify public gateway requires Source-First Reader V4
         shell: bash
         run: |
           set -euo pipefail
           BODY="$(curl --fail --silent --show-error --max-time 45 \
-            -H 'X-Manzili-Parser-Client: android-reader-v2' \
+            -H 'X-Manzili-Parser-Client: android-source-first-v4' \
             "${BACKEND_URL%/}/v1/public/parser/status")"
           echo "parser-status=$BODY"
-          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("ready") is True, d; assert d.get("reader")=="hai-reader-v3", d; assert d.get("preferred_path")=="hai-reader-v3", d; assert d.get("reader_configured") is True, d; assert d.get("local_inference") is False, d' "$BODY"
+          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("ready") is True, d; assert d.get("reader")=="hai-source-first-v4", d; assert d.get("preferred_path")=="hai-source-first-v4", d; assert d.get("reader_configured") is True, d; assert d.get("source_first_required") is True, d; assert d.get("modal_reader_configured") is False, d; assert d.get("local_inference") is False, d' "$BODY"
 
-      - name: Run end-to-end CubiCasa parse through production gateway and remote OCR
+      - name: Run end-to-end Source-First V4 parse through production gateway and remote OCR
         shell: bash
         run: |
           set -euo pipefail
@@ -114,9 +114,9 @@ jobs:
           PY
 
           BODY="$(curl --fail --silent --show-error --max-time 330 \
-            -H 'X-Manzili-Parser-Client: android-reader-v2' \
+            -H 'X-Manzili-Parser-Client: android-source-first-v4' \
             -H 'Content-Type: application/json' \
             --data-binary @reader-smoke-payload.json \
             "${BACKEND_URL%/}/v1/public/parse-floorplan")"
           echo "parse-response=${BODY:0:1600}"
-          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("model_used")=="cubicasa-unet-resnet34-v3", d; assert d.get("reader_path")=="hai-reader-v3", d; assert d.get("local_inference") is False, d; assert isinstance(d.get("walls"), list), d; assert isinstance(d.get("rooms"), list), d; assert isinstance(d.get("openings"), list), d; assert (d.get("ocr_meta") or {}).get("engine")=="remote-tesseract-ara-eng", d' "$BODY"
+          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("model_used")=="hai-source-first-v4+cubicasa-openings+ocr", d; assert d.get("reader_path")=="hai-source-first-v4", d; assert d.get("local_inference") is False, d; assert isinstance(d.get("walls"), list), d; assert isinstance(d.get("rooms"), list), d; assert isinstance(d.get("openings"), list), d; assert isinstance(d.get("geometry_recovery"), dict), d; assert isinstance(d.get("quality"), dict), d; assert (d.get("ocr_meta") or {}).get("engine")=="remote-tesseract-ara-eng", d' "$BODY"
