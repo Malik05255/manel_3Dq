@@ -42,20 +42,43 @@ jobs:
             backend/app/reader_main.py \
             backend/app/parser_v3.py \
             backend/app/benchmark_metrics.py \
+            backend/scripts/fetch_floorplan_model.py \
+            backend/scripts/ingest_reader_learning_bundle.py \
             modal_reader
 
-      - name: Run provider migration tests
-        run: PYTHONPATH=backend pytest -q backend/tests/test_reader_provider.py
+      - name: Run provider and gateway routing tests
+        run: |
+          PYTHONPATH=backend pytest -q \
+            backend/tests/test_reader_provider.py \
+            backend/tests/test_gateway_reader_priority.py
 
       - name: Run benchmark metric regressions
         run: PYTHONPATH=backend pytest -q backend/tests/test_benchmark_metrics.py
+
+      - name: Run consented learning bundle intake regressions
+        run: PYTHONPATH=backend pytest -q backend/tests/test_reader_learning_bundle.py
 
       - name: Run cloud metric evidence regressions
         run: python -m unittest modal_reader.tests.test_metric_evidence
 
       - name: Import cloud gateway
+        env:
+          READER_PROVIDER_URL: https://manzili-hai-reader-v2.onrender.com
+          READER_PROVIDER_NAME: hai-reader-v3
         run: |
-          PYTHONPATH=backend python -c "from app.cloud_public_gateway import app; assert app.title == 'Manzili HAI Cloud Gateway'; assert any(getattr(r, 'path', '') == '/v1/public/parse-floorplan' for r in app.routes); assert any(getattr(r, 'path', '') == '/v1/internal/legacy-floorplan-evidence' for r in app.routes)"
+          PYTHONPATH=backend python - <<'PY'
+          from app.cloud_public_gateway import app
+          from app.cloud_gateway import _reader_state
+
+          assert app.title == 'Manzili HAI Cloud Gateway'
+          assert app.version == '0.73.0'
+          assert any(getattr(r, 'path', '') == '/v1/public/parse-floorplan' for r in app.routes)
+          assert any(getattr(r, 'path', '') == '/v1/internal/legacy-floorplan-evidence' for r in app.routes)
+          state = _reader_state()
+          assert state['provider_ready'] is True, state
+          assert state['preferred'] == 'hai-reader-v3', state
+          print('gateway prefers Reader V3', state)
+          PY
 
       - name: Validate Reader V3 deployment blueprint
         shell: bash
@@ -64,6 +87,7 @@ jobs:
           grep -q 'pip install -r backend/requirements-gateway.txt' render.yaml
           grep -q 'uvicorn app.cloud_public_gateway:app' render.yaml
           grep -q 'READER_PROVIDER_URL' render.yaml
+          grep -q 'https://manzili-hai-reader-v2.onrender.com' render.yaml
           grep -q 'READER_PROVIDER_TOKEN' render.yaml
           grep -q 'READER_PROVIDER_NAME' render.yaml
           grep -q 'hai-reader-v3' render.yaml
@@ -72,6 +96,14 @@ jobs:
           grep -q 'FLOORPLAN_TILED_INFERENCE' render.yaml
           grep -q 'FLOORPLAN_MAX_TILES' render.yaml
           grep -q 'pip install --no-cache-dir -r requirements.txt' backend/Dockerfile.reader
+          grep -q 'FLOORPLAN_SAFETENSORS_MODEL=/opt/manzili/models/floorplan/best.safetensors' backend/Dockerfile.reader
+          grep -q 'fetch_floorplan_model.py' backend/Dockerfile.reader
+          grep -q 'RUN python ./scripts/fetch_floorplan_model.py' backend/Dockerfile.reader
+          grep -q 'torch==2.14.0' backend/requirements.txt
+          grep -q 'torchvision==0.29.0' backend/requirements.txt
+          grep -q 'segmentation-models-pytorch==0.5.0' backend/requirements.txt
+          grep -q 'safetensors==0.8.0' backend/requirements.txt
+          grep -q '/opt/manzili/models/floorplan/best.safetensors' backend/scripts/fetch_floorplan_model.py
 
       - name: Verify Reader V3 contract
         shell: bash
@@ -79,6 +111,8 @@ jobs:
           set -euo pipefail
           grep -q 'local_inference.*False' backend/app/cloud_public_gateway.py
           grep -q 'request_reader' backend/app/cloud_public_gateway.py
+          grep -q 'request_reader' backend/app/cloud_gateway.py
+          grep -q 'Reader V3 was temporarily unavailable; Modal fallback was used' backend/app/cloud_gateway.py
           grep -q 'READER_PROVIDER_URL' backend/app/reader_provider.py
           grep -q 'from .parser_v3 import parse_floorplan' backend/app/reader_main.py
           grep -q 'Manzili HAI Reader V3' backend/app/reader_main.py
@@ -86,3 +120,4 @@ jobs:
           grep -q 'CubiCasa segmentation model is not loaded' backend/app/reader_main.py
           grep -q 'app.parser_v3 import parse_floorplan' backend/scripts/run_saudi_benchmark.py
           grep -q 'cubicasa-unet-resnet34-v3' benchmarks/saudi-floorplans/quality-gate.json
+          grep -q 'user-correction bundles are accepted as train only' backend/scripts/ingest_reader_learning_bundle.py

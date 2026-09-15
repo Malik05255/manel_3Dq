@@ -7,8 +7,11 @@ services:
     healthCheckPath: /readyz
     autoDeployTrigger: commit
     envVars:
+      # The reader service name is kept stable for its URL, but it now serves Reader V3.
+      # Make the non-secret URL deterministic so the gateway cannot silently fall back to Modal
+      # just because READER_PROVIDER_URL was never filled in the Render dashboard.
       - key: READER_PROVIDER_URL
-        sync: false
+        value: https://manzili-hai-reader-v2.onrender.com
       - key: READER_PROVIDER_TOKEN
         sync: false
       - key: READER_PROVIDER_NAME

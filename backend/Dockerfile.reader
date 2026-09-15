@@ -13,11 +13,19 @@ RUN apt-get update \
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Reader V3 is not allowed to start without the exact verified CubiCasa weights.
+# Bake them into the image so cold starts do not depend on a runtime download.
+ENV FLOORPLAN_SAFETENSORS_MODEL=/opt/manzili/models/floorplan/best.safetensors
+COPY backend/scripts/fetch_floorplan_model.py ./scripts/fetch_floorplan_model.py
+RUN python ./scripts/fetch_floorplan_model.py
+
 COPY backend/app ./app
 
 ENV PYTHONUNBUFFERED=1 \
     TESSERACT_LANG=ara+eng \
-    TESSERACT_CONFIG="--psm 11"
+    TESSERACT_CONFIG="--psm 11" \
+    FLOORPLAN_TILED_INFERENCE=true \
+    FLOORPLAN_MAX_TILES=12
 
 EXPOSE 8000
 CMD ["uvicorn", "app.reader_main:app", "--host", "0.0.0.0", "--port", "8000"]

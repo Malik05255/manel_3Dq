@@ -28,12 +28,28 @@ data class ReaderCorrectionDelta(
         put("scale_changed", scaleChanged)
         put("total_changes", totalChanges)
     }
+
+    companion object {
+        fun fromJson(value: JSONObject): ReaderCorrectionDelta = ReaderCorrectionDelta(
+            roomsChanged = value.optInt("rooms_changed", 0).coerceAtLeast(0),
+            wallsChanged = value.optInt("walls_changed", 0).coerceAtLeast(0),
+            openingsChanged = value.optInt("openings_changed", 0).coerceAtLeast(0),
+            dimensionsChanged = value.optInt("dimensions_changed", 0).coerceAtLeast(0),
+            scaleChanged = value.optBoolean("scale_changed", false)
+        )
+    }
 }
 
-/**
- * Compares the reader result with the plan explicitly approved by the user.
- * Revision/confidence metadata alone is ignored; only geometry/labels/scale changes count.
- */
+data class ReaderCorrectionCandidate(
+    val id: String,
+    val projectId: String,
+    val createdAtUtc: String,
+    val readerModel: String,
+    val status: String,
+    val delta: ReaderCorrectionDelta
+)
+
+/** Compares the reader result with the plan explicitly approved by the user. */
 object ReaderCorrectionDiff {
     fun summarize(before: FloorPlan, after: FloorPlan): ReaderCorrectionDelta = ReaderCorrectionDelta(
         roomsChanged = changedById(before.rooms, after.rooms, { it.id }) { a, b ->
@@ -72,18 +88,11 @@ object ReaderCorrectionDiff {
 
 /**
  * App-private queue of corrected reader cases.
- *
- * Privacy contract:
- * - no floor-plan source bytes are copied here;
- * - no source URI is written here;
- * - only the internal project id links the case to ProjectSourceStore, whose URI mapping is encrypted;
- * - nothing is uploaded automatically.
- *
- * A later explicit export/consent flow can resolve the project source and turn selected candidates into
- * licensed/de-identified benchmark or training material.
+ * Source bytes and source URIs are not copied into this store and nothing is uploaded automatically.
  */
 class ReaderCorrectionStore(context: Context) {
-    private val root = File(context.applicationContext.filesDir, DIRECTORY).apply { mkdirs() }
+    private val appContext = context.applicationContext
+    private val root = File(appContext.filesDir, DIRECTORY).apply { mkdirs() }
 
     fun capture(projectId: String, readerResult: FloorPlan, approvedReference: FloorPlan): String? {
         if (projectId.isBlank()) return null
@@ -97,7 +106,7 @@ class ReaderCorrectionStore(context: Context) {
             put("project_id", projectId)
             put("created_at_utc", Instant.now().toString())
             put("reader_model", READER_MODEL)
-            put("status", "local-private-candidate")
+            put("status", STATUS_PRIVATE)
             put("privacy", JSONObject().apply {
                 put("source_bytes_stored", false)
                 put("source_uri_stored", false)
@@ -111,16 +120,55 @@ class ReaderCorrectionStore(context: Context) {
 
         atomicWrite(File(root, "$id.json"), payload.toString(2))
         trimOldCandidates()
+        ReaderLearningNotifier.notify(appContext, candidateCount())
         return id
     }
 
-    fun candidateCount(): Int = root.listFiles { file -> file.isFile && file.extension == "json" }?.size ?: 0
+    fun candidateCount(): Int = candidateFiles().size
+
+    fun listCandidates(): List<ReaderCorrectionCandidate> = candidateFiles().mapNotNull { file ->
+        loadPayload(file.nameWithoutExtension)?.let(::candidateFrom)
+    }
+
+    fun loadPayload(id: String): JSONObject? {
+        if (!SAFE_ID.matches(id)) return null
+        val file = File(root, "$id.json")
+        if (!file.isFile) return null
+        return runCatching { JSONObject(file.readText(Charsets.UTF_8)) }.getOrNull()
+    }
+
+    fun markExported(id: String): Boolean {
+        val payload = loadPayload(id) ?: return false
+        payload.put("status", STATUS_EXPORTED)
+        payload.put("last_exported_at_utc", Instant.now().toString())
+        atomicWrite(File(root, "$id.json"), payload.toString(2))
+        return true
+    }
+
+    fun delete(id: String): Boolean {
+        if (!SAFE_ID.matches(id)) return false
+        return File(root, "$id.json").delete()
+    }
+
+    private fun candidateFiles(): List<File> = root.listFiles { file ->
+        file.isFile && file.extension == "json" && file.nameWithoutExtension.startsWith("correction-")
+    }?.sortedByDescending { it.lastModified() }.orEmpty()
+
+    private fun candidateFrom(payload: JSONObject): ReaderCorrectionCandidate? {
+        val id = payload.optString("id").takeIf { SAFE_ID.matches(it) } ?: return null
+        val projectId = payload.optString("project_id").takeIf { it.isNotBlank() } ?: return null
+        return ReaderCorrectionCandidate(
+            id = id,
+            projectId = projectId,
+            createdAtUtc = payload.optString("created_at_utc", ""),
+            readerModel = payload.optString("reader_model", READER_MODEL),
+            status = payload.optString("status", STATUS_PRIVATE),
+            delta = ReaderCorrectionDelta.fromJson(payload.optJSONObject("delta") ?: JSONObject())
+        )
+    }
 
     private fun trimOldCandidates() {
-        val files = root.listFiles { file -> file.isFile && file.extension == "json" }
-            ?.sortedByDescending { it.lastModified() }
-            .orEmpty()
-        files.drop(MAX_LOCAL_CASES).forEach { it.delete() }
+        candidateFiles().drop(MAX_LOCAL_CASES).forEach { it.delete() }
     }
 
     private fun atomicWrite(target: File, text: String) {
@@ -134,7 +182,10 @@ class ReaderCorrectionStore(context: Context) {
 
     companion object {
         const val READER_MODEL = "cubicasa-unet-resnet34-v3"
+        const val STATUS_PRIVATE = "local-private-candidate"
+        const val STATUS_EXPORTED = "consented-exported"
         private const val DIRECTORY = "reader_learning_candidates_v1"
         private const val MAX_LOCAL_CASES = 200
+        private val SAFE_ID = Regex("^correction-[A-Za-z0-9-]{8,}$")
     }
 }

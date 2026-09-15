@@ -1,39 +1,114 @@
 name: Backend Production Smoke
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'render.yaml'
+      - '.github/workflows/backend-production-smoke.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: manzili-hai-production-reader-smoke
+  cancel-in-progress: true
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
     env:
       BACKEND_URL: ${{ secrets.MANZILI_PROD_BACKEND_URL || 'https://manzili-hai-deep-parser.onrender.com' }}
-      BACKEND_TOKEN: ${{ secrets.MANZILI_PROD_API_TOKEN }}
+      READER_URL: https://manzili-hai-reader-v2.onrender.com
     steps:
-      - name: Validate cloud-only production gateway
+      - name: Wait for Reader V3 production deployment
         shell: bash
         run: |
           set -euo pipefail
-          HEALTH="$(curl --fail --silent --show-error --max-time 45 "${BACKEND_URL%/}/health")"
-          echo "health=$HEALTH"
-          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("version")=="0.70.0", d; assert d.get("reader")=="modal-raster2seq-cloud-only", d; assert d.get("local_inference") is False, d' "$HEALTH"
+          success=0
+          for attempt in $(seq 1 45); do
+            HEALTH="$(curl --silent --show-error --max-time 30 "${BACKEND_URL%/}/health" || true)"
+            READER="$(curl --silent --show-error --max-time 30 "${READER_URL%/}/readyz" || true)"
+            echo "attempt=$attempt health=$HEALTH"
+            echo "attempt=$attempt reader=$READER"
+            if python - "$HEALTH" "$READER" "$GITHUB_SHA" <<'PY'
+          import json
+          import sys
 
-      - name: Verify Modal reader readiness
-        shell: bash
-        run: |
-          set -euo pipefail
-          READY="$(curl --fail --silent --show-error --max-time 45 "${BACKEND_URL%/}/readyz")"
-          echo "readyz=$READY"
-          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("ok") is True, d; assert d.get("modal_reader_configured") is True, d; assert d.get("local_inference") is False, d' "$READY"
+          try:
+              health = json.loads(sys.argv[1])
+              reader = json.loads(sys.argv[2])
+          except Exception:
+              raise SystemExit(1)
+          expected_sha = sys.argv[3]
+          assert health.get("version") == "0.73.0", health
+          assert health.get("reader") == "hai-reader-v3", health
+          assert health.get("reader_provider_configured") is True, health
+          assert health.get("local_inference") is False, health
+          deployed = health.get("git_commit")
+          if deployed:
+              assert deployed == expected_sha, (deployed, expected_sha)
+          assert reader.get("ready") is True, reader
+          assert reader.get("reader") == "cubicasa-unet-resnet34-v3", reader
+          assert reader.get("local_segmentation_configured") is True, reader
+          assert reader.get("version") == "3.0.0", reader
+          PY
+            then
+              success=1
+              break
+            fi
+            sleep 20
+          done
+          test "$success" -eq 1 || { echo 'Reader V3 production deployment did not become ready' >&2; exit 1; }
 
-      - name: Verify authenticated cloud parser status
+      - name: Verify public gateway prefers Reader V3
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$BACKEND_TOKEN" || { echo 'MANZILI_PROD_API_TOKEN is required for this manual smoke test' >&2; exit 1; }
-          BODY="$(curl --fail --silent --show-error --max-time 45 -H "Authorization: Bearer $BACKEND_TOKEN" "${BACKEND_URL%/}/v1/parser/status")"
+          BODY="$(curl --fail --silent --show-error --max-time 45 \
+            -H 'X-Manzili-Parser-Client: android-reader-v2' \
+            "${BACKEND_URL%/}/v1/public/parser/status")"
           echo "parser-status=$BODY"
-          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("ready") is True, d; assert d.get("preferred_path")=="modal-raster2seq-cloud-only", d; assert d.get("local_inference") is False, d' "$BODY"
+          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("ready") is True, d; assert d.get("reader")=="hai-reader-v3", d; assert d.get("preferred_path")=="hai-reader-v3", d; assert d.get("reader_configured") is True, d; assert d.get("local_inference") is False, d' "$BODY"
+
+      - name: Run end-to-end CubiCasa parse through production gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64
+          import json
+          import struct
+          import zlib
+
+          w = h = 128
+          rows = []
+          for y in range(h):
+              row = bytearray()
+              for x in range(w):
+                  wall = x in range(18, 24) or x in range(104, 110) or y in range(18, 24) or y in range(104, 110) or x in range(61, 67)
+                  value = 0 if wall else 255
+                  row.extend((value, value, value))
+              rows.append(b'\x00' + bytes(row))
+
+          def chunk(kind, data):
+              return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)
+
+          png = b'\x89PNG\r\n\x1a\n'
+          png += chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))
+          png += chunk(b'IDAT', zlib.compress(b''.join(rows), 9))
+          png += chunk(b'IEND', b'')
+          payload = {"image_base64": base64.b64encode(png).decode('ascii'), "page_index": 0}
+          with open('reader-smoke-payload.json', 'w', encoding='utf-8') as handle:
+              json.dump(payload, handle, separators=(',', ':'))
+          PY
+
+          BODY="$(curl --fail --silent --show-error --max-time 330 \
+            -H 'X-Manzili-Parser-Client: android-reader-v2' \
+            -H 'Content-Type: application/json' \
+            --data-binary @reader-smoke-payload.json \
+            "${BACKEND_URL%/}/v1/public/parse-floorplan")"
+          echo "parse-response=${BODY:0:1200}"
+          python -c 'import json,sys; d=json.loads(sys.argv[1]); assert d.get("model_used")=="cubicasa-unet-resnet34-v3", d; assert d.get("reader_path")=="hai-reader-v3", d; assert d.get("local_inference") is False, d; assert isinstance(d.get("walls"), list), d; assert isinstance(d.get("rooms"), list), d; assert isinstance(d.get("openings"), list), d' "$BODY"

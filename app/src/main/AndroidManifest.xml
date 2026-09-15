@@ -26,6 +26,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ReaderLearningActivity"
+            android:exported="false"
+            android:screenOrientation="unspecified" />
+
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
