@@ -12,7 +12,7 @@ services:
       - key: READER_PROVIDER_TOKEN
         sync: false
       - key: READER_PROVIDER_NAME
-        value: hai-hybrid-reader-v2
+        value: hai-reader-v3
       - key: MODAL_READER_URL
         sync: false
       - key: MODAL_READER_TOKEN
@@ -34,6 +34,8 @@ services:
       - key: RENDER_WORKER_TOKEN
         sync: false
 
+  # Keep the existing Render service name stable so its production URL does not change.
+  # The application served by this service is Reader V3.
   - type: web
     name: manzili-hai-reader-v2
     runtime: docker
@@ -43,14 +45,6 @@ services:
     autoDeployTrigger: commit
     envVars:
       - key: READER_SERVICE_TOKEN
-        sync: false
-      - key: LEGACY_EVIDENCE_URL
-        value: https://manzili-hai-deep-parser.onrender.com/v1/internal/legacy-floorplan-evidence
-      - key: LEGACY_EVIDENCE_TOKEN
-        sync: false
-      - key: ROBOFLOW_API_KEY
-        sync: false
-      - key: ROBOFLOW_MODEL_IDS
         sync: false
       - key: FLOORPLAN_TILED_INFERENCE
         value: "true"
