@@ -59,4 +59,34 @@ class ReaderLearningDatasetExporterTest {
             0.0001
         )
     }
+
+    @Test
+    fun trainingReferencePreservesGeometryNeededForMasks() {
+        val plan = FloorPlan(
+            widthM = 12.0,
+            heightM = 20.0,
+            rooms = listOf(
+                Room(
+                    id = "r1",
+                    name = "غرفة",
+                    type = "bedroom",
+                    x = 10f,
+                    y = 10f,
+                    width = 30f,
+                    height = 25f,
+                    areaM2 = 18.0,
+                    polygon = listOf(PlanPoint(10f, 10f), PlanPoint(40f, 10f), PlanPoint(40f, 35f))
+                )
+            ),
+            walls = listOf(Wall("w1", PlanPoint(5f, 20f), PlanPoint(95f, 20f), 17.5, "external")),
+            openings = listOf(Opening("o1", "door", 50f, 20f, 8f, 15f, "w1"))
+        )
+
+        val reference = ReaderLearningDatasetExporter.trainingReference(plan)
+        assertEquals("percent-0-100", reference.getString("coordinate_space"))
+        assertEquals(17.5, reference.getJSONArray("walls").getJSONObject(0).getDouble("thickness_cm"), 0.0001)
+        assertEquals(15.0, reference.getJSONArray("openings").getJSONObject(0).getDouble("rotation_deg"), 0.0001)
+        assertEquals("w1", reference.getJSONArray("openings").getJSONObject(0).getString("wall_id"))
+        assertEquals(3, reference.getJSONArray("rooms").getJSONObject(0).getJSONArray("polygon").length())
+    }
 }
