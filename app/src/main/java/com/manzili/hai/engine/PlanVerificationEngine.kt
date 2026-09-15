@@ -6,9 +6,11 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 object PlanVerificationEngine {
+    private const val MIN_APPROVAL_CONFIDENCE = 80
+
     data class Issue(val level: String, val title: String, val detail: String, val targetKind: String? = null, val targetId: String? = null)
     data class Report(val plan: FloorPlan, val issues: List<Issue>, val readingConfidence: Int, val scaleConfidence: Int, val confirmedDimensions: Int) {
-        val blocking: Boolean get() = issues.any { it.level == "error" }
+        val blocking: Boolean get() = issues.any { it.level == "error" } || readingConfidence < MIN_APPROVAL_CONFIDENCE
     }
 
     fun inspect(input: FloorPlan): Report {
@@ -36,7 +38,7 @@ object PlanVerificationEngine {
         normalized.rooms.filter { it.confidence in 1..69 }.forEach { issues += Issue("warning", "غرفة تحتاج تأكيد", "«${it.name}» ثقة القراءة ${it.confidence}%.", "room", it.id) }
         normalized.walls.filter { it.confidence in 1..59 }.take(8).forEach { issues += Issue("warning", "جدار غير مؤكد", "الجدار ${it.id} ثقة القراءة ${it.confidence}%.", "wall", it.id) }
         normalized.openings.filter { it.confidence in 1..64 }.take(8).forEach { issues += Issue("warning", "فتحة تحتاج تأكيد", "${openingLabel(it.type)} ${it.id} ثقة القراءة ${it.confidence}%.", "opening", it.id) }
-        if (uncalibratedCloud && (normalized.rooms + emptyList()).isNotEmpty() &&
+        if (uncalibratedCloud && normalized.rooms.isNotEmpty() &&
             (normalized.rooms.map { it.confidence } + normalized.walls.map { it.confidence } + normalized.openings.map { it.confidence }).none { it > 0 }
         ) {
             issues += Issue(
@@ -52,6 +54,14 @@ object PlanVerificationEngine {
         else if (scale < 65) issues += Issue("warning", "المقياس يحتاج مراجعة", "الأبعاد الكلية موجودة لكن أدلة الأبعاد المقروءة غير كافية لتأكيد المقياس.")
 
         val reading = calculateReadingConfidence(normalized, scale, polygonReport.errors.size)
+        if (reading < MIN_APPROVAL_CONFIDENCE) {
+            issues += Issue(
+                "error",
+                "القراءة غير كافية للاعتماد",
+                "الثقة الحالية $reading%. يلزم الوصول إلى $MIN_APPROVAL_CONFIDENCE% على الأقل بعد تصحيح الهندسة أو تأكيد الأبعاد قبل السماح بالمتابعة."
+            )
+        }
+
         val plan = normalized.copy(scaleConfidence = scale)
         val confirmed = plan.dimensions.count { isIndependentDimension(it) && it.confidence >= 70 }
         return Report(plan, issues.distinctBy { it.level + it.title + it.detail }, reading, scale, confirmed)
@@ -81,7 +91,7 @@ object PlanVerificationEngine {
         val confirmedDimensions = plan.dimensions.count { isIndependentDimension(it) && it.confidence >= 70 }
         val supportedWalls = plan.walls.count { wall ->
             val kind = wall.kind.lowercase()
-            kind.contains("consensus") || kind.contains("raster") || kind.contains("remote") || wall.id.startsWith("rv2-")
+            kind.contains("consensus") || kind.contains("raster") || kind.contains("remote") || kind.contains("source") || wall.id.startsWith("rv2-")
         }
         val inferredRooms = plan.rooms.count { it.id.startsWith("topology-room-") || it.type.contains("topology", true) }
         val manualEvidence = plan.dimensions.count { isUserConfirmedDimension(it) }
@@ -102,7 +112,6 @@ object PlanVerificationEngine {
         val evidenceScore = (wallSupportScore * .50 + numberScore * .20 + dimensionScore * .30).roundToInt()
 
         var score = if (uncalibratedCloud) {
-            // A model value of zero means "not calibrated" in the Modal contract, not "0% correct".
             (topologyScore * .48 + evidenceScore * .34 + scale * .18).roundToInt()
         } else {
             (elementScore * .20 + topologyScore * .34 + evidenceScore * .30 + scale * .16).roundToInt()

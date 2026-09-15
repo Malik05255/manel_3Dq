@@ -1,8 +1,8 @@
-name: Backend Reader V3 Validation
+name: Backend Source-First Reader V4 Validation
 
 on:
   push:
-    branches: [ main, 'codex/**', 'feat/**', 'fix/**' ]
+    branches: [ main, 'codex/**', 'feat/**', 'fix/**', 'hai/**' ]
     paths:
       - 'backend/app/benchmark_metrics.py'
       - 'backend/app/blue_detail_vectorizer.py'
@@ -15,8 +15,8 @@ on:
       - 'backend/app/parser_v3.py'
       - 'backend/app/parser_accuracy.py'
       - 'backend/app/parser_quality.py'
-      - 'backend/app/roboflow_parser.py'
       - 'backend/app/reader_main.py'
+      - 'backend/app/source_first_reader.py'
       - 'backend/app/source_vectorizer.py'
       - 'backend/app/wall_detail_recovery.py'
       - 'backend/app/wall_support.py'
@@ -25,6 +25,7 @@ on:
       - 'backend/tests/test_blue_wall_cleanup.py'
       - 'backend/tests/test_cubicasa_runtime_config.py'
       - 'backend/tests/test_ocr_reader.py'
+      - 'backend/tests/test_source_first_reader.py'
       - 'backend/tests/test_wall_support.py'
       - 'backend/tests/test_benchmark_metrics.py'
       - 'backend/requirements-reader-v3.txt'
@@ -47,8 +48,8 @@ on:
       - 'backend/app/parser_v3.py'
       - 'backend/app/parser_accuracy.py'
       - 'backend/app/parser_quality.py'
-      - 'backend/app/roboflow_parser.py'
       - 'backend/app/reader_main.py'
+      - 'backend/app/source_first_reader.py'
       - 'backend/app/source_vectorizer.py'
       - 'backend/app/wall_detail_recovery.py'
       - 'backend/app/wall_support.py'
@@ -57,6 +58,7 @@ on:
       - 'backend/tests/test_blue_wall_cleanup.py'
       - 'backend/tests/test_cubicasa_runtime_config.py'
       - 'backend/tests/test_ocr_reader.py'
+      - 'backend/tests/test_source_first_reader.py'
       - 'backend/tests/test_wall_support.py'
       - 'backend/tests/test_benchmark_metrics.py'
       - 'backend/requirements-reader-v3.txt'
@@ -68,7 +70,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: manzili-hai-reader-v3-${{ github.ref }}
+  group: manzili-hai-reader-v4-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -173,7 +175,7 @@ jobs:
           print('CubiCasa FP32 tiled low-memory inference ok', prediction.shape, 'current_rss_kib=', after['rss_kib'], 'historical_peak_kib=', peak_kib, after)
           PY
 
-      - name: Verify Reader V3 service uses remote OCR contract
+      - name: Verify Source-First Reader V4 service uses remote OCR contract
         env:
           FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
           OCR_PROVIDER_URL: https://ocr.invalid
@@ -185,8 +187,8 @@ jobs:
           from app.cubicasa_model import load_cubicasa_runtime, model_status
 
           cloud_ocr_reader.cache_clear()
-          assert app.title == 'Manzili HAI Reader V3'
-          assert app.version == '3.0.0'
+          assert app.title == 'Manzili HAI Source-First Reader'
+          assert app.version == '4.0.0'
           assert any(getattr(route, 'path', '') == '/v2/parse' for route in app.routes)
           assert any(getattr(route, 'path', '') == '/readyz' for route in app.routes)
           assert cloud_ocr_engine_name() == 'remote-tesseract-ara-eng'
@@ -194,29 +196,30 @@ jobs:
           status = model_status()
           assert status['image_size'] == 352
           assert status['dtype'] == 'float32'
-          print('Reader V3 service contract ok; CubiCasa low-memory + remote Arabic OCR')
+          print('Source-First Reader V4 service contract ok; source geometry + CubiCasa semantics + remote Arabic OCR')
           PY
 
-      - name: Test low-memory config, geometry and benchmark scoring gates
-        run: PYTHONPATH=. pytest -q tests/test_cubicasa_runtime_config.py tests/test_blue_wall_cleanup.py tests/test_wall_support.py tests/test_benchmark_metrics.py
+      - name: Test low-memory config, source-first geometry and benchmark scoring gates
+        run: PYTHONPATH=. pytest -q tests/test_cubicasa_runtime_config.py tests/test_blue_wall_cleanup.py tests/test_wall_support.py tests/test_source_first_reader.py tests/test_benchmark_metrics.py
 
-      - name: Run deterministic Reader V3 geometry smoke test
+      - name: Run deterministic source-first geometry smoke test
         run: |
           python - <<'PY'
           import cv2
           import numpy as np
-          from app.parser_v3 import _axis_centerlines
+          from app.source_vectorizer import vectorize_source_walls
 
-          mask = np.zeros((600, 800), dtype=np.uint8)
-          cv2.line(mask, (80, 100), (720, 100), 255, 14)
-          cv2.line(mask, (80, 500), (720, 500), 255, 14)
-          cv2.line(mask, (80, 100), (80, 500), 255, 14)
-          cv2.line(mask, (720, 100), (720, 500), 255, 14)
-          cv2.line(mask, (400, 100), (400, 500), 255, 14)
+          image = np.full((600, 800, 3), 255, dtype=np.uint8)
+          blue = (190, 105, 55)
+          cv2.rectangle(image, (80, 100), (720, 500), blue, 14)
+          cv2.line(image, (400, 100), (400, 300), blue, 14)
+          cv2.line(image, (400, 365), (400, 500), blue, 14)
 
-          walls = _axis_centerlines(mask)
-          assert len(walls) >= 4, walls
+          walls, meta = vectorize_source_walls(image)
+          assert meta.get('mode') == 'blue-source', meta
+          assert meta.get('authoritative') is True, meta
+          assert len(walls) >= 5, walls
           assert all('start' in wall and 'end' in wall for wall in walls)
-          assert all(str(wall.get('kind', '')).startswith('cubicasa-') for wall in walls)
-          print('Reader V3 geometry smoke ok; walls=', len(walls))
+          assert all('source' in str(wall.get('kind', '')) for wall in walls)
+          print('Source-First Reader V4 geometry smoke ok; walls=', len(walls), meta)
           PY

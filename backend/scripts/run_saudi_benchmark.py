@@ -78,7 +78,7 @@ def main() -> int:
     reference_root = pathlib.Path(reference_root_raw) if reference_root_raw else None
 
     policy = _load_json(policy_path)
-    expected_model = str(policy.get("expected_model_used", "cubicasa-unet-resnet34-v3"))
+    expected_model = str(policy.get("expected_model_used", "hai-source-first-v4+cubicasa-openings+ocr"))
     min_test_cases = int(policy.get("minimum_test_cases_for_claims", 30))
     thresholds = {key: float(value) for key, value in dict(policy.get("thresholds", {})).items()}
     weights = {key: float(value) for key, value in dict(policy.get("weights", {})).items()}
@@ -88,7 +88,7 @@ def main() -> int:
 
     # Do not import the heavy production reader unless there is real licensed data to execute.
     if rows:
-        from app.parser_v3 import parse_floorplan
+        from app.source_first_reader import parse_floorplan
 
         for row in rows:
             sample_id = str(row.get("id", "unknown"))
@@ -167,8 +167,8 @@ def main() -> int:
         "results": results,
         "errors": errors,
         "claim_policy": (
-            "Accuracy claims are enabled only when the locked production Reader V3 executes the required number "
-            "of licensed, de-identified test cases and every quality threshold passes."
+            "Accuracy claims are enabled only when the locked production Source-First Reader V4 executes the required number "
+            "of licensed, de-identified test cases and every 95% quality threshold passes."
         ),
     }
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

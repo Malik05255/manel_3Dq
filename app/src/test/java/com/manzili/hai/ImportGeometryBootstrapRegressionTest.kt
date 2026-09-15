@@ -9,13 +9,12 @@ import com.manzili.hai.model.FloorPlan
 import com.manzili.hai.model.PlanPoint
 import com.manzili.hai.model.Wall
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ImportGeometryBootstrapRegressionTest {
     @Test
-    fun strongParserEvidenceSeedsEmptyImportedPlan() {
+    fun strongParserEvidenceSeedsEmptyImportedPlanButStillRequiresReview() {
         val evidence = listOf(
             Wall("r1", PlanPoint(10f, 10f), PlanPoint(90f, 10f), kind = "remote-segmentation-evidence", confidence = 90),
             Wall("r2", PlanPoint(90f, 10f), PlanPoint(90f, 90f), kind = "remote-segmentation-evidence", confidence = 90),
@@ -24,10 +23,14 @@ class ImportGeometryBootstrapRegressionTest {
         )
 
         val result = FloorplanParserEngine.refine(FloorPlan(), evidence).plan
+        val report = PlanVerificationEngine.inspect(result)
 
         assertEquals(4, result.walls.size)
         assertTrue(result.uncertainties.any { it.contains("قابلة للمراجعة") })
-        assertFalse(PlanVerificationEngine.inspect(result).blocking)
+        // Four strong boundary walls are enough to review, but not enough to approve.
+        // Rooms/scale/openings still need to be recovered or confirmed before 3D.
+        assertTrue(report.blocking)
+        assertTrue(report.issues.any { it.title.contains("القراءة غير كافية") })
     }
 
     @Test

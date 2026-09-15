@@ -1,12 +1,12 @@
 {
-  "expected_model_used": "cubicasa-unet-resnet34-v3",
+  "expected_model_used": "hai-source-first-v4+cubicasa-openings+ocr",
   "minimum_test_cases_for_claims": 30,
   "thresholds": {
     "wall_f1": 0.95,
     "room_f1": 0.95,
-    "opening_f1": 0.90,
+    "opening_f1": 0.95,
     "dimension_accuracy": 0.95,
-    "overall": 0.93
+    "overall": 0.95
   },
   "weights": {
     "wall_f1": 0.40,

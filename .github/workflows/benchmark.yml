@@ -1,8 +1,8 @@
-name: Saudi Reader V3 Benchmark
+name: Saudi Source-First Reader V4 Benchmark
 
 on:
   push:
-    branches: [main, 'codex/**', 'fix/**']
+    branches: [main, 'codex/**', 'fix/**', 'hai/**']
     paths:
       - 'benchmarks/saudi-floorplans/**'
       - 'backend/scripts/validate_saudi_benchmark.py'
@@ -10,12 +10,17 @@ on:
       - 'backend/app/benchmark_metrics.py'
       - 'backend/app/parser.py'
       - 'backend/app/parser_v3.py'
+      - 'backend/app/source_first_reader.py'
+      - 'backend/app/source_vectorizer.py'
+      - 'backend/app/blue_detail_vectorizer.py'
+      - 'backend/app/blue_wall_cleanup.py'
       - 'backend/app/parser_accuracy.py'
       - 'backend/app/parser_quality.py'
       - 'backend/app/cubicasa_model.py'
       - 'backend/app/ocr_reader.py'
       - 'backend/app/reader_main.py'
       - 'backend/tests/test_benchmark_metrics.py'
+      - 'backend/tests/test_source_first_reader.py'
       - '.github/workflows/benchmark.yml'
   pull_request:
     branches: [main]
@@ -25,17 +30,22 @@ on:
       - 'backend/app/benchmark_metrics.py'
       - 'backend/app/parser.py'
       - 'backend/app/parser_v3.py'
+      - 'backend/app/source_first_reader.py'
+      - 'backend/app/source_vectorizer.py'
+      - 'backend/app/blue_detail_vectorizer.py'
+      - 'backend/app/blue_wall_cleanup.py'
       - 'backend/app/parser_accuracy.py'
       - 'backend/app/parser_quality.py'
       - 'backend/app/cubicasa_model.py'
       - 'backend/app/ocr_reader.py'
       - 'backend/app/reader_main.py'
       - 'backend/tests/test_benchmark_metrics.py'
+      - 'backend/tests/test_source_first_reader.py'
       - '.github/workflows/benchmark.yml'
   workflow_dispatch:
 
 concurrency:
-  group: manzili-hai-saudi-reader-v3-${{ github.ref }}
+  group: manzili-hai-saudi-reader-v4-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -62,12 +72,12 @@ jobs:
       - name: Validate rights, de-identification and dataset splits
         run: python backend/scripts/validate_saudi_benchmark.py
 
-      - name: Test benchmark scoring contract
+      - name: Test benchmark and source-first scoring contracts
         run: |
-          pip install pytest==8.4.1
-          PYTHONPATH=backend pytest -q backend/tests/test_benchmark_metrics.py
+          pip install pytest==8.4.1 numpy==2.2.6 opencv-python-headless==4.12.0.88
+          PYTHONPATH=backend pytest -q backend/tests/test_benchmark_metrics.py backend/tests/test_source_first_reader.py
 
-      - name: Install production Reader V3 CPU stack
+      - name: Install production Source-First Reader V4 CPU stack
         run: pip install -r backend/requirements-ml-cpu.txt
 
       - name: Fetch and verify locked CubiCasa weights
@@ -75,7 +85,7 @@ jobs:
           FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
         run: python backend/scripts/fetch_floorplan_model.py
 
-      - name: Execute licensed Saudi cases against production Reader V3
+      - name: Execute licensed Saudi cases against production Source-First Reader V4
         env:
           FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
         run: python backend/scripts/run_saudi_benchmark.py
@@ -96,19 +106,19 @@ jobs:
           print(f"test_cases={report.get('executed_test_cases')}/{report.get('minimum_test_cases_for_claims')}")
           print(f"test_means={report.get('test_means')}")
           if status == 'NO_DATA':
-              print('::warning::No licensed Saudi benchmark data. Real-world accuracy claims are disabled.')
+              print('::warning::No licensed Saudi benchmark data. Real-world 95% accuracy claims are disabled.')
           elif status == 'INSUFFICIENT_TEST_CASES':
-              print('::warning::Benchmark data exists, but there are not enough held-out test cases for an accuracy claim.')
+              print('::warning::Benchmark data exists, but there are not enough held-out test cases for the 95% accuracy claim.')
           elif status == 'FAIL':
-              raise SystemExit(f"Reader V3 accuracy gate failed: {report.get('gate_failures')}")
+              raise SystemExit(f"Source-First Reader V4 95% accuracy gate failed: {report.get('gate_failures')}")
           elif status == 'EXECUTION_ERROR':
-              raise SystemExit(f"Reader V3 benchmark execution failed: {report.get('errors')}")
+              raise SystemExit(f"Source-First Reader V4 benchmark execution failed: {report.get('errors')}")
           PY
 
       - name: Upload benchmark reports
         uses: actions/upload-artifact@v4
         with:
-          name: saudi-reader-v3-benchmark-reports
+          name: saudi-source-first-reader-v4-benchmark-reports
           path: |
             benchmark-contract-report.json
             benchmark-execution-report.json

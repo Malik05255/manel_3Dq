@@ -30,20 +30,23 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install cloud gateway dependencies
-        run: pip install -r backend/requirements-gateway.txt pytest==8.4.1
+      - name: Install cloud gateway and CV test dependencies
+        run: pip install -r backend/requirements-gateway.txt pytest==8.4.1 numpy==2.2.6 opencv-python-headless==4.12.0.88
 
-      - name: Compile cloud, Reader V3 and OCR surfaces
+      - name: Compile cloud, Source-First Reader V4 and OCR surfaces
         run: |
           python -m compileall \
             backend/app/cloud_gateway.py \
             backend/app/cloud_public_gateway.py \
             backend/app/reader_provider.py \
             backend/app/reader_main.py \
+            backend/app/source_first_reader.py \
+            backend/app/source_vectorizer.py \
             backend/app/ocr_main.py \
             backend/app/ocr_reader.py \
             backend/app/parser_v3.py \
             backend/app/benchmark_metrics.py \
+            backend/scripts/run_saudi_benchmark.py \
             backend/scripts/fetch_floorplan_model.py \
             backend/scripts/install_portable_tesseract.py \
             backend/scripts/ingest_reader_learning_bundle.py \
@@ -54,6 +57,9 @@ jobs:
           PYTHONPATH=backend pytest -q \
             backend/tests/test_reader_provider.py \
             backend/tests/test_gateway_reader_priority.py
+
+      - name: Run Source-First geometry regressions
+        run: PYTHONPATH=backend pytest -q backend/tests/test_source_first_reader.py
 
       - name: Run benchmark metric regressions
         run: PYTHONPATH=backend pytest -q backend/tests/test_benchmark_metrics.py
@@ -80,10 +86,10 @@ jobs:
           state = _reader_state()
           assert state['provider_ready'] is True, state
           assert state['preferred'] == 'hai-reader-v3', state
-          print('gateway prefers Reader V3', state)
+          print('gateway prefers Reader service', state)
           PY
 
-      - name: Validate Reader V3 and Arabic OCR deployment blueprint
+      - name: Validate Source-First Reader V4 and Arabic OCR deployment blueprint
         shell: bash
         run: |
           set -euo pipefail
@@ -120,7 +126,7 @@ jobs:
           grep -q 'download.pytorch.org/whl/cpu' backend/requirements-ml-cpu.txt
           ! grep -q '^-r requirements.txt$' backend/requirements-ml-cpu.txt
 
-      - name: Verify portable Docker Reader V3 image
+      - name: Verify portable Docker Reader image
         shell: bash
         run: |
           set -euo pipefail
@@ -134,7 +140,7 @@ jobs:
           grep -q 'safetensors==0.8.0' backend/requirements.txt
           grep -q '/opt/manzili/models/floorplan/best.safetensors' backend/scripts/fetch_floorplan_model.py
 
-      - name: Verify Reader V3 and OCR contracts
+      - name: Verify Source-First Reader V4 and OCR contracts
         shell: bash
         run: |
           set -euo pipefail
@@ -143,14 +149,16 @@ jobs:
           grep -q 'request_reader' backend/app/cloud_gateway.py
           grep -q 'Reader V3 was temporarily unavailable; Modal fallback was used' backend/app/cloud_gateway.py
           grep -q 'READER_PROVIDER_URL' backend/app/reader_provider.py
-          grep -q 'from .parser_v3 import parse_floorplan' backend/app/reader_main.py
-          grep -q 'Manzili HAI Reader V3' backend/app/reader_main.py
-          grep -q 'cubicasa-unet-resnet34-v3' backend/app/reader_main.py
+          grep -q 'from .source_first_reader import parse_floorplan' backend/app/reader_main.py
+          grep -q 'Manzili HAI Source-First Reader' backend/app/reader_main.py
+          grep -q 'hai-source-first-v4' backend/app/reader_main.py
           grep -q 'CubiCasa segmentation model is not loaded' backend/app/reader_main.py
+          grep -q 'Source pixels are the geometry authority' backend/app/source_first_reader.py
+          grep -q 'source_95_gate' backend/app/source_first_reader.py
           grep -q 'Manzili HAI Arabic OCR' backend/app/ocr_main.py
           grep -q '/v1/ocr' backend/app/ocr_main.py
           grep -q 'RemoteOCRReaderAdapter' backend/app/ocr_reader.py
           grep -q 'remote-tesseract-ara-eng' backend/app/ocr_reader.py
-          grep -q 'app.parser_v3 import parse_floorplan' backend/scripts/run_saudi_benchmark.py
-          grep -q 'cubicasa-unet-resnet34-v3' benchmarks/saudi-floorplans/quality-gate.json
+          grep -q 'app.source_first_reader import parse_floorplan' backend/scripts/run_saudi_benchmark.py
+          grep -q 'hai-source-first-v4+cubicasa-openings+ocr' benchmarks/saudi-floorplans/quality-gate.json
           grep -q 'user-correction bundles are accepted as train only' backend/scripts/ingest_reader_learning_bundle.py
