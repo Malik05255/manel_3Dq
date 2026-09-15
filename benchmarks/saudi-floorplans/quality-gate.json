@@ -1,0 +1,17 @@
+{
+  "expected_model_used": "cubicasa-unet-resnet34-v3",
+  "minimum_test_cases_for_claims": 30,
+  "thresholds": {
+    "wall_f1": 0.95,
+    "room_f1": 0.95,
+    "opening_f1": 0.90,
+    "dimension_accuracy": 0.95,
+    "overall": 0.93
+  },
+  "weights": {
+    "wall_f1": 0.40,
+    "room_f1": 0.25,
+    "opening_f1": 0.20,
+    "dimension_accuracy": 0.15
+  }
+}
