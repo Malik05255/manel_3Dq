@@ -22,7 +22,7 @@ jobs:
     env:
       BACKEND_URL: ${{ secrets.MANZILI_PROD_BACKEND_URL || 'https://manzili-hai-deep-parser.onrender.com' }}
       READER_URL: https://manzili-hai-reader-v3-final.onrender.com
-      OCR_URL: https://manzili-hai-ocr-ar-en.onrender.com
+      OCR_URL: https://manzili-hai-ocr-ar-en-v2.onrender.com
     steps:
       - name: Wait for Reader V3 and Arabic OCR production deployment
         shell: bash
