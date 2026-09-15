@@ -5,6 +5,8 @@ on:
     branches: [ main, 'codex/**', 'feat/**', 'fix/**' ]
     paths:
       - 'backend/app/benchmark_metrics.py'
+      - 'backend/app/blue_detail_vectorizer.py'
+      - 'backend/app/blue_wall_cleanup.py'
       - 'backend/app/cubicasa_model.py'
       - 'backend/app/ocr_main.py'
       - 'backend/app/ocr_reader.py'
@@ -16,9 +18,11 @@ on:
       - 'backend/app/roboflow_parser.py'
       - 'backend/app/reader_main.py'
       - 'backend/app/source_vectorizer.py'
+      - 'backend/app/wall_detail_recovery.py'
       - 'backend/app/wall_support.py'
       - 'backend/scripts/fetch_floorplan_model.py'
       - 'backend/scripts/install_portable_tesseract.py'
+      - 'backend/tests/test_blue_wall_cleanup.py'
       - 'backend/tests/test_cubicasa_runtime_config.py'
       - 'backend/tests/test_ocr_reader.py'
       - 'backend/tests/test_wall_support.py'
@@ -33,6 +37,8 @@ on:
     branches: [ main ]
     paths:
       - 'backend/app/benchmark_metrics.py'
+      - 'backend/app/blue_detail_vectorizer.py'
+      - 'backend/app/blue_wall_cleanup.py'
       - 'backend/app/cubicasa_model.py'
       - 'backend/app/ocr_main.py'
       - 'backend/app/ocr_reader.py'
@@ -44,9 +50,11 @@ on:
       - 'backend/app/roboflow_parser.py'
       - 'backend/app/reader_main.py'
       - 'backend/app/source_vectorizer.py'
+      - 'backend/app/wall_detail_recovery.py'
       - 'backend/app/wall_support.py'
       - 'backend/scripts/fetch_floorplan_model.py'
       - 'backend/scripts/install_portable_tesseract.py'
+      - 'backend/tests/test_blue_wall_cleanup.py'
       - 'backend/tests/test_cubicasa_runtime_config.py'
       - 'backend/tests/test_ocr_reader.py'
       - 'backend/tests/test_wall_support.py'
@@ -69,7 +77,7 @@ jobs:
     env:
       FLOORPLAN_LOW_MEMORY: "true"
       FLOORPLAN_IMAGE_SIZE: "352"
-      FLOORPLAN_DTYPE: "float32"
+      FLOORPLAN_DTYPE: float32
       FLOORPLAN_TORCH_THREADS: "1"
       FLOORPLAN_TILED_INFERENCE: "true"
       FLOORPLAN_TILE_OVERLAP: "0.30"
@@ -190,7 +198,7 @@ jobs:
           PY
 
       - name: Test low-memory config, geometry and benchmark scoring gates
-        run: PYTHONPATH=. pytest -q tests/test_cubicasa_runtime_config.py tests/test_wall_support.py tests/test_benchmark_metrics.py
+        run: PYTHONPATH=. pytest -q tests/test_cubicasa_runtime_config.py tests/test_blue_wall_cleanup.py tests/test_wall_support.py tests/test_benchmark_metrics.py
 
       - name: Run deterministic Reader V3 geometry smoke test
         run: |
