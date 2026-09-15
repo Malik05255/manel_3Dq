@@ -143,54 +143,79 @@ fun VerifiedImportScreenV3(
                                     "HAI Vision ${when { !vision.available -> "غير مفعّل"; visionPlan != null -> "✓"; else -> "✗" }}",
                                     "OCR-Latin ${if (ocr != null) "✓" else "✗"}",
                                     "Raster ${if (rasterResult != null) "✓" else "✗"}",
-                                    "Deep Parser ${when { !remote.available -> "غير مفعّل"; remoteResult != null -> "✓"; else -> "✗" }}"
+                                    "Source Reader ${when { !remote.available -> "غير مفعّل"; remoteResult != null -> "✓"; else -> "✗" }}"
                                 ).joinToString(" • ")
 
                                 val failures = buildList {
                                     visionAttempt.exceptionOrNull()?.message?.let { add("HAI Vision فشل: ${it.take(120)}") }
                                     ocrAttempt.exceptionOrNull()?.message?.let { add("OCR المحلي فشل: ${it.take(120)}") }
                                     rasterAttempt.exceptionOrNull()?.message?.let { add("Raster فشل: ${it.take(120)}") }
-                                    remoteAttempt.exceptionOrNull()?.message?.let { add("Deep Parser فشل: ${it.take(120)}") }
+                                    remoteAttempt.exceptionOrNull()?.message?.let { add("Source Reader فشل: ${it.take(120)}") }
                                 }
 
                                 if (visionPlan == null && rasterResult == null && remoteResult == null) {
                                     error("فشلت جميع قنوات استخراج الهندسة. راجع الاتصال أو جرّب ملفًا أوضح.")
                                 }
 
-                                val base = visionPlan ?: FloorPlan(
-                                    title = "مخطط مستورد",
-                                    sourceSummary = "تحليل استيراد متعدد المسارات يتبعه دائمًا فحص بصري ومراجعة بشرية قبل الاعتماد و3D.",
-                                    observations = listOf("تم التحليل دون HAI Vision؛ النتيجة تعتمد على الأدلة المحلية/Deep Parser المتاحة."),
-                                    uncertainties = emptyList()
-                                )
-
                                 val dims = DimensionEvidenceEngine.extractSpatial(ocr?.lines.orEmpty() + remoteResult?.ocrLines.orEmpty())
-                                val enriched = base.copy(
-                                    dimensions = (base.dimensions + dims).distinctBy { "${it.pageIndex}:${it.id}:${"%.3f".format(it.valueM)}" },
-                                    observations = (base.observations + listOfNotNull(
-                                        "حالة محركات التحليل: $channelStatus",
-                                        projectType?.let { "نوع المشروع المحدد قبل التحليل: ${it.label}." },
-                                        ocr?.let { "OCR محلي (Latin): ${it.pagesAnalyzed} صفحة${if (it.truncated) " (محدود)" else ""}." },
-                                        rasterResult?.notes?.joinToString(" "),
-                                        remoteResult?.let { "Deep Parser: ${it.pages.size} صفحة • ${it.modelUsed} • متوسط ${it.confidence}%." },
-                                        remoteResult?.warnings?.takeIf { it.isNotEmpty() }?.joinToString(" ")
-                                    )).distinct(),
-                                    uncertainties = (base.uncertainties + failures + buildList {
-                                        if (!vision.available || visionPlan == null) add("قراءة النص العربي ليست مضمونة محليًا لأن OCR المحلي الحالي Latin؛ تحقق يدويًا من أسماء الغرف والأبعاد العربية.")
-                                        if (remote.available && remoteResult == null) add("Deep Parser كان مفعّلًا لكنه لم يشارك في النتيجة؛ لا تعتبر النتيجة مكافئة لتحليل Deep Parser ناجح.")
-                                    }).distinct()
-                                )
+                                val sourceFirstPage = remoteResult?.pages?.firstOrNull {
+                                    it.modelUsed.contains("source-first-v4", ignoreCase = true) && it.walls.size >= 5
+                                }
 
-                                val deepApplied = MultiPageEvidenceFusionEngine.apply(enriched, remoteResult?.pages.orEmpty())
-                                val locallyRefined = FloorplanParserEngine.refine(deepApplied, rasterResult?.primaryWalls.orEmpty()).plan
-                                val typed = projectType?.let { SaudiProjectTypeEngine.apply(locallyRefined, it) } ?: locallyRefined
+                                val extracted = if (sourceFirstPage != null && remoteResult != null) {
+                                    // Reader V4 is intentionally the sole geometry authority here.
+                                    // Local raster/Vision may contribute text or diagnostics, but their
+                                    // wall coordinates must never be merged back over source pixels.
+                                    val cloudPlan = remoteResult.toFloorPlan("مخطط مستورد")
+                                    cloudPlan.copy(
+                                        dimensions = (cloudPlan.dimensions + dims).distinctBy {
+                                            "${it.pageIndex}:${it.id}:${"%.3f".format(it.valueM)}"
+                                        },
+                                        observations = (cloudPlan.observations + listOfNotNull(
+                                            "حالة محركات التحليل: $channelStatus",
+                                            "الهندسة مصدرها المباشر هو بكسلات المخطط؛ نتائج Vision/Raster لا تستبدل الجدران.",
+                                            projectType?.let { "نوع المشروع المحدد قبل التحليل: ${it.label}." },
+                                            ocr?.let { "OCR محلي مساعد: ${it.pagesAnalyzed} صفحة${if (it.truncated) " (محدود)" else ""}." },
+                                            "Source Reader: ${sourceFirstPage.walls.size} جدار • ترابط ${sourceFirstPage.wallTopology}% • ثقة هندسية ${sourceFirstPage.geometryConfidence}%."
+                                        )).distinct(),
+                                        uncertainties = (cloudPlan.uncertainties + failures).distinct()
+                                    )
+                                } else {
+                                    // Compatibility fallback for old reader deployments only.
+                                    val base = visionPlan ?: FloorPlan(
+                                        title = "مخطط مستورد",
+                                        sourceSummary = "تحليل استيراد احتياطي متعدد المسارات يتبعه فحص بصري قبل الاعتماد و3D.",
+                                        observations = listOf("تعذر الحصول على هندسة Source-First موثوقة؛ تم تشغيل المسار الاحتياطي."),
+                                        uncertainties = emptyList()
+                                    )
+
+                                    val enriched = base.copy(
+                                        dimensions = (base.dimensions + dims).distinctBy {
+                                            "${it.pageIndex}:${it.id}:${"%.3f".format(it.valueM)}"
+                                        },
+                                        observations = (base.observations + listOfNotNull(
+                                            "حالة محركات التحليل: $channelStatus",
+                                            projectType?.let { "نوع المشروع المحدد قبل التحليل: ${it.label}." },
+                                            ocr?.let { "OCR محلي: ${it.pagesAnalyzed} صفحة${if (it.truncated) " (محدود)" else ""}." },
+                                            rasterResult?.notes?.joinToString(" "),
+                                            remoteResult?.let { "قارئ سحابي احتياطي: ${it.pages.size} صفحة • ${it.modelUsed} • متوسط ${it.confidence}%." },
+                                            remoteResult?.warnings?.takeIf { it.isNotEmpty() }?.joinToString(" ")
+                                        )).distinct(),
+                                        uncertainties = (base.uncertainties + failures).distinct()
+                                    )
+
+                                    val deepApplied = MultiPageEvidenceFusionEngine.apply(enriched, remoteResult?.pages.orEmpty())
+                                    FloorplanParserEngine.refine(deepApplied, rasterResult?.primaryWalls.orEmpty()).plan
+                                }
+
+                                val typed = projectType?.let { SaudiProjectTypeEngine.apply(extracted, it) } ?: extracted
                                 var normalized = MultiFloorGeometryEngine.persistActive(MultiFloorGeometryEngine.normalize(typed))
 
                                 val structuralGeometry = normalized.walls.size + normalized.rooms.size
                                 if (structuralGeometry == 0) {
                                     normalized = normalized.copy(
                                         uncertainties = (normalized.uncertainties +
-                                            "لم يكتمل استخراج الحدود والجدران تلقائيًا. افتح المراجعة لمقارنة الأصل، ثم استخدم HAI أو التعديل قبل اعتماد المشروع و3D.").distinct()
+                                            "لم يكتمل استخراج الحدود والجدران تلقائيًا. افتح المراجعة وقارن النتيجة بالأصل قبل اعتماد المشروع و3D.").distinct()
                                     )
                                 }
                                 normalized
