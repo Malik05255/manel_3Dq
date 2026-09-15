@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import gc
 import os
 from functools import lru_cache
@@ -55,6 +56,26 @@ def _configured_dtype_name() -> str:
     return aliases.get(value, default)
 
 
+def _current_rss_kib() -> int | None:
+    """Return current resident memory, not historical peak RSS."""
+    try:
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1])
+    except Exception:
+        return None
+    return None
+
+
+def _trim_process_memory() -> None:
+    """Return free glibc arenas to the OS after checkpoint casting/inference."""
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
 def _axis_starts(length: int, tile: int, overlap: float) -> list[int]:
     if tile >= length:
         return [0]
@@ -64,6 +85,31 @@ def _axis_starts(length: int, tile: int, overlap: float) -> list[int]:
     if not starts or starts[-1] != tail:
         starts.append(tail)
     return sorted(set(starts))
+
+
+def _add_packed_vote(packed: np.ndarray, prediction: np.ndarray, weight: int) -> None:
+    """Store four class counters in one uint16 (4 bits per class).
+
+    With 30% overlap, one pixel is covered by at most four neighbouring tiles in the
+    regular grid. Global vote 1 + four tile votes * 2 = 9, safely below a 4-bit counter.
+    This halves fusion memory versus a 4 x H x W uint8 vote tensor.
+    """
+    for class_index in range(len(CLASS_NAMES)):
+        shift = class_index * 4
+        packed += ((prediction == class_index).astype(np.uint16) * weight) << shift
+
+
+def _packed_argmax(packed: np.ndarray) -> np.ndarray:
+    h, w = packed.shape
+    best_class = np.zeros((h, w), dtype=np.uint8)
+    best_score = np.zeros((h, w), dtype=np.uint8)
+    for class_index in range(len(CLASS_NAMES)):
+        score = ((packed >> (class_index * 4)) & 0xF).astype(np.uint8)
+        better = score > best_score
+        best_class[better] = class_index
+        best_score[better] = score[better]
+        del score, better
+    return best_class
 
 
 class CubiCasaRuntime:
@@ -109,10 +155,12 @@ class CubiCasaRuntime:
         with self.torch.inference_mode():
             logits = self.model(tensor)
             prediction = logits.argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
-        del logits, tensor
+        del logits, tensor, canvas, normalized, resized, rgb
 
         crop = prediction[top:top + inner_h, left:left + inner_w]
-        return cv2.resize(crop, (w, h), interpolation=cv2.INTER_NEAREST)
+        result = cv2.resize(crop, (w, h), interpolation=cv2.INTER_NEAREST)
+        del crop, prediction
+        return result
 
     def predict(self, image_bgr: np.ndarray) -> np.ndarray:
         """Fuse global context with overlapping high-resolution tiles.
@@ -124,6 +172,7 @@ class CubiCasaRuntime:
         h, w = image_bgr.shape[:2]
         global_prediction = self._predict_single(image_bgr)
         if not _truthy("FLOORPLAN_TILED_INFERENCE", True) or max(h, w) < 1200:
+            _trim_process_memory()
             return global_prediction
 
         min_side = min(h, w)
@@ -141,9 +190,8 @@ class CubiCasaRuntime:
             indices = np.linspace(0, len(windows) - 1, max_tiles).round().astype(int)
             windows = [windows[int(i)] for i in sorted(set(indices.tolist()))]
 
-        votes = np.zeros((len(CLASS_NAMES), h, w), dtype=np.uint8)
-        for class_index in range(len(CLASS_NAMES)):
-            votes[class_index] += (global_prediction == class_index).astype(np.uint8)
+        packed_votes = np.zeros((h, w), dtype=np.uint16)
+        _add_packed_vote(packed_votes, global_prediction, 1)
         del global_prediction
 
         for x0, y0, x1, y1 in windows:
@@ -151,12 +199,13 @@ class CubiCasaRuntime:
             if crop.size == 0:
                 continue
             tile_prediction = self._predict_single(crop)
-            for class_index in range(len(CLASS_NAMES)):
-                region = votes[class_index, y0:y1, x0:x1]
-                region += ((tile_prediction == class_index).astype(np.uint8) * 2)
-            del tile_prediction
+            _add_packed_vote(packed_votes[y0:y1, x0:x1], tile_prediction, 2)
+            del tile_prediction, crop
 
-        return votes.argmax(axis=0).astype(np.uint8)
+        result = _packed_argmax(packed_votes)
+        del packed_votes
+        _trim_process_memory()
+        return result
 
 
 @lru_cache(maxsize=1)
@@ -194,18 +243,15 @@ def load_cubicasa_runtime() -> CubiCasaRuntime | None:
         state = load_file(path, device="cpu")
 
         if dtype_name == "float32" and device.type == "cpu":
-            # Reuse safetensors storage for FP32 CPU instead of retaining a second copy.
             try:
                 model.load_state_dict(state, strict=True, assign=True)
             except TypeError:
                 model.load_state_dict(state, strict=True)
         else:
-            # copy_ casts FP32 checkpoint values into FP16/BF16 model storage without
-            # permanently retaining a second low-precision checkpoint copy.
             model.load_state_dict(state, strict=True)
 
         del state
-        gc.collect()
+        _trim_process_memory()
         model.eval()
         return CubiCasaRuntime(
             model=model,
@@ -235,4 +281,5 @@ def model_status() -> dict[str, Any]:
         "low_memory": low_memory,
         "torch_threads": max(1, int(os.getenv("FLOORPLAN_TORCH_THREADS", "1" if low_memory else "2"))),
         "tiled_inference": _truthy("FLOORPLAN_TILED_INFERENCE", True),
+        "rss_kib": _current_rss_kib(),
     }
