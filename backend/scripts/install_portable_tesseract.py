@@ -1,8 +1,8 @@
 """Install a rootless Tesseract runtime for Render native Python services.
 
-Render native runtimes do not provide sudo. This script downloads Debian packages
-without installing them system-wide, extracts them under backend/.portable-tesseract,
-and verifies the binary plus Arabic/English traineddata.
+The installer downloads only package names shared by Debian 12 and Ubuntu runners.
+Native transitive libraries continue to come from the host OS; Tesseract, Leptonica,
+and Arabic/English traineddata are extracted under backend/.portable-tesseract.
 """
 
 from __future__ import annotations
@@ -16,8 +16,9 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = BACKEND_ROOT / ".portable-tesseract"
 
-# Direct runtime packages plus the small native libraries Leptonica/Tesseract commonly
-# need on Debian 12. System copies are used when present; extracted copies take priority.
+# These package names are common to Debian 12 (Render native runtime) and Ubuntu CI.
+# Avoid distro-specific transitive names such as libjpeg62-turbo/libpng16-16 because
+# Ubuntu 24 uses different package names while providing compatible system libraries.
 PACKAGES = (
     "tesseract-ocr",
     "tesseract-ocr-ara",
@@ -25,16 +26,6 @@ PACKAGES = (
     "tesseract-ocr-osd",
     "libtesseract5",
     "liblept5",
-    "libgif7",
-    "libjpeg62-turbo",
-    "libopenjp2-7",
-    "libpng16-16",
-    "libtiff6",
-    "libwebp7",
-    "libwebpmux3",
-    "libgomp1",
-    "libpangocairo-1.0-0",
-    "zlib1g",
 )
 
 
@@ -117,7 +108,7 @@ def install(root: Path) -> None:
         )
         archives = sorted(temp.glob("*.deb"))
         if not archives:
-            raise RuntimeError("apt download returned no Debian packages")
+            raise RuntimeError("apt download returned no Tesseract packages")
         for archive in archives:
             subprocess.run([dpkg_deb, "-x", str(archive), str(root)], check=True, timeout=60)
 
