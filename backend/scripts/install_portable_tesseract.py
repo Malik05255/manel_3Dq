@@ -1,9 +1,9 @@
 """Install a rootless Tesseract runtime for Render native Python services.
 
-The native Render runtime has apt/dpkg tooling but no sudo. Package names for
-Leptonica and transitive image libraries differ between Ubuntu/Debian releases,
-so discover the dependency closure from the host's own apt metadata instead of
-hard-coding a specific `liblept*` package name.
+Render native Python has apt/dpkg binaries but no sudo and may start without local
+APT package indexes. Build an isolated APT state/cache under /tmp, discover the
+host distribution's dependency closure there, download the packages without root,
+and extract them into the application tree.
 """
 
 from __future__ import annotations
@@ -23,8 +23,6 @@ ROOT_PACKAGES = (
     "tesseract-ocr-eng",
     "tesseract-ocr-osd",
 )
-# These are guaranteed by any functioning Python/glibc runtime and are safer to
-# use from the host than shadow from a private apt extraction tree.
 HOST_BASE_PACKAGES = {
     "libc6",
     "libgcc-s1",
@@ -45,10 +43,11 @@ def tessdata_dir(root: Path) -> Path | None:
     for candidate in candidates:
         if (candidate / "ara.traineddata").is_file() and (candidate / "eng.traineddata").is_file():
             return candidate
-    # Keep this future-proof if the distro introduces another versioned directory.
-    for candidate in sorted((root / "usr/share").glob("tesseract-ocr/*/tessdata")):
-        if (candidate / "ara.traineddata").is_file() and (candidate / "eng.traineddata").is_file():
-            return candidate
+    share = root / "usr/share"
+    if share.is_dir():
+        for candidate in sorted(share.glob("tesseract-ocr/*/tessdata")):
+            if (candidate / "ara.traineddata").is_file() and (candidate / "eng.traineddata").is_file():
+                return candidate
     return None
 
 
@@ -102,9 +101,35 @@ def verify(root: Path) -> None:
     print(f"Portable Tesseract ready: {first_line}; languages=ara,eng; root={root}")
 
 
-def _dependency_packages(apt_cache: str) -> list[str]:
+def _prepare_rootless_apt(apt_get: str, state: Path) -> list[str]:
+    """Create writable APT package indexes/cache without touching /var/lib/apt."""
+    lists = state / "lists"
+    archives = state / "archives"
+    (lists / "partial").mkdir(parents=True, exist_ok=True)
+    (archives / "partial").mkdir(parents=True, exist_ok=True)
+    options = [
+        "-o", f"Dir::State::lists={lists}",
+        "-o", f"Dir::Cache::archives={archives}",
+        "-o", "Debug::NoLocking=1",
+        "-o", "APT::Get::List-Cleanup=0",
+    ]
+    result = subprocess.run(
+        [apt_get, *options, "update"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if result.returncode != 0:
+        tail = "\n".join((result.stderr or result.stdout).splitlines()[-20:])
+        raise RuntimeError(f"rootless apt update failed ({result.returncode}):\n{tail}")
+    return options
+
+
+def _dependency_packages(apt_cache: str, apt_options: list[str]) -> list[str]:
     command = [
         apt_cache,
+        *apt_options,
         "depends",
         "--recurse",
         "--no-recommends",
@@ -115,7 +140,10 @@ def _dependency_packages(apt_cache: str) -> list[str]:
         "--no-enhances",
         *ROOT_PACKAGES,
     ]
-    result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        tail = "\n".join((result.stderr or result.stdout).splitlines()[-20:])
+        raise RuntimeError(f"apt dependency discovery failed ({result.returncode}):\n{tail}")
     packages = set(ROOT_PACKAGES)
     for raw_line in result.stdout.splitlines():
         match = _DEPENDENCY_RE.match(raw_line)
@@ -124,7 +152,6 @@ def _dependency_packages(apt_cache: str) -> list[str]:
         name = match.group(1).strip()
         if name.startswith("<") or not name:
             continue
-        # :any is an apt dependency qualifier, not part of the package to download.
         if name.endswith(":any"):
             name = name[:-4]
         if name not in HOST_BASE_PACKAGES:
@@ -134,21 +161,36 @@ def _dependency_packages(apt_cache: str) -> list[str]:
 
 def install(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    apt = shutil.which("apt-get") or shutil.which("apt")
+    apt_get = shutil.which("apt-get")
     apt_cache = shutil.which("apt-cache")
     dpkg_deb = shutil.which("dpkg-deb")
-    if not apt or not apt_cache or not dpkg_deb:
-        raise RuntimeError("apt/apt-get, apt-cache and dpkg-deb are required for rootless Tesseract installation")
+    if not apt_get or not apt_cache or not dpkg_deb:
+        raise RuntimeError("apt-get, apt-cache and dpkg-deb are required for rootless Tesseract installation")
 
-    packages = _dependency_packages(apt_cache)
-    print(f"Portable Tesseract packages ({len(packages)}): {', '.join(packages)}")
     with tempfile.TemporaryDirectory(prefix="manzili-tesseract-") as temp_dir:
         temp = Path(temp_dir)
-        # Keep argv below shell limits and make a single bad optional dependency easier to diagnose.
+        apt_state = temp / "apt"
+        download_dir = temp / "downloads"
+        download_dir.mkdir(parents=True, exist_ok=True)
+        apt_options = _prepare_rootless_apt(apt_get, apt_state)
+        packages = _dependency_packages(apt_cache, apt_options)
+        print(f"Portable Tesseract packages ({len(packages)}): {', '.join(packages)}")
+
         for start in range(0, len(packages), 24):
             batch = packages[start:start + 24]
-            subprocess.run([apt, "download", *batch], cwd=temp, check=True, timeout=300)
-        archives = sorted(temp.glob("*.deb"))
+            result = subprocess.run(
+                [apt_get, *apt_options, "download", *batch],
+                cwd=download_dir,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if result.returncode != 0:
+                tail = "\n".join((result.stderr or result.stdout).splitlines()[-20:])
+                raise RuntimeError(f"apt download failed for {batch} ({result.returncode}):\n{tail}")
+
+        archives = sorted(download_dir.glob("*.deb"))
         if not archives:
             raise RuntimeError("apt download returned no Tesseract packages")
         for archive in archives:
