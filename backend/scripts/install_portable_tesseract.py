@@ -1,25 +1,24 @@
 """Install a rootless Tesseract runtime for Render native Python services.
 
-The installer downloads only package names shared by Debian 12 and Ubuntu runners.
-Native transitive libraries continue to come from the host OS; Tesseract, Leptonica,
-and Arabic/English traineddata are extracted under backend/.portable-tesseract.
+The installer resolves runtime dependencies from the host apt metadata, so the same
+code works on Ubuntu CI and Render's Debian native runtime without sudo/root access.
+All downloaded packages are extracted under backend/.portable-tesseract.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+from collections import deque
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = BACKEND_ROOT / ".portable-tesseract"
 
-# These package names are common to Debian 12 (Render native runtime) and Ubuntu CI.
-# Avoid distro-specific transitive names such as libjpeg62-turbo/libpng16-16 because
-# Ubuntu 24 uses different package names while providing compatible system libraries.
-PACKAGES = (
+ROOT_PACKAGES = (
     "tesseract-ocr",
     "tesseract-ocr-ara",
     "tesseract-ocr-eng",
@@ -27,6 +26,101 @@ PACKAGES = (
     "libtesseract5",
     "liblept5",
 )
+
+# Keep the host's loader/C runtime. Replacing these through LD_LIBRARY_PATH can make a
+# rootless bundle less portable rather than more portable.
+HOST_RUNTIME_PACKAGES = {
+    "libc6",
+    "libgcc-s1",
+    "libstdc++6",
+    "linux-libc-dev",
+    "gcc-12-base",
+    "gcc-13-base",
+    "gcc-14-base",
+    "debconf",
+    "dpkg",
+}
+
+_DEP_RE = re.compile(r"^(?:\|)?(?:PreDepends|Depends):\s*([^\s]+)")
+
+
+def _normalize_package(value: str) -> str | None:
+    value = value.strip()
+    if value.startswith("<") or not value:
+        return None
+    # apt can report architecture qualifiers such as libc6:any.
+    if ":" in value:
+        value = value.split(":", 1)[0]
+    return value or None
+
+
+def _has_candidate(package: str, apt_cache: str) -> bool:
+    result = subprocess.run(
+        [apt_cache, "policy", package],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    return result.returncode == 0 and "Candidate: (none)" not in result.stdout and "Candidate:" in result.stdout
+
+
+def _direct_dependencies(package: str, apt_cache: str) -> list[str]:
+    result = subprocess.run(
+        [
+            apt_cache,
+            "depends",
+            "--no-recommends",
+            "--no-suggests",
+            "--no-conflicts",
+            "--no-breaks",
+            "--no-replaces",
+            "--no-enhances",
+            package,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        return []
+    dependencies: list[str] = []
+    for raw in result.stdout.splitlines():
+        match = _DEP_RE.match(raw.strip())
+        if not match:
+            continue
+        dep = _normalize_package(match.group(1))
+        if dep:
+            dependencies.append(dep)
+    return dependencies
+
+
+def _dependency_closure(apt_cache: str) -> list[str]:
+    queue: deque[str] = deque(ROOT_PACKAGES)
+    seen: set[str] = set()
+    selected: list[str] = []
+
+    while queue:
+        package = queue.popleft()
+        if package in seen:
+            continue
+        seen.add(package)
+        if package in HOST_RUNTIME_PACKAGES:
+            continue
+        if not _has_candidate(package, apt_cache):
+            # Alternative/virtual dependencies can legitimately have no direct candidate.
+            if package in ROOT_PACKAGES:
+                raise RuntimeError(f"required Tesseract package has no apt candidate: {package}")
+            continue
+        selected.append(package)
+        if len(selected) > 120:
+            raise RuntimeError("portable Tesseract dependency closure unexpectedly exceeded 120 packages")
+        for dependency in _direct_dependencies(package, apt_cache):
+            if dependency not in seen:
+                queue.append(dependency)
+
+    return selected
 
 
 def _tessdata_dir(root: Path) -> Path | None:
@@ -41,21 +135,55 @@ def _tessdata_dir(root: Path) -> Path | None:
     return None
 
 
+def _library_dirs(root: Path) -> list[Path]:
+    candidates = [root / "usr/lib", root / "lib"]
+    candidates.extend(sorted((root / "usr/lib").glob("*-linux-gnu")))
+    candidates.extend(sorted((root / "lib").glob("*-linux-gnu")))
+    unique: list[Path] = []
+    for candidate in candidates:
+        if candidate.is_dir() and candidate not in unique:
+            unique.append(candidate)
+    return unique
+
+
 def _runtime_env(root: Path) -> dict[str, str]:
     env = dict(os.environ)
-    lib_dirs = [
-        root / "usr/lib/x86_64-linux-gnu",
-        root / "lib/x86_64-linux-gnu",
-        root / "usr/lib",
-        root / "lib",
-    ]
     existing = env.get("LD_LIBRARY_PATH", "")
-    joined = ":".join(str(path) for path in lib_dirs if path.is_dir())
+    joined = ":".join(str(path) for path in _library_dirs(root))
     env["LD_LIBRARY_PATH"] = ":".join(part for part in (joined, existing) if part)
     tessdata = _tessdata_dir(root)
     if tessdata is not None:
         env["TESSDATA_PREFIX"] = str(tessdata)
     return env
+
+
+def _run_checked_binary(binary: Path, args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        [str(binary), *args],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode == 0:
+        return result
+    ldd = shutil.which("ldd")
+    ldd_output = ""
+    if ldd:
+        diagnostic = subprocess.run(
+            [ldd, str(binary)],
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        ldd_output = diagnostic.stdout + diagnostic.stderr
+    raise RuntimeError(
+        f"portable Tesseract failed ({result.returncode}) args={args}; "
+        f"stdout={result.stdout!r}; stderr={result.stderr!r}; ldd={ldd_output!r}"
+    )
 
 
 def verify(root: Path) -> None:
@@ -67,22 +195,8 @@ def verify(root: Path) -> None:
         raise RuntimeError("portable tesseract Arabic/English traineddata is missing")
 
     env = _runtime_env(root)
-    version = subprocess.run(
-        [str(binary), "--version"],
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    languages = subprocess.run(
-        [str(binary), "--list-langs"],
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    version = _run_checked_binary(binary, ["--version"], env)
+    languages = _run_checked_binary(binary, ["--list-langs"], env)
     available = {line.strip() for line in languages.stdout.splitlines() if line.strip()}
     missing = {"ara", "eng"} - available
     if missing:
@@ -94,20 +208,33 @@ def verify(root: Path) -> None:
 def install(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
     apt = shutil.which("apt-get") or shutil.which("apt")
+    apt_cache = shutil.which("apt-cache")
     dpkg_deb = shutil.which("dpkg-deb")
-    if not apt or not dpkg_deb:
-        raise RuntimeError("apt/apt-get and dpkg-deb are required for rootless Tesseract installation")
+    if not apt or not apt_cache or not dpkg_deb:
+        raise RuntimeError("apt/apt-get, apt-cache and dpkg-deb are required for rootless Tesseract installation")
 
+    packages = _dependency_closure(apt_cache)
+    print(f"Portable Tesseract apt closure: {len(packages)} packages")
     with tempfile.TemporaryDirectory(prefix="manzili-tesseract-") as temp_dir:
         temp = Path(temp_dir)
-        subprocess.run(
-            [apt, "download", *PACKAGES],
-            cwd=temp,
-            check=True,
-            timeout=300,
-        )
+        # Download individually so one optional/alternative package can never abort all roots.
+        downloaded = 0
+        for package in packages:
+            result = subprocess.run(
+                [apt, "download", package],
+                cwd=temp,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                if package in ROOT_PACKAGES:
+                    raise RuntimeError(f"failed to download required package {package}: {result.stderr}")
+                continue
+            downloaded += 1
         archives = sorted(temp.glob("*.deb"))
-        if not archives:
+        if not archives or downloaded == 0:
             raise RuntimeError("apt download returned no Tesseract packages")
         for archive in archives:
             subprocess.run([dpkg_deb, "-x", str(archive), str(root)], check=True, timeout=60)
