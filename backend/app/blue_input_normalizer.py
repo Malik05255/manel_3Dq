@@ -5,20 +5,40 @@ from typing import Any
 import cv2
 import numpy as np
 
-from .parser import _blue_wall_mask
+
+def _blue_wall_mask_for_model(image: np.ndarray) -> np.ndarray:
+    """Detect saturated blue/purple CAD strokes without importing parser modules.
+
+    This lives next to the model input path deliberately: cubicasa_model must not import
+    parser.py because parser.py already imports cubicasa_model, which would create a cycle.
+    """
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    hsv_blue = cv2.inRange(
+        hsv,
+        np.array([85, 45, 35], dtype=np.uint8),
+        np.array([150, 255, 255], dtype=np.uint8),
+    )
+    b, g, r = cv2.split(image)
+    dominant = (
+        (b.astype(np.int16) >= r.astype(np.int16) + 18)
+        & (b.astype(np.int16) >= g.astype(np.int16) + 6)
+        & (b >= 65)
+    ).astype(np.uint8) * 255
+    blue = cv2.bitwise_or(hsv_blue, dominant)
+    return cv2.morphologyEx(blue, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
 
 
 def normalize_blue_plan_for_cubicasa(image: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
     """Recolour blue/purple CAD strokes to black before CubiCasa inference.
 
-    The original image is intentionally left untouched for OCR, dimensions and UI preview.
-    Only plans with meaningful blue architectural coverage are normalized. Other colours are
-    preserved so green dimension lines and red/gray labels are not turned into wall evidence.
+    The source image is never modified. OCR, dimensions and the user preview keep using the
+    original colour image. Only meaningful blue CAD plans are normalized. Green dimensions,
+    red room labels and other non-blue evidence are left untouched rather than blackened.
     """
     if image.size == 0:
         return image, {"applied": False, "mode": "original", "blue_coverage": 0.0}
 
-    blue = _blue_wall_mask(image)
+    blue = _blue_wall_mask_for_model(image)
     coverage = float(np.count_nonzero(blue)) / max(float(blue.size), 1.0)
     if coverage < 0.0012:
         return image, {
@@ -30,8 +50,8 @@ def normalize_blue_plan_for_cubicasa(image: np.ndarray) -> tuple[np.ndarray, dic
     normalized = image.copy()
     normalized[blue > 0] = (0, 0, 0)
 
-    # Keep the white/background appearance stable while removing tiny compression halos
-    # immediately around the recoloured CAD strokes. This does not bridge door-sized gaps.
+    # Remove only light compression halos touching the blue stroke. This never bridges a
+    # door-sized opening and therefore cannot manufacture a wall where the source has a gap.
     halo = cv2.dilate(blue, np.ones((3, 3), np.uint8), iterations=1)
     near_blue = (halo > 0) & (blue == 0)
     if np.any(near_blue):
