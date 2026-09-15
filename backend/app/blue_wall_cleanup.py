@@ -124,22 +124,32 @@ def clean_axis_wall_segments(
         return [], {"input_count": 0, "output_count": 0, "rejected_thin": 0, "merged": 0}
 
     core, core_radius = _structural_core(mask, footprint_min_side)
-    min_keep_len = max(16.0, float(footprint_min_side) * 0.045)
+    # The detail vectorizer has already applied its own minimum segment length. A second,
+    # stricter 4.5% cutoff here removed genuine short bathroom/corridor partitions from
+    # production plans. Keep the cleanup length guard below the vectorizer threshold and
+    # let structural-core support decide whether a short stroke is a wall or door graphic.
+    min_keep_len = max(8.0, float(footprint_min_side) * 0.020)
     support_radius = max(1, int(round(float(footprint_min_side) * 0.0025)))
 
     kept: list[dict[str, Any]] = []
     rejected = 0
+    short_structural_kept = 0
     for item in segments:
         sx, sy = map(float, item["start_px"])
         ex, ey = map(float, item["end_px"])
         length = math.hypot(ex - sx, ey - sy)
-        if length < min_keep_len:
-            rejected += 1
-            continue
         core_support = _line_support(core, (sx, sy), (ex, ey), radius=support_radius)
         if core_support < 0.58:
             rejected += 1
             continue
+        # Never discard a source-thick segment merely for being short. Very tiny pieces are
+        # accepted only with strong structural-core evidence; thin door leaves/jambs fail
+        # the core-support test above.
+        if length < min_keep_len and core_support < 0.82:
+            rejected += 1
+            continue
+        if length < min_keep_len:
+            short_structural_kept += 1
         updated = dict(item)
         updated["structural_core_support"] = core_support
         kept.append(updated)
@@ -150,6 +160,7 @@ def clean_axis_wall_segments(
         "output_count": len(merged),
         "rejected_thin": rejected,
         "merged": max(0, len(kept) - len(merged)),
+        "short_structural_kept": short_structural_kept,
         "core_radius_px": round(float(core_radius), 3),
         "min_keep_len_px": round(float(min_keep_len), 3),
     }
