@@ -15,7 +15,7 @@ MODEL_LICENSE = "MIT"
 MODEL_SHA256 = "d7f6a0fd06e2931aecfc8c4849192c5e153701578026efc78d9a6246731a8d6c"
 DEFAULT_MODEL_PATH = "/opt/manzili/models/floorplan/best.safetensors"
 DEFAULT_IMAGE_SIZE = 512
-LOW_MEMORY_IMAGE_SIZE = 384
+LOW_MEMORY_IMAGE_SIZE = 352
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 CLASS_NAMES = ("floor", "wall", "door", "window")
@@ -41,7 +41,9 @@ def _configured_image_size() -> int:
 
 
 def _configured_dtype_name() -> str:
-    default = "float16" if _truthy("FLOORPLAN_LOW_MEMORY", False) else "float32"
+    # CPU FP16 is materially slower on Render-class CPUs. Keep FP32 and save memory
+    # through a smaller canvas, packed tile votes, one thread, and allocator trimming.
+    default = "float32"
     value = os.getenv("FLOORPLAN_DTYPE", default).strip().lower()
     aliases = {
         "fp16": "float16",
@@ -68,7 +70,7 @@ def _current_rss_kib() -> int | None:
 
 
 def _trim_process_memory() -> None:
-    """Return free glibc arenas to the OS after checkpoint casting/inference."""
+    """Return free glibc arenas to the OS after checkpoint loading/inference."""
     gc.collect()
     try:
         ctypes.CDLL("libc.so.6").malloc_trim(0)
@@ -165,9 +167,9 @@ class CubiCasaRuntime:
     def predict(self, image_bgr: np.ndarray) -> np.ndarray:
         """Fuse global context with overlapping high-resolution tiles.
 
-        Low-memory production keeps the same model and classes. The model canvas and
-        tensor precision are reduced, while source tile windows scale proportionally so
-        local wall/opening detail is not discarded by one aggressive whole-page resize.
+        Low-memory production keeps the same model and classes. The model canvas is
+        reduced while source tile windows scale proportionally so local wall/opening
+        detail is not discarded by one aggressive whole-page resize.
         """
         h, w = image_bgr.shape[:2]
         global_prediction = self._predict_single(image_bgr)
@@ -177,7 +179,7 @@ class CubiCasaRuntime:
 
         min_side = min(h, w)
         size_ratio = self.image_size / DEFAULT_IMAGE_SIZE
-        min_tile = max(560, int(round(820 * size_ratio)))
+        min_tile = max(520, int(round(820 * size_ratio)))
         max_tile = max(min_tile, int(round(1500 * size_ratio)))
         tile = min(max_tile, max(min_tile, int(round(min_side * 0.62))))
         overlap = max(0.18, min(0.42, float(os.getenv("FLOORPLAN_TILE_OVERLAP", "0.30"))))
