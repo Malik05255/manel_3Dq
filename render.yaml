@@ -36,8 +36,9 @@ services:
         sync: false
 
   # OCR stays outside the 512 MB CubiCasa process so Tesseract cannot push Reader V3 over its memory limit.
+  # v2 was created cleanly with Python 3.12 pinned from its first build; the older service is intentionally not targeted.
   - type: web
-    name: manzili-hai-ocr-ar-en
+    name: manzili-hai-ocr-ar-en-v2
     runtime: python
     buildCommand: pip install -r backend/requirements-ocr-service.txt && python backend/scripts/install_portable_tesseract.py
     startCommand: cd backend && uvicorn app.ocr_main:app --host 0.0.0.0 --port $PORT
@@ -67,7 +68,7 @@ services:
       - key: FLOORPLAN_SAFETENSORS_MODEL
         value: /opt/render/project/src/backend/models/floorplan/best.safetensors
       - key: OCR_PROVIDER_URL
-        value: https://manzili-hai-ocr-ar-en.onrender.com
+        value: https://manzili-hai-ocr-ar-en-v2.onrender.com
       - key: OCR_PROVIDER_TOKEN
         sync: false
       - key: OCR_PROVIDER_TIMEOUT
