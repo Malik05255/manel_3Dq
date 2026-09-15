@@ -60,8 +60,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FLOORPLAN_LOW_MEMORY: "true"
-      FLOORPLAN_IMAGE_SIZE: "384"
-      FLOORPLAN_DTYPE: "float16"
+      FLOORPLAN_IMAGE_SIZE: "352"
+      FLOORPLAN_DTYPE: "float32"
       FLOORPLAN_TORCH_THREADS: "1"
       FLOORPLAN_TILED_INFERENCE: "true"
       FLOORPLAN_TILE_OVERLAP: "0.30"
@@ -103,8 +103,8 @@ jobs:
           runtime = load_cubicasa_runtime()
           assert runtime is not None, model_status()
           loaded = model_status()
-          assert loaded.get('image_size') == 384, loaded
-          assert loaded.get('dtype') == 'float16', loaded
+          assert loaded.get('image_size') == 352, loaded
+          assert loaded.get('dtype') == 'float32', loaded
           assert loaded.get('low_memory') is True, loaded
           assert loaded.get('torch_threads') == 1, loaded
           assert isinstance(loaded.get('rss_kib'), int), loaded
@@ -123,7 +123,7 @@ jobs:
           assert isinstance(after.get('rss_kib'), int), after
           assert after['rss_kib'] < render_limit_kib, after
           peak_kib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-          print('CubiCasa tiled low-memory inference ok', prediction.shape, 'current_rss_kib=', after['rss_kib'], 'historical_peak_kib=', peak_kib, after)
+          print('CubiCasa FP32 tiled low-memory inference ok', prediction.shape, 'current_rss_kib=', after['rss_kib'], 'historical_peak_kib=', peak_kib, after)
           PY
 
       - name: Verify Reader V3 service contract
@@ -142,9 +142,9 @@ jobs:
           assert cloud_ocr_engine_name() == 'tesseract-ara-eng'
           assert load_cubicasa_runtime() is not None
           status = model_status()
-          assert status['image_size'] == 384
-          assert status['dtype'] == 'float16'
-          print('Reader V3 service contract ok; CubiCasa FP16 low-memory profile loaded; OCR=tesseract-ara-eng')
+          assert status['image_size'] == 352
+          assert status['dtype'] == 'float32'
+          print('Reader V3 service contract ok; CubiCasa FP32 low-memory profile loaded; OCR=tesseract-ara-eng')
           PY
 
       - name: Test low-memory config, geometry and benchmark scoring gates
