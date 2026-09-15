@@ -45,6 +45,24 @@ def _line_support(mask: np.ndarray, a: tuple[float, float], b: tuple[float, floa
     return float(np.count_nonzero(supported)) / max(length, 1)
 
 
+def _point_segment_distance(
+    point: tuple[float, float],
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> float:
+    px, py = point
+    ax, ay = start
+    bx, by = end
+    vx, vy = bx - ax, by - ay
+    denom = vx * vx + vy * vy
+    if denom <= 1e-9:
+        return math.hypot(px - ax, py - ay)
+    t = ((px - ax) * vx + (py - ay) * vy) / denom
+    t = max(0.0, min(1.0, t))
+    qx, qy = ax + t * vx, ay + t * vy
+    return math.hypot(px - qx, py - qy)
+
+
 def _axis_detail_segments(
     mask: np.ndarray,
     *,
@@ -65,7 +83,6 @@ def _axis_detail_segments(
         bands = _intervals((counts >= min_len).astype(np.int8))
         for y0, y1 in bands:
             active = np.any(opened[y0:y1 + 1] > 0, axis=0).astype(np.uint8)[None, :] * 255
-            # Only heal tiny anti-aliasing breaks. Door-sized gaps must stay open.
             active = cv2.morphologyEx(
                 active,
                 cv2.MORPH_CLOSE,
@@ -106,56 +123,76 @@ def _axis_detail_segments(
     return segments, opened
 
 
-def _diagonal_detail_segments(mask: np.ndarray, *, footprint_min_side: int) -> list[dict[str, Any]]:
-    """Recover non-axis strokes directly from source blue pixels.
+def _diagonal_detail_segments(
+    mask: np.ndarray,
+    *,
+    footprint_min_side: int,
+) -> tuple[list[dict[str, Any]], float]:
+    """Recover only thick structural diagonal walls, never thin door graphics.
 
-    Running Hough on an axis-subtracted mask clipped real entrance diagonals at their
-    junctions. Instead, detect on the original blue mask, reject near-axis candidates,
-    sort longest-first, then collapse the parallel edges of each thick diagonal wall.
+    Door leaves/arcs in CAD exports are often the same blue as walls. Running Hough on the
+    raw colour mask therefore produced many short diagonal "walls" around every doorway.
+    A distance-transform core keeps the thick centre of structural strokes and removes thin
+    door symbols before line detection. Hough then runs only on that core.
     """
-    min_len = max(7, int(round(footprint_min_side * 0.012)))
+    binary = (mask > 0).astype(np.uint8)
+    distance = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+    core_radius = min(4.5, max(1.8, float(footprint_min_side) * 0.0035))
+    core = (distance >= core_radius).astype(np.uint8) * 255
+    core = cv2.morphologyEx(core, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8), iterations=1)
+
+    min_len = max(14, int(round(footprint_min_side * 0.040)))
     lines = cv2.HoughLinesP(
-        mask,
+        core,
         1,
         np.pi / 360.0,
-        threshold=max(8, int(round(footprint_min_side * 0.010))),
+        threshold=max(10, int(round(footprint_min_side * 0.014))),
         minLineLength=min_len,
-        maxLineGap=max(2, int(round(footprint_min_side * 0.005))),
+        maxLineGap=max(3, int(round(footprint_min_side * 0.008))),
     )
     if lines is None:
-        return []
+        return [], core_radius
 
-    candidates: list[tuple[float, float, float, float, float, float, float]] = []
+    candidates: list[tuple[float, float, float, float, float, float, float, float]] = []
     radius = max(2, int(round(footprint_min_side * 0.003)))
-    for raw in lines[:500]:
+    for raw in lines[:400]:
         x1, y1, x2, y2 = map(float, raw[0])
         length = math.hypot(x2 - x1, y2 - y1)
         if length < min_len:
             continue
         angle = abs(math.degrees(math.atan2(y2 - y1, x2 - x1))) % 180.0
         acute = min(angle, 180.0 - angle)
-        if acute <= 10.0 or abs(90.0 - acute) <= 10.0:
+        axis_delta = min(acute, abs(90.0 - acute))
+        # Axis walls are already represented by the horizontal/vertical passes. Rejecting
+        # near-axis Hough fragments also removes the common almost-vertical door-leaf artefact.
+        if axis_delta < 20.0:
             continue
         support = _line_support(mask, (x1, y1), (x2, y2), radius=radius)
-        if support < 0.88:
+        core_support = _line_support(core, (x1, y1), (x2, y2), radius=1)
+        if support < 0.90 or core_support < 0.72:
             continue
-        candidates.append((x1, y1, x2, y2, length, angle, support))
+        candidates.append((x1, y1, x2, y2, length, angle, support, core_support))
 
     candidates.sort(key=lambda item: item[4], reverse=True)
     out: list[dict[str, Any]] = []
-    for x1, y1, x2, y2, length, angle, support in candidates:
-        mx, my = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    for x1, y1, x2, y2, length, angle, support, core_support in candidates:
+        midpoint = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
         duplicate = False
         for kept in out:
             ax, ay = kept["start_px"]
             bx, by = kept["end_px"]
-            kangle = abs(math.degrees(math.atan2(by - ay, bx - ax))) % 180.0
+            kangle = float(kept["angle"])
             delta = abs(angle - kangle) % 180.0
             delta = min(delta, 180.0 - delta)
-            if delta > 5.0:
+            if delta > 7.0:
                 continue
-            kmx, kmy = (ax + bx) / 2.0, (ay + by) / 2.0
-            if math.hypot(mx - kmx, my - kmy) <= max(8.0, footprint_min_side * 0.025):
+            # A shorter Hough fragment that lies on an already-kept structural stroke is
+            # the same wall, even when their midpoints are not close.
+            if _point_segment_distance(
+                midpoint,
+                (float(ax), float(ay)),
+                (float(bx), float(by)),
+            ) <= max(6.0, footprint_min_side * 0.015):
                 duplicate = True
                 break
         if duplicate:
@@ -164,11 +201,13 @@ def _diagonal_detail_segments(mask: np.ndarray, *, footprint_min_side: int) -> l
             "start_px": (x1, y1),
             "end_px": (x2, y2),
             "support": support,
+            "core_support": core_support,
+            "angle": angle,
             "axis": "d",
         })
-        if len(out) >= 24:
+        if len(out) >= 12:
             break
-    return out
+    return out, core_radius
 
 
 def vectorize_blue_detail_walls(image: np.ndarray) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -178,6 +217,8 @@ def vectorize_blue_detail_walls(image: np.ndarray) -> tuple[list[dict[str, Any]]
     page. Axis kernels are deliberately longer than normal wall thickness so vertical
     strokes cannot masquerade as horizontal walls (and vice versa). Only tiny raster
     breaks are healed; normal door openings remain split into separate wall segments.
+    Diagonals must also survive a structural-thickness core so door leaves/arcs cannot
+    inflate the wall graph.
     """
     if image.size == 0:
         return [], {"usable": False, "reason": "empty-image"}
@@ -193,8 +234,6 @@ def vectorize_blue_detail_walls(image: np.ndarray) -> tuple[list[dict[str, Any]]
     footprint_h = max(1, y1 - y0 + 1)
     footprint_min = max(1, min(footprint_w, footprint_h))
 
-    # 3% stays well above typical wall stroke thickness, while still retaining the
-    # short WC/service partitions visible in the reported Saudi CAD plan.
     min_len = max(10, int(round(footprint_min * 0.030)))
     thickness = max(2, int(round(footprint_min * 0.003)))
     gap = max(2, int(round(footprint_min * 0.004)))
@@ -213,7 +252,7 @@ def vectorize_blue_detail_walls(image: np.ndarray) -> tuple[list[dict[str, Any]]
         thickness=thickness,
         gap=gap,
     )
-    diagonal = _diagonal_detail_segments(mask, footprint_min_side=footprint_min)
+    diagonal, core_radius = _diagonal_detail_segments(mask, footprint_min_side=footprint_min)
 
     raw = horizontal + vertical + diagonal
     h, w = image.shape[:2]
@@ -222,7 +261,7 @@ def vectorize_blue_detail_walls(image: np.ndarray) -> tuple[list[dict[str, Any]]
         x1p, y1p = item["start_px"]
         x2p, y2p = item["end_px"]
         support = float(item["support"])
-        walls.append({
+        wall = {
             "id": f"blue-detail-{len(walls)}",
             "start": {"x": x1p / max(w, 1) * 100.0, "y": y1p / max(h, 1) * 100.0},
             "end": {"x": x2p / max(w, 1) * 100.0, "y": y2p / max(h, 1) * 100.0},
@@ -230,7 +269,10 @@ def vectorize_blue_detail_walls(image: np.ndarray) -> tuple[list[dict[str, Any]]
             "kind": "blue-raster-detail-centerline",
             "axis": item["axis"],
             "image_support": round(support, 4),
-        })
+        }
+        if item["axis"] == "d":
+            wall["structural_core_support"] = round(float(item.get("core_support", 0.0)), 4)
+        walls.append(wall)
         if len(walls) >= 90:
             break
 
@@ -243,6 +285,7 @@ def vectorize_blue_detail_walls(image: np.ndarray) -> tuple[list[dict[str, Any]]
         "footprint_height": footprint_h,
         "min_segment_px": min_len,
         "door_gap_heal_px": gap,
+        "diagonal_core_radius_px": round(float(core_radius), 3),
         "horizontal_count": len(horizontal),
         "vertical_count": len(vertical),
         "diagonal_count": len(diagonal),
