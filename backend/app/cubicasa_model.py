@@ -10,6 +10,8 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .blue_input_normalizer import normalize_blue_plan_for_cubicasa
+
 MODEL_NAME = "Yytsi/floorplan-to-3d-walls"
 MODEL_LICENSE = "MIT"
 MODEL_SHA256 = "d7f6a0fd06e2931aecfc8c4849192c5e153701578026efc78d9a6246731a8d6c"
@@ -90,12 +92,7 @@ def _axis_starts(length: int, tile: int, overlap: float) -> list[int]:
 
 
 def _add_packed_vote(packed: np.ndarray, prediction: np.ndarray, weight: int) -> None:
-    """Store four class counters in one uint16 (4 bits per class).
-
-    With 30% overlap, one pixel is covered by at most four neighbouring tiles in the
-    regular grid. Global vote 1 + four tile votes * 2 = 9, safely below a 4-bit counter.
-    This halves fusion memory versus a 4 x H x W uint8 vote tensor.
-    """
+    """Store four class counters in one uint16 (4 bits per class)."""
     for class_index in range(len(CLASS_NAMES)):
         shift = class_index * 4
         packed += ((prediction == class_index).astype(np.uint16) * weight) << shift
@@ -132,18 +129,36 @@ class CubiCasaRuntime:
         self.image_size = image_size
         self.dtype = dtype
         self.dtype_name = dtype_name
+        self.last_input_normalization: dict[str, Any] = {
+            "applied": False,
+            "mode": "original",
+            "blue_coverage": 0.0,
+        }
 
-    def _predict_single(self, image_bgr: np.ndarray) -> np.ndarray:
+    def _predict_single(
+        self,
+        image_bgr: np.ndarray,
+        *,
+        normalize_blue: bool = True,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         h, w = image_bgr.shape[:2]
         image_size = self.image_size
-        rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
         scale = min(image_size / max(w, 1), image_size / max(h, 1))
         inner_w = max(1, int(round(w * scale)))
         inner_h = max(1, int(round(h * scale)))
         interpolation = cv2.INTER_AREA if scale <= 1.0 else cv2.INTER_CUBIC
-        resized = cv2.resize(rgb, (inner_w, inner_h), interpolation=interpolation)
 
-        normalized = resized.astype(np.float32) / 255.0
+        # Normalize only the small model input, never a full-resolution plan. This keeps
+        # Render Free memory stable while still presenting black line-art to CubiCasa.
+        resized_bgr = cv2.resize(image_bgr, (inner_w, inner_h), interpolation=interpolation)
+        if normalize_blue:
+            model_bgr, normalization = normalize_blue_plan_for_cubicasa(resized_bgr)
+        else:
+            model_bgr = resized_bgr
+            normalization = {"applied": False, "mode": "original-fallback", "blue_coverage": 0.0}
+
+        rgb = cv2.cvtColor(model_bgr, cv2.COLOR_BGR2RGB)
+        normalized = rgb.astype(np.float32) / 255.0
         normalized = (normalized - IMAGENET_MEAN) / IMAGENET_STD
         canvas = np.zeros((image_size, image_size, 3), dtype=np.float32)
         top = (image_size - inner_h) // 2
@@ -157,22 +172,45 @@ class CubiCasaRuntime:
         with self.torch.inference_mode():
             logits = self.model(tensor)
             prediction = logits.argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
-        del logits, tensor, canvas, normalized, resized, rgb
+        del logits, tensor, canvas, normalized, rgb
+        if model_bgr is not resized_bgr:
+            del model_bgr
+        del resized_bgr
 
         crop = prediction[top:top + inner_h, left:left + inner_w]
         result = cv2.resize(crop, (w, h), interpolation=cv2.INTER_NEAREST)
         del crop, prediction
-        return result
+        return result, normalization
 
     def predict(self, image_bgr: np.ndarray) -> np.ndarray:
         """Fuse global context with overlapping high-resolution tiles.
 
-        Low-memory production keeps the same model and classes. The model canvas is
-        reduced while source tile windows scale proportionally so local wall/opening
-        detail is not discarded by one aggressive whole-page resize.
+        Blue/purple CAD strokes are recoloured to black only on each 352px model input.
+        The source image remains untouched for OCR, dimensions and preview. If the normalized
+        global pass produces virtually no wall class, the request safely falls back to the
+        original colours before tiled fusion.
         """
         h, w = image_bgr.shape[:2]
-        global_prediction = self._predict_single(image_bgr)
+        global_prediction, normalization = self._predict_single(image_bgr, normalize_blue=True)
+        wall_fraction = float(np.count_nonzero(global_prediction == 1)) / max(float(global_prediction.size), 1.0)
+        normalization = dict(normalization)
+        normalization["global_wall_fraction"] = round(wall_fraction, 6)
+
+        use_normalized_tiles = bool(normalization.get("applied"))
+        if use_normalized_tiles and wall_fraction < 0.001:
+            del global_prediction
+            _trim_process_memory()
+            global_prediction, _ = self._predict_single(image_bgr, normalize_blue=False)
+            fallback_fraction = float(np.count_nonzero(global_prediction == 1)) / max(float(global_prediction.size), 1.0)
+            normalization["fallback_original"] = True
+            normalization["mode"] = "blue-to-black-fallback-original"
+            normalization["fallback_global_wall_fraction"] = round(fallback_fraction, 6)
+            use_normalized_tiles = False
+        else:
+            normalization["fallback_original"] = False
+
+        self.last_input_normalization = normalization
+
         if not _truthy("FLOORPLAN_TILED_INFERENCE", True) or max(h, w) < 1200:
             _trim_process_memory()
             return global_prediction
@@ -200,7 +238,7 @@ class CubiCasaRuntime:
             crop = image_bgr[y0:y1, x0:x1]
             if crop.size == 0:
                 continue
-            tile_prediction = self._predict_single(crop)
+            tile_prediction, _ = self._predict_single(crop, normalize_blue=use_normalized_tiles)
             _add_packed_vote(packed_votes[y0:y1, x0:x1], tile_prediction, 2)
             del tile_prediction, crop
 
@@ -283,5 +321,10 @@ def model_status() -> dict[str, Any]:
         "low_memory": low_memory,
         "torch_threads": max(1, int(os.getenv("FLOORPLAN_TORCH_THREADS", "1" if low_memory else "2"))),
         "tiled_inference": _truthy("FLOORPLAN_TILED_INFERENCE", True),
+        "input_normalization": dict(runtime.last_input_normalization) if runtime is not None else {
+            "applied": False,
+            "mode": "original",
+            "blue_coverage": 0.0,
+        },
         "rss_kib": _current_rss_kib(),
     }

@@ -1,3 +1,7 @@
+import cv2
+import numpy as np
+
+from app.blue_input_normalizer import normalize_blue_plan_for_cubicasa
 from app.cubicasa_model import LOW_MEMORY_IMAGE_SIZE, _configured_dtype_name, _configured_image_size
 
 
@@ -36,3 +40,30 @@ def test_dtype_aliases_are_explicit(monkeypatch):
     assert _configured_dtype_name() == "bfloat16"
     monkeypatch.setenv("FLOORPLAN_DTYPE", "fp32")
     assert _configured_dtype_name() == "float32"
+
+
+def test_blue_cad_input_is_recoloured_black_without_touching_other_colours():
+    image = np.full((240, 320, 3), 255, dtype=np.uint8)
+    cv2.line(image, (30, 40), (290, 40), (220, 90, 30), 10)
+    cv2.line(image, (30, 190), (290, 190), (40, 170, 40), 2)
+    source = image.copy()
+
+    normalized, meta = normalize_blue_plan_for_cubicasa(image)
+
+    assert meta["applied"] is True
+    assert meta["mode"] == "blue-to-black"
+    assert tuple(int(v) for v in normalized[40, 100]) == (0, 0, 0)
+    assert int(normalized[190, 100, 1]) > int(normalized[190, 100, 0])
+    assert int(normalized[190, 100, 1]) > int(normalized[190, 100, 2])
+    assert np.array_equal(image, source)
+
+
+def test_black_line_plan_does_not_get_needless_colour_normalization():
+    image = np.full((160, 200, 3), 255, dtype=np.uint8)
+    cv2.rectangle(image, (20, 20), (180, 140), (0, 0, 0), 6)
+
+    normalized, meta = normalize_blue_plan_for_cubicasa(image)
+
+    assert meta["applied"] is False
+    assert meta["mode"] == "original"
+    assert np.array_equal(normalized, image)
