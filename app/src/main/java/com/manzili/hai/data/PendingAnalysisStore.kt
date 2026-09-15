@@ -28,6 +28,7 @@ class PendingAnalysisStore(context: Context) {
     )
 
     fun begin(workId: UUID, source: Uri, type: SaudiProjectTypeEngine.Type) {
+        ReaderLearningSessionStore(appContext).clear()
         prefs.edit()
             .putString(KEY_ACTIVE_WORK_ID, workId.toString())
             .putString(KEY_SOURCE_URI, source.toString())
