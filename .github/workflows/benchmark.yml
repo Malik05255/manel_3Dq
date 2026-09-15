@@ -44,8 +44,8 @@ jobs:
     env:
       # Match the live 512 MB Render profile exactly.
       FLOORPLAN_LOW_MEMORY: "true"
-      FLOORPLAN_IMAGE_SIZE: "384"
-      FLOORPLAN_DTYPE: "float16"
+      FLOORPLAN_IMAGE_SIZE: "352"
+      FLOORPLAN_DTYPE: "float32"
       FLOORPLAN_TORCH_THREADS: "1"
       FLOORPLAN_TILED_INFERENCE: "true"
       FLOORPLAN_TILE_OVERLAP: "0.30"
