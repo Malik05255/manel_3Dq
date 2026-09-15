@@ -5,10 +5,12 @@ import pathlib
 
 import cv2
 import numpy as np
+import torch
 
 from app.reader_training_dataset import materialize
 from app.reader_training_masks import CLASS_INDEX, render_mask
 from scripts.compare_reader_candidate import decide
+from scripts.train_reader_from_corrections import epoch
 
 
 def _reference():
@@ -68,6 +70,27 @@ def test_single_floor_correction_materializes_image_and_mask(tmp_path: pathlib.P
     mask = cv2.imread(str(output / "masks" / "hai-train-case1.png"), cv2.IMREAD_GRAYSCALE)
     assert mask is not None
     assert np.count_nonzero(mask == CLASS_INDEX["door"]) > 0
+
+
+def test_frozen_encoder_batchnorm_does_not_drift_during_training():
+    class TinyModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = torch.nn.Sequential(torch.nn.BatchNorm2d(3))
+            self.head = torch.nn.Conv2d(3, 4, kernel_size=1)
+
+        def forward(self, value):
+            return self.head(self.encoder(value))
+
+    model = TinyModel()
+    for parameter in model.encoder.parameters():
+        parameter.requires_grad = False
+    before = model.encoder[0].running_mean.detach().clone()
+    optimizer = torch.optim.AdamW(model.head.parameters(), lr=1e-3)
+    batch = [(torch.randn(2, 3, 8, 8), torch.zeros((2, 8, 8), dtype=torch.long))]
+    epoch(model, batch, torch.device("cpu"), optimizer)
+    assert model.encoder.training is False
+    assert torch.equal(before, model.encoder[0].running_mean)
 
 
 def _report(overall: float, opening: float = 0.93, count: int = 30, gate: str = "PASS"):
