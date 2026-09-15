@@ -15,6 +15,15 @@ import com.manzili.hai.ReaderLearningActivity
 object ReaderLearningNotifier {
     fun notify(context: Context, candidateCount: Int) {
         if (candidateCount <= 0) return
+
+        // In-app signal: lets the foreground launcher open the consent/review screen immediately.
+        // This never uploads anything; cloud sharing still requires the explicit button in ReaderLearningActivity.
+        context.sendBroadcast(
+            Intent(ACTION_CORRECTION_READY)
+                .setPackage(context.packageName)
+                .putExtra(EXTRA_CANDIDATE_COUNT, candidateCount)
+        )
+
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -57,6 +66,8 @@ object ReaderLearningNotifier {
         manager.notify(NOTIFICATION_ID, notification)
     }
 
+    const val ACTION_CORRECTION_READY = "com.manzili.hai.action.READER_CORRECTION_READY"
+    const val EXTRA_CANDIDATE_COUNT = "candidate_count"
     private const val CHANNEL_ID = "hai_reader_learning"
     private const val NOTIFICATION_ID = 4310
     private const val REQUEST_CODE = 4310
