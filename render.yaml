@@ -7,13 +7,14 @@ services:
     healthCheckPath: /readyz
     autoDeployTrigger: commit
     envVars:
-      # Reader V3 is the production reader. Modal remains fallback-only inside the gateway.
+      # Source-First Reader V4 is the only final geometry reader exposed to Android.
+      # The service URL keeps its historical v3 name to avoid breaking deployment wiring.
       - key: READER_PROVIDER_URL
         value: https://manzili-hai-reader-v3-final.onrender.com
       - key: READER_PROVIDER_TOKEN
         sync: false
       - key: READER_PROVIDER_NAME
-        value: hai-reader-v3
+        value: hai-source-first-v4
       - key: MODAL_READER_URL
         sync: false
       - key: MODAL_READER_TOKEN
@@ -35,7 +36,7 @@ services:
       - key: RENDER_WORKER_TOKEN
         sync: false
 
-  # OCR stays outside the 512 MB CubiCasa process so Tesseract cannot push Reader V3 over its memory limit.
+  # OCR stays outside the 512 MB CubiCasa process so Tesseract cannot push Source-First Reader V4 over its memory limit.
   # v2 was created cleanly with Python 3.12 pinned from its first build; the older service is intentionally not targeted.
   # Retired endpoint kept only for migration traceability: https://manzili-hai-ocr-ar-en.onrender.com
   - type: web
@@ -55,7 +56,8 @@ services:
       - key: TESSERACT_CONFIG
         value: "--psm 11"
 
-  # Production Reader V3 service. Keep this name stable because the gateway targets its public URL.
+  # Source-First Reader V4 runs behind the historical service name below.
+  # Keep this service name stable because the gateway targets its public URL.
   - type: web
     name: manzili-hai-reader-v3-final
     runtime: python
