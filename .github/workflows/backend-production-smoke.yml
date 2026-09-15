@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BACKEND_URL: ${{ secrets.MANZILI_PROD_BACKEND_URL || 'https://manzili-hai-deep-parser.onrender.com' }}
-      READER_URL: https://manzili-hai-reader-v2.onrender.com
+      READER_URL: https://manzili-hai-reader-v3-final.onrender.com
     steps:
       - name: Wait for Reader V3 production deployment
         shell: bash

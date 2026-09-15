@@ -63,7 +63,7 @@ jobs:
 
       - name: Import cloud gateway
         env:
-          READER_PROVIDER_URL: https://manzili-hai-reader-v2.onrender.com
+          READER_PROVIDER_URL: https://manzili-hai-reader-v3-final.onrender.com
           READER_PROVIDER_NAME: hai-reader-v3
         run: |
           PYTHONPATH=backend python - <<'PY'
@@ -87,14 +87,31 @@ jobs:
           grep -q 'pip install -r backend/requirements-gateway.txt' render.yaml
           grep -q 'uvicorn app.cloud_public_gateway:app' render.yaml
           grep -q 'READER_PROVIDER_URL' render.yaml
-          grep -q 'https://manzili-hai-reader-v2.onrender.com' render.yaml
+          grep -q 'https://manzili-hai-reader-v3-final.onrender.com' render.yaml
           grep -q 'READER_PROVIDER_TOKEN' render.yaml
           grep -q 'READER_PROVIDER_NAME' render.yaml
           grep -q 'hai-reader-v3' render.yaml
-          grep -q 'manzili-hai-reader-v2' render.yaml
-          grep -q 'Dockerfile.reader' render.yaml
+          grep -q 'manzili-hai-reader-v3-final' render.yaml
+          grep -q 'pip install -r backend/requirements-reader-v3.txt' render.yaml
+          grep -q 'uvicorn app.reader_main:app' render.yaml
+          grep -q '/opt/render/project/src/backend/models/floorplan/best.safetensors' render.yaml
           grep -q 'FLOORPLAN_TILED_INFERENCE' render.yaml
           grep -q 'FLOORPLAN_MAX_TILES' render.yaml
+
+      - name: Verify CPU-only compatibility dependency set
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q '^cryptography==45.0.7$' backend/requirements-ml-cpu.txt
+          grep -q '^torch==2.14.0+cpu$' backend/requirements-ml-cpu.txt
+          grep -q '^torchvision==0.29.0+cpu$' backend/requirements-ml-cpu.txt
+          grep -q 'download.pytorch.org/whl/cpu' backend/requirements-ml-cpu.txt
+          ! grep -q '^-r requirements.txt$' backend/requirements-ml-cpu.txt
+
+      - name: Verify portable Docker Reader V3 image
+        shell: bash
+        run: |
+          set -euo pipefail
           grep -q 'pip install --no-cache-dir -r requirements.txt' backend/Dockerfile.reader
           grep -q 'FLOORPLAN_SAFETENSORS_MODEL=/opt/manzili/models/floorplan/best.safetensors' backend/Dockerfile.reader
           grep -q 'fetch_floorplan_model.py' backend/Dockerfile.reader
