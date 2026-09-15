@@ -41,6 +41,14 @@ concurrency:
 jobs:
   validate-and-measure:
     runs-on: ubuntu-latest
+    env:
+      # Match the live 512 MB Render service so benchmark improvements cannot depend on a larger CI profile.
+      FLOORPLAN_LOW_MEMORY: "true"
+      FLOORPLAN_IMAGE_SIZE: "384"
+      FLOORPLAN_TORCH_THREADS: "1"
+      FLOORPLAN_TILED_INFERENCE: "true"
+      FLOORPLAN_TILE_OVERLAP: "0.30"
+      FLOORPLAN_MAX_TILES: "12"
     steps:
       - uses: actions/checkout@v5
 
