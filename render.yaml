@@ -48,8 +48,20 @@ services:
         sync: false
       - key: FLOORPLAN_SAFETENSORS_MODEL
         value: /opt/render/project/src/backend/models/floorplan/best.safetensors
+      # Free Render has 512 MB. FP32 is much faster than CPU FP16; memory is reduced by
+      # a 352 canvas, one CPU thread, packed tile votes and explicit allocator trimming.
+      - key: FLOORPLAN_LOW_MEMORY
+        value: "true"
+      - key: FLOORPLAN_IMAGE_SIZE
+        value: "352"
+      - key: FLOORPLAN_DTYPE
+        value: "float32"
+      - key: FLOORPLAN_TORCH_THREADS
+        value: "1"
       - key: FLOORPLAN_TILED_INFERENCE
         value: "true"
+      - key: FLOORPLAN_TILE_OVERLAP
+        value: "0.30"
       - key: FLOORPLAN_MAX_TILES
         value: "12"
 
