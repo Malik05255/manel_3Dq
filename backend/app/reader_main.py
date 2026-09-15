@@ -12,6 +12,7 @@ from .cubicasa_model import load_cubicasa_runtime, model_status
 from .ocr_reader import cloud_ocr_engine_name
 from .parser_v3 import parse_floorplan
 from .room_recovery import enhance_blue_room_topology
+from .wall_detail_recovery import enhance_blue_wall_details
 
 app = FastAPI(title="Manzili HAI Reader V3", version="3.0.0")
 
@@ -34,7 +35,8 @@ def _authorize(authorization: str | None) -> None:
 
 def _parse_with_topology_recovery(image_base64: str) -> dict[str, Any]:
     result = parse_floorplan(image_base64)
-    return enhance_blue_room_topology(image_base64, result)
+    result = enhance_blue_room_topology(image_base64, result)
+    return enhance_blue_wall_details(image_base64, result)
 
 
 @app.on_event("startup")
@@ -56,7 +58,7 @@ async def health() -> dict[str, Any]:
         "reader": "cubicasa-unet-resnet34-v3",
         "version": app.version,
         "local_segmentation_configured": ready,
-        "strategy": "semantic-segmentation-wall-centrelines+blue-room-topology+door-window-masks+ocr",
+        "strategy": "semantic-segmentation-wall-centrelines+blue-room-topology+blue-wall-detail+door-window-masks+ocr",
         "model": runtime,
         "ocr": cloud_ocr_engine_name(),
     }

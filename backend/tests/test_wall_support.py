@@ -4,8 +4,10 @@ import math
 import cv2
 import numpy as np
 
+from app.blue_detail_vectorizer import vectorize_blue_detail_walls
 from app.room_recovery import enhance_blue_room_topology
 from app.source_vectorizer import vectorize_source_walls
+from app.wall_detail_recovery import enhance_blue_wall_details
 from app.wall_support import validate_wall_image_support
 
 
@@ -135,3 +137,83 @@ def test_blue_room_topology_closes_door_gaps_without_changing_wall_vectors():
     assert updated["geometry_recovery"]["room_recovery_used"] is True
     assert updated["geometry_recovery"]["room_count_before"] == 2
     assert updated["geometry_recovery"]["room_count_after"] >= 8
+
+
+def _blue_detail_fixture() -> np.ndarray:
+    image = np.full((900, 1200, 3), 250, dtype=np.uint8)
+    blue = (185, 105, 55)
+    cv2.rectangle(image, (100, 100), (1100, 800), blue, 12)
+
+    # Interior vertical wall with a real door gap.
+    cv2.line(image, (430, 100), (430, 300), blue, 12)
+    cv2.line(image, (430, 365), (430, 800), blue, 12)
+
+    # Short service-room partition that the old full-page threshold could discard.
+    cv2.line(image, (430, 610), (565, 610), blue, 12)
+
+    # Small diagonal entrance wall, representative of the reported plan.
+    cv2.line(image, (690, 705), (770, 765), blue, 12)
+    return image
+
+
+def test_blue_detail_vectorizer_preserves_door_gap_short_wall_and_diagonal():
+    image = _blue_detail_fixture()
+    walls, meta = vectorize_blue_detail_walls(image)
+
+    assert meta["usable"] is True
+    assert meta["door_gap_heal_px"] < 20
+    assert meta["diagonal_count"] >= 1
+
+    # The x=430 divider must remain two segments; no wall may bridge the door opening.
+    divider_x = 430 / 1200 * 100.0
+    divider = [
+        wall for wall in walls
+        if wall.get("axis") == "v"
+        and abs(float(wall["start"]["x"]) - divider_x) <= 1.5
+    ]
+    assert len(divider) >= 2
+    door_top = 300 / 900 * 100.0
+    door_bottom = 365 / 900 * 100.0
+    assert not any(
+        min(float(wall["start"]["y"]), float(wall["end"]["y"])) < door_top
+        and max(float(wall["start"]["y"]), float(wall["end"]["y"])) > door_bottom
+        for wall in divider
+    )
+
+    # The 135 px short partition must survive vectorisation.
+    short_wall = [
+        wall for wall in walls
+        if wall.get("axis") == "h"
+        and 64.0 <= float(wall["start"]["y"]) <= 72.0
+        and 8.0 <= abs(float(wall["end"]["x"]) - float(wall["start"]["x"])) <= 16.0
+    ]
+    assert short_wall
+
+
+def test_blue_wall_detail_recovery_keeps_rooms_and_refines_only_blue_path():
+    image = _blue_detail_fixture()
+    detailed, meta = vectorize_blue_detail_walls(image)
+    assert meta["usable"] is True
+    assert len(detailed) >= 7
+
+    ok, encoded = cv2.imencode(".png", image)
+    assert ok
+    image_base64 = base64.b64encode(encoded.tobytes()).decode("ascii")
+
+    coarse = detailed[: max(5, len(detailed) - 2)]
+    rooms = [{"id": "room-1", "name": "غرفة", "polygon": [], "confidence": 78}]
+    result = {
+        "walls": coarse,
+        "rooms": rooms,
+        "openings": [],
+        "geometry_recovery": {"selected": "blue-raster", "room_recovery_used": True},
+        "quality": {"wall_topology": 20},
+        "warnings": [],
+    }
+
+    updated = enhance_blue_wall_details(image_base64, result)
+
+    assert updated["rooms"] == rooms
+    assert updated["geometry_recovery"]["wall_detail_recovery_used"] is True
+    assert updated["geometry_recovery"]["wall_count_after_detail"] == len(detailed)
+    assert updated["quality"]["wall_detail_recovery"] == "blue-source-door-gap-aware"
