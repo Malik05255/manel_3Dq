@@ -35,6 +35,22 @@ services:
       - key: RENDER_WORKER_TOKEN
         sync: false
 
+  # OCR stays outside the 512 MB CubiCasa process so Tesseract cannot push Reader V3 over its memory limit.
+  - type: web
+    name: manzili-hai-ocr-ar-en
+    runtime: python
+    buildCommand: pip install -r backend/requirements-ocr-service.txt && python backend/scripts/install_portable_tesseract.py
+    startCommand: cd backend && uvicorn app.ocr_main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /readyz
+    autoDeployTrigger: commit
+    envVars:
+      - key: OCR_SERVICE_TOKEN
+        sync: false
+      - key: TESSERACT_LANG
+        value: ara+eng
+      - key: TESSERACT_CONFIG
+        value: "--psm 11"
+
   # Production Reader V3 service. Keep this name stable because the gateway targets its public URL.
   - type: web
     name: manzili-hai-reader-v3-final
@@ -48,6 +64,14 @@ services:
         sync: false
       - key: FLOORPLAN_SAFETENSORS_MODEL
         value: /opt/render/project/src/backend/models/floorplan/best.safetensors
+      - key: OCR_PROVIDER_URL
+        value: https://manzili-hai-ocr-ar-en.onrender.com
+      - key: OCR_PROVIDER_TOKEN
+        sync: false
+      - key: OCR_PROVIDER_TIMEOUT
+        value: "75"
+      - key: OCR_PROVIDER_MAX_DIM
+        value: "2400"
       # Free Render has 512 MB. FP32 is much faster than CPU FP16; memory is reduced by
       # a 352 canvas, one CPU thread, packed tile votes and explicit allocator trimming.
       - key: FLOORPLAN_LOW_MEMORY

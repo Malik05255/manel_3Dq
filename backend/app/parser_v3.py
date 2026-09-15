@@ -6,7 +6,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from .cubicasa_model import CLASS_NAMES, MODEL_LICENSE, MODEL_NAME, load_cubicasa_runtime, model_status
+from .cubicasa_model import CLASS_NAMES, MODEL_LICENSE, MODEL_NAME, _trim_process_memory, load_cubicasa_runtime, model_status
 from .ocr_reader import cloud_ocr_engine_name, cloud_ocr_reader
 from .parser import _decode_image, _extract_enclosed_rooms, _extract_openings, _label_rooms_from_ocr
 from .parser_accuracy import dimension_evidence, precision_rotated_ocr, wall_topology_score
@@ -156,6 +156,17 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
     openings = _extract_openings(door_mask, "door", 90) + _extract_openings(window_mask, "window", 90)
     openings = assign_openings_to_walls(openings, walls)
 
+    # Coverage is the final consumer of the semantic prediction. Drop prediction + masks
+    # before OCR preprocessing so the 512 MB Reader service regains headroom for CLAHE,
+    # resize and request encoding while Tesseract itself runs in the isolated OCR service.
+    total = max(float(prediction.size), 1.0)
+    coverage = {
+        name: round(float(np.count_nonzero(prediction == index)) / total, 5)
+        for index, name in enumerate(CLASS_NAMES)
+    }
+    del prediction, wall_mask, door_mask, window_mask
+    _trim_process_memory()
+
     reader = cloud_ocr_reader()
     ocr_lines, ocr_meta = adaptive_ocr(image, reader)
     ocr_lines, rotated_passes = precision_rotated_ocr(image, reader, ocr_lines)
@@ -180,11 +191,6 @@ def parse_floorplan(image_base64: str) -> dict[str, Any]:
     if topology < 25 and walls:
         quality["overall_verified"] = min(int(quality.get("overall_verified", 0)), 70)
 
-    total = max(float(prediction.size), 1.0)
-    coverage = {
-        name: round(float(np.count_nonzero(prediction == index)) / total, 5)
-        for index, name in enumerate(CLASS_NAMES)
-    }
     warnings: list[str] = []
     if not rooms:
         warnings.append("CubiCasa detected wall structure but no reliable enclosed room regions; manual review is required.")

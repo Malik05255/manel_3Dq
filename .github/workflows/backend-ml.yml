@@ -6,6 +6,7 @@ on:
     paths:
       - 'backend/app/benchmark_metrics.py'
       - 'backend/app/cubicasa_model.py'
+      - 'backend/app/ocr_main.py'
       - 'backend/app/ocr_reader.py'
       - 'backend/app/parser.py'
       - 'backend/app/parser_v2.py'
@@ -17,10 +18,13 @@ on:
       - 'backend/app/source_vectorizer.py'
       - 'backend/app/wall_support.py'
       - 'backend/scripts/fetch_floorplan_model.py'
+      - 'backend/scripts/install_portable_tesseract.py'
       - 'backend/tests/test_cubicasa_runtime_config.py'
+      - 'backend/tests/test_ocr_reader.py'
       - 'backend/tests/test_wall_support.py'
       - 'backend/tests/test_benchmark_metrics.py'
       - 'backend/requirements-reader-v3.txt'
+      - 'backend/requirements-ocr-service.txt'
       - 'backend/requirements-ml-cpu.txt'
       - 'backend/Dockerfile.reader'
       - 'render.yaml'
@@ -30,6 +34,7 @@ on:
     paths:
       - 'backend/app/benchmark_metrics.py'
       - 'backend/app/cubicasa_model.py'
+      - 'backend/app/ocr_main.py'
       - 'backend/app/ocr_reader.py'
       - 'backend/app/parser.py'
       - 'backend/app/parser_v2.py'
@@ -41,10 +46,13 @@ on:
       - 'backend/app/source_vectorizer.py'
       - 'backend/app/wall_support.py'
       - 'backend/scripts/fetch_floorplan_model.py'
+      - 'backend/scripts/install_portable_tesseract.py'
       - 'backend/tests/test_cubicasa_runtime_config.py'
+      - 'backend/tests/test_ocr_reader.py'
       - 'backend/tests/test_wall_support.py'
       - 'backend/tests/test_benchmark_metrics.py'
       - 'backend/requirements-reader-v3.txt'
+      - 'backend/requirements-ocr-service.txt'
       - 'backend/requirements-ml-cpu.txt'
       - 'backend/Dockerfile.reader'
       - 'render.yaml'
@@ -75,14 +83,46 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: backend/requirements-reader-v3.txt
+          cache-dependency-path: |
+            backend/requirements-reader-v3.txt
+            backend/requirements-ocr-service.txt
 
-      - name: Install Arabic English OCR for CI contract coverage
-        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
-        working-directory: .
+      - name: Install production Reader and OCR dependencies
+        run: pip install -r requirements-reader-v3.txt -r requirements-ocr-service.txt pytest==8.4.1
 
-      - name: Install production Reader V3 dependencies
-        run: pip install -r requirements-reader-v3.txt pytest==8.4.1 pytesseract==0.3.13
+      - name: Install and verify portable Arabic English Tesseract
+        run: python scripts/install_portable_tesseract.py
+
+      - name: Verify isolated OCR service and languages
+        env:
+          OCR_PROVIDER_URL: ""
+          TESSERACT_LANG: ara+eng
+          TESSERACT_CONFIG: "--psm 11"
+        run: |
+          python - <<'PY'
+          import cv2
+          import numpy as np
+          from app.ocr_main import app as ocr_app
+          from app.ocr_reader import cloud_ocr_engine_name, cloud_ocr_reader
+
+          cloud_ocr_reader.cache_clear()
+          assert ocr_app.title == 'Manzili HAI Arabic OCR'
+          assert any(getattr(route, 'path', '') == '/v1/ocr' for route in ocr_app.routes)
+          assert any(getattr(route, 'path', '') == '/readyz' for route in ocr_app.routes)
+          assert cloud_ocr_engine_name() == 'tesseract-ara-eng'
+          reader = cloud_ocr_reader()
+          assert reader is not None
+
+          image = np.full((220, 720, 3), 255, dtype=np.uint8)
+          cv2.putText(image, 'ROOM 3.50', (30, 135), cv2.FONT_HERSHEY_SIMPLEX, 2.1, (0, 0, 0), 5, cv2.LINE_AA)
+          result = reader.readtext(image, detail=1, paragraph=False)
+          joined = ' '.join(str(item[1]) for item in result if len(item) >= 2)
+          assert '3.50' in joined or '3.5' in joined, joined
+          print('Portable OCR ok; engine=tesseract-ara-eng; sample=', joined)
+          PY
+
+      - name: Test remote OCR adapter contract
+        run: PYTHONPATH=. pytest -q tests/test_ocr_reader.py
 
       - name: Fetch and verify locked CubiCasa weights
         env:
@@ -110,7 +150,6 @@ jobs:
           assert isinstance(loaded.get('rss_kib'), int), loaded
           assert loaded['rss_kib'] < render_limit_kib, loaded
 
-          # Large enough to force the real tiled path used by phone/PDF floor plans.
           image = np.full((1400, 1800, 3), 255, dtype=np.uint8)
           cv2.rectangle(image, (100, 100), (1700, 1300), (0, 0, 0), 16)
           cv2.line(image, (900, 100), (900, 1300), (0, 0, 0), 12)
@@ -126,25 +165,28 @@ jobs:
           print('CubiCasa FP32 tiled low-memory inference ok', prediction.shape, 'current_rss_kib=', after['rss_kib'], 'historical_peak_kib=', peak_kib, after)
           PY
 
-      - name: Verify Reader V3 service contract
+      - name: Verify Reader V3 service uses remote OCR contract
         env:
           FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
+          OCR_PROVIDER_URL: https://ocr.invalid
+          OCR_PROVIDER_TOKEN: ci-token
         run: |
           python - <<'PY'
-          from app.ocr_reader import cloud_ocr_engine_name
+          from app.ocr_reader import cloud_ocr_engine_name, cloud_ocr_reader
           from app.reader_main import app
           from app.cubicasa_model import load_cubicasa_runtime, model_status
 
+          cloud_ocr_reader.cache_clear()
           assert app.title == 'Manzili HAI Reader V3'
           assert app.version == '3.0.0'
           assert any(getattr(route, 'path', '') == '/v2/parse' for route in app.routes)
           assert any(getattr(route, 'path', '') == '/readyz' for route in app.routes)
-          assert cloud_ocr_engine_name() == 'tesseract-ara-eng'
+          assert cloud_ocr_engine_name() == 'remote-tesseract-ara-eng'
           assert load_cubicasa_runtime() is not None
           status = model_status()
           assert status['image_size'] == 352
           assert status['dtype'] == 'float32'
-          print('Reader V3 service contract ok; CubiCasa FP32 low-memory profile loaded; OCR=tesseract-ara-eng')
+          print('Reader V3 service contract ok; CubiCasa low-memory + remote Arabic OCR')
           PY
 
       - name: Test low-memory config, geometry and benchmark scoring gates
