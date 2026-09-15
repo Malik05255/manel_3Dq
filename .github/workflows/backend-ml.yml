@@ -16,6 +16,7 @@ on:
       - 'backend/app/reader_main.py'
       - 'backend/app/source_vectorizer.py'
       - 'backend/app/wall_support.py'
+      - 'backend/scripts/fetch_floorplan_model.py'
       - 'backend/tests/test_wall_support.py'
       - 'backend/tests/test_benchmark_metrics.py'
       - 'backend/requirements.txt'
@@ -37,6 +38,7 @@ on:
       - 'backend/app/reader_main.py'
       - 'backend/app/source_vectorizer.py'
       - 'backend/app/wall_support.py'
+      - 'backend/scripts/fetch_floorplan_model.py'
       - 'backend/tests/test_wall_support.py'
       - 'backend/tests/test_benchmark_metrics.py'
       - 'backend/requirements.txt'
@@ -70,18 +72,49 @@ jobs:
       - name: Install Reader V3 dependencies
         run: pip install -r requirements.txt pytest==8.4.1
 
+      - name: Fetch and verify locked CubiCasa weights
+        env:
+          FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
+        run: python scripts/fetch_floorplan_model.py
+
+      - name: Load CubiCasa model and run real inference smoke
+        env:
+          FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
+          FLOORPLAN_TILED_INFERENCE: "false"
+        run: |
+          python - <<'PY'
+          import cv2
+          import numpy as np
+          from app.cubicasa_model import CLASS_NAMES, load_cubicasa_runtime, model_status
+
+          runtime = load_cubicasa_runtime()
+          assert runtime is not None, model_status()
+          image = np.full((320, 480, 3), 255, dtype=np.uint8)
+          cv2.rectangle(image, (40, 40), (440, 280), (0, 0, 0), 10)
+          prediction = runtime.predict(image)
+          assert prediction.shape == image.shape[:2]
+          assert int(prediction.min()) >= 0
+          assert int(prediction.max()) < len(CLASS_NAMES)
+          assert model_status().get('configured') is True
+          print('CubiCasa runtime load + inference ok', prediction.shape, sorted(set(prediction.ravel().tolist())))
+          PY
+
       - name: Verify Reader V3 service contract
+        env:
+          FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
         run: |
           python - <<'PY'
           from app.ocr_reader import cloud_ocr_engine_name
           from app.reader_main import app
+          from app.cubicasa_model import load_cubicasa_runtime
 
           assert app.title == 'Manzili HAI Reader V3'
           assert app.version == '3.0.0'
           assert any(getattr(route, 'path', '') == '/v2/parse' for route in app.routes)
           assert any(getattr(route, 'path', '') == '/readyz' for route in app.routes)
           assert cloud_ocr_engine_name() == 'tesseract-ara-eng'
-          print('Reader V3 service contract ok; OCR=tesseract-ara-eng')
+          assert load_cubicasa_runtime() is not None
+          print('Reader V3 service contract ok; CubiCasa loaded; OCR=tesseract-ara-eng')
           PY
 
       - name: Test geometry and benchmark scoring gates
