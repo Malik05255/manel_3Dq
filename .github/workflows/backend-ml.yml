@@ -89,7 +89,7 @@ jobs:
           FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
         run: python scripts/fetch_floorplan_model.py
 
-      - name: Load CubiCasa model and run real low-memory inference smoke
+      - name: Load CubiCasa model and stay below Render 512 MB during tiled inference
         env:
           FLOORPLAN_SAFETENSORS_MODEL: ${{ runner.temp }}/floorplan/best.safetensors
         run: |
@@ -99,21 +99,31 @@ jobs:
           import resource
           from app.cubicasa_model import CLASS_NAMES, load_cubicasa_runtime, model_status
 
+          render_limit_kib = 512 * 1024
           runtime = load_cubicasa_runtime()
           assert runtime is not None, model_status()
-          status = model_status()
-          assert status.get('image_size') == 384, status
-          assert status.get('dtype') == 'float16', status
-          assert status.get('low_memory') is True, status
-          assert status.get('torch_threads') == 1, status
-          image = np.full((320, 480, 3), 255, dtype=np.uint8)
-          cv2.rectangle(image, (40, 40), (440, 280), (0, 0, 0), 10)
+          loaded = model_status()
+          assert loaded.get('image_size') == 384, loaded
+          assert loaded.get('dtype') == 'float16', loaded
+          assert loaded.get('low_memory') is True, loaded
+          assert loaded.get('torch_threads') == 1, loaded
+          assert isinstance(loaded.get('rss_kib'), int), loaded
+          assert loaded['rss_kib'] < render_limit_kib, loaded
+
+          # Large enough to force the real tiled path used by phone/PDF floor plans.
+          image = np.full((1400, 1800, 3), 255, dtype=np.uint8)
+          cv2.rectangle(image, (100, 100), (1700, 1300), (0, 0, 0), 16)
+          cv2.line(image, (900, 100), (900, 1300), (0, 0, 0), 12)
           prediction = runtime.predict(image)
           assert prediction.shape == image.shape[:2]
           assert int(prediction.min()) >= 0
           assert int(prediction.max()) < len(CLASS_NAMES)
+
+          after = model_status()
+          assert isinstance(after.get('rss_kib'), int), after
+          assert after['rss_kib'] < render_limit_kib, after
           peak_kib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-          print('CubiCasa low-memory inference ok', prediction.shape, 'peak_kib=', peak_kib, status)
+          print('CubiCasa tiled low-memory inference ok', prediction.shape, 'current_rss_kib=', after['rss_kib'], 'historical_peak_kib=', peak_kib, after)
           PY
 
       - name: Verify Reader V3 service contract
