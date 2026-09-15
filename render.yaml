@@ -37,6 +37,7 @@ services:
 
   # OCR stays outside the 512 MB CubiCasa process so Tesseract cannot push Reader V3 over its memory limit.
   # v2 was created cleanly with Python 3.12 pinned from its first build; the older service is intentionally not targeted.
+  # Retired endpoint kept only for migration traceability: https://manzili-hai-ocr-ar-en.onrender.com
   - type: web
     name: manzili-hai-ocr-ar-en-v2
     runtime: python
