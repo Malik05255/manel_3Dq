@@ -10,6 +10,8 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .blue_input_normalizer import normalize_blue_plan_for_cubicasa
+
 MODEL_NAME = "Yytsi/floorplan-to-3d-walls"
 MODEL_LICENSE = "MIT"
 MODEL_SHA256 = "d7f6a0fd06e2931aecfc8c4849192c5e153701578026efc78d9a6246731a8d6c"
@@ -132,6 +134,11 @@ class CubiCasaRuntime:
         self.image_size = image_size
         self.dtype = dtype
         self.dtype_name = dtype_name
+        self.last_input_normalization: dict[str, Any] = {
+            "applied": False,
+            "mode": "original",
+            "blue_coverage": 0.0,
+        }
 
     def _predict_single(self, image_bgr: np.ndarray) -> np.ndarray:
         h, w = image_bgr.shape[:2]
@@ -167,13 +174,20 @@ class CubiCasaRuntime:
     def predict(self, image_bgr: np.ndarray) -> np.ndarray:
         """Fuse global context with overlapping high-resolution tiles.
 
+        Blue/purple CAD plans are first recoloured to black line-art for CubiCasa only.
+        The caller's source image remains unchanged for OCR, dimensions and UI preview.
         Low-memory production keeps the same model and classes. The model canvas is
         reduced while source tile windows scale proportionally so local wall/opening
         detail is not discarded by one aggressive whole-page resize.
         """
-        h, w = image_bgr.shape[:2]
-        global_prediction = self._predict_single(image_bgr)
+        model_image, normalization = normalize_blue_plan_for_cubicasa(image_bgr)
+        self.last_input_normalization = dict(normalization)
+
+        h, w = model_image.shape[:2]
+        global_prediction = self._predict_single(model_image)
         if not _truthy("FLOORPLAN_TILED_INFERENCE", True) or max(h, w) < 1200:
+            if model_image is not image_bgr:
+                del model_image
             _trim_process_memory()
             return global_prediction
 
@@ -197,7 +211,7 @@ class CubiCasaRuntime:
         del global_prediction
 
         for x0, y0, x1, y1 in windows:
-            crop = image_bgr[y0:y1, x0:x1]
+            crop = model_image[y0:y1, x0:x1]
             if crop.size == 0:
                 continue
             tile_prediction = self._predict_single(crop)
@@ -206,6 +220,8 @@ class CubiCasaRuntime:
 
         result = _packed_argmax(packed_votes)
         del packed_votes
+        if model_image is not image_bgr:
+            del model_image
         _trim_process_memory()
         return result
 
@@ -283,5 +299,10 @@ def model_status() -> dict[str, Any]:
         "low_memory": low_memory,
         "torch_threads": max(1, int(os.getenv("FLOORPLAN_TORCH_THREADS", "1" if low_memory else "2"))),
         "tiled_inference": _truthy("FLOORPLAN_TILED_INFERENCE", True),
+        "input_normalization": dict(runtime.last_input_normalization) if runtime is not None else {
+            "applied": False,
+            "mode": "original",
+            "blue_coverage": 0.0,
+        },
         "rss_kib": _current_rss_kib(),
     }
