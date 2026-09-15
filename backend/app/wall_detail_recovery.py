@@ -3,8 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 from .blue_detail_vectorizer import vectorize_blue_detail_walls
+from .blue_wall_cleanup import clean_normalized_blue_walls
 from .cubicasa_model import _trim_process_memory
-from .parser import _decode_image
+from .parser import _blue_wall_mask, _decode_image
 from .parser_accuracy import wall_topology_score
 from .parser_quality import assign_openings_to_walls
 
@@ -38,6 +39,10 @@ def enhance_blue_wall_details(image_base64: str, result: dict[str, Any]) -> dict
         if not bool(meta.get("usable")):
             return result
 
+        cleaned, cleanup_meta = clean_normalized_blue_walls(_blue_wall_mask(image), detailed)
+        if len(cleaned) >= 5:
+            detailed = cleaned
+
         lower, upper = _wall_count_bounds(len(current_walls))
         if not (lower <= len(detailed) <= upper):
             return result
@@ -46,8 +51,6 @@ def enhance_blue_wall_details(image_base64: str, result: dict[str, Any]) -> dict
         detail_topology = wall_topology_score(detailed)
         diagonal_count = int(meta.get("diagonal_count") or 0)
 
-        # Never trade a coherent graph for a much more fragmented one. A modest topology
-        # decrease is allowed only when the source reveals genuine diagonal/short details.
         tolerance = 14 if diagonal_count > 0 else 9
         if detail_topology + tolerance < current_topology:
             return result
@@ -65,23 +68,29 @@ def enhance_blue_wall_details(image_base64: str, result: dict[str, Any]) -> dict
             "wall_count_after_detail": len(detailed),
             "wall_topology_before_detail": current_topology,
             "wall_topology_after_detail": detail_topology,
-            "wall_detail_mode": "blue-source-door-gap-aware",
+            "wall_detail_mode": "blue-source-structural-core-cleanup",
             "wall_detail_diagonal_count": diagonal_count,
             "wall_detail_min_segment_px": int(meta.get("min_segment_px") or 0),
             "wall_detail_gap_heal_px": int(meta.get("door_gap_heal_px") or 0),
+            "wall_cleanup_input_count": int(cleanup_meta.get("input_count") or len(detailed)),
+            "wall_cleanup_output_count": int(cleanup_meta.get("output_count") or len(detailed)),
+            "wall_cleanup_rejected_thin": int(cleanup_meta.get("rejected_thin") or 0),
+            "wall_cleanup_merged": int(cleanup_meta.get("merged") or 0),
         })
         updated["geometry_recovery"] = recovery
 
         quality = dict(updated.get("quality") or {})
         quality["wall_topology"] = detail_topology
-        quality["wall_detail_recovery"] = "blue-source-door-gap-aware"
+        quality["wall_detail_recovery"] = "blue-source-structural-core-cleanup"
         quality["wall_count_before_detail"] = len(current_walls)
         quality["wall_count_after_detail"] = len(detailed)
+        quality["wall_cleanup_rejected_thin"] = int(cleanup_meta.get("rejected_thin") or 0)
+        quality["wall_cleanup_merged"] = int(cleanup_meta.get("merged") or 0)
         updated["quality"] = quality
 
         warnings = list(updated.get("warnings") or [])
         warnings.append(
-            "Blue CAD wall details were refined from source pixels while preserving door-sized gaps; review before 3D."
+            "Blue CAD walls were filtered by structural stroke thickness and de-duplicated while preserving door-sized gaps; review before 3D."
         )
         updated["warnings"] = warnings
         return updated
