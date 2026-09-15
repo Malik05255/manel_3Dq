@@ -1,1 +1,2 @@
--r requirements-gateway.txt
+# Keep benchmark/evaluation on the exact production Reader V3 dependency set.
+-r requirements.txt
