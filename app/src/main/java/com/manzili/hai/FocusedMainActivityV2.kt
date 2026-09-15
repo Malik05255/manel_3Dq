@@ -4,10 +4,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.core.content.ContextCompat
 import com.manzili.hai.data.ReaderLearningNotifier
 
 /**
@@ -35,13 +35,12 @@ class FocusedMainActivityV2 : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         if (!correctionReceiverRegistered) {
-            val filter = IntentFilter(ReaderLearningNotifier.ACTION_CORRECTION_READY)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(correctionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                @Suppress("DEPRECATION")
-                registerReceiver(correctionReceiver, filter)
-            }
+            ContextCompat.registerReceiver(
+                this,
+                correctionReceiver,
+                IntentFilter(ReaderLearningNotifier.ACTION_CORRECTION_READY),
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
             correctionReceiverRegistered = true
         }
     }
