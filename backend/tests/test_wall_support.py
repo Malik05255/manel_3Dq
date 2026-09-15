@@ -47,7 +47,7 @@ def test_keeps_supported_diagonal():
 
 def test_blue_source_vectorizer_ignores_black_phantom_overlay():
     image = np.full((600, 820, 3), 255, dtype=np.uint8)
-    wall_blue = (220, 145, 80)  # BGR: architectural blue/purple stroke
+    wall_blue = (220, 145, 80)
 
     cv2.rectangle(image, (80, 70), (740, 530), wall_blue, 12)
     cv2.line(image, (350, 70), (350, 360), wall_blue, 12)
@@ -55,8 +55,6 @@ def test_blue_source_vectorizer_ignores_black_phantom_overlay():
     cv2.line(image, (520, 260), (740, 260), wall_blue, 12)
     cv2.line(image, (520, 260), (520, 530), wall_blue, 12)
 
-    # Simulate exactly the old failure mode: a stale black diagonal/polyline overlay
-    # crosses real rooms. It must never become source geometry on a coloured CAD plan.
     cv2.line(image, (120, 120), (680, 500), (20, 20, 20), 4)
     cv2.line(image, (130, 500), (680, 330), (20, 20, 20), 4)
 
@@ -88,8 +86,6 @@ def test_source_vectorizer_collapses_thick_wall_edges_to_centerlines():
     walls, meta = vectorize_source_walls(image)
 
     assert meta["authoritative"] is True
-    # A thick rectangle plus one divider is five structural centrelines, not ten-plus
-    # Hough edges. Small segmentation details may add one or two fragments.
     assert len(walls) <= 8
     assert meta["horizontal_count"] <= 3
     assert meta["vertical_count"] <= 4
@@ -100,7 +96,6 @@ def test_blue_room_topology_closes_door_gaps_without_changing_wall_vectors():
     blue = (185, 105, 55)
     cv2.rectangle(image, (100, 100), (1100, 800), blue, 12)
 
-    # 3 x 3 rooms with door-sized gaps through every internal partition.
     for x in (433, 766):
         cv2.line(image, (x, 100), (x, 285), blue, 12)
         cv2.line(image, (x, 335), (x, 585), blue, 12)
@@ -144,14 +139,11 @@ def _blue_detail_fixture() -> np.ndarray:
     blue = (185, 105, 55)
     cv2.rectangle(image, (100, 100), (1100, 800), blue, 12)
 
-    # Interior vertical wall with a real door gap.
     cv2.line(image, (430, 100), (430, 300), blue, 12)
     cv2.line(image, (430, 365), (430, 800), blue, 12)
 
-    # Short service-room partition that the old full-page threshold could discard.
     cv2.line(image, (430, 610), (565, 610), blue, 12)
 
-    # Small diagonal entrance wall, representative of the reported plan.
     cv2.line(image, (690, 705), (770, 765), blue, 12)
     return image
 
@@ -164,7 +156,6 @@ def test_blue_detail_vectorizer_preserves_door_gap_short_wall_and_diagonal():
     assert meta["door_gap_heal_px"] < 20
     assert meta["diagonal_count"] >= 1
 
-    # The x=430 divider must remain two segments; no wall may bridge the door opening.
     divider_x = 430 / 1200 * 100.0
     divider = [
         wall for wall in walls
@@ -180,7 +171,6 @@ def test_blue_detail_vectorizer_preserves_door_gap_short_wall_and_diagonal():
         for wall in divider
     )
 
-    # The 135 px short partition must survive vectorisation.
     short_wall = [
         wall for wall in walls
         if wall.get("axis") == "h"
@@ -188,6 +178,24 @@ def test_blue_detail_vectorizer_preserves_door_gap_short_wall_and_diagonal():
         and 8.0 <= abs(float(wall["end"]["x"]) - float(wall["start"]["x"])) <= 16.0
     ]
     assert short_wall
+
+
+def test_blue_detail_vectorizer_rejects_thin_door_leaf_and_arc():
+    image = _blue_detail_fixture()
+    blue = (185, 105, 55)
+
+    # Door graphics use the same blue as walls but are intentionally thin. These were
+    # previously promoted into 10+ extra diagonal walls in the reported production plan.
+    cv2.line(image, (430, 300), (470, 340), blue, 2)
+    cv2.ellipse(image, (430, 300), (45, 45), 0, 0, 55, blue, 2)
+
+    walls, meta = vectorize_blue_detail_walls(image)
+    diagonals = [wall for wall in walls if wall.get("axis") == "d"]
+
+    assert meta["usable"] is True
+    assert meta["diagonal_count"] == 1
+    assert len(diagonals) == 1
+    assert float(diagonals[0].get("structural_core_support", 0.0)) >= 0.72
 
 
 def test_blue_wall_detail_recovery_keeps_rooms_and_refines_only_blue_path():
